@@ -35,7 +35,7 @@ infrastructure/  ← implementations of domain ports
 
 api/             ← outermost: HTTP handlers, request/response mapping
   handlers/
-  middleware/
+  middleware/    ← auth middleware + ContextIdentityProvider live here
 ```
 
 If you are ever about to import an infrastructure package from the domain
@@ -80,6 +80,7 @@ layer, stop and redesign. That is an architecture violation.
 | Frontend | React + TypeScript + Vite | No UI component libraries |
 | Database | MongoDB (current) | Behind interface — swappable |
 | AI Provider | Claude (current) | Behind interface — swappable |
+| Auth | DEV_MODE middleware now, Clerk in Phase 4 | Behind IdentityProvider interface |
 | Market Data | TBD | Behind interface — swappable |
 | Banking | Plaid (Phase 5) | Behind interface — swappable |
 | Brokerage | Alpaca (Phase 4) | Behind interface — swappable |
@@ -88,24 +89,24 @@ layer, stop and redesign. That is an architecture violation.
 
 ## Current phase context
 
-**Phase 2 — Profile persistence + provider abstraction**
+**Phase 2 — complete**
 
 What exists:
-- Go backend with `/recommend` endpoint calling Claude API
-- React frontend with mood selector (being replaced)
-- MongoDB connection being added now
-
-What is being built:
-- Full user financial profile (onboarding form, stored in MongoDB)
+- Go backend with `/recommend` and `/users/profile` endpoints
+- React frontend (mood selector, onboarding form, home screen)
+- MongoDB connected; full user financial profile persisted (8+ fields)
 - `InvestmentAdvisor` interface with Claude as first implementation
-- Provider factory pattern for AI, DB, and future financial data providers
-- Updated home screen: profile summary + daily invest button
+- `ProfileRepository` interface with MongoDB implementation
+- `IdentityProvider` interface — all endpoints scoped to userId via context
+- DEV_MODE middleware: auto-login as `krishna_local` in local development
+- `.env` loaded automatically at server startup — no manual `export` needed
+- Provider factory pattern for AI provider selection
 
-Coming in future phases:
-- Phase 3: Market data API (provider interface ready from day one)
-- Phase 4: Alpaca brokerage integration (paper trading first)
-- Phase 5: Plaid bank + 401k account connection
-- Phase 6: Fully autonomous daily investment agent
+**Phase 3 — next up**
+
+What to build:
+- Market data API integration (define `MarketDataProvider` interface first)
+- Enrich Claude prompt with live market context + user profile
 
 ---
 
@@ -122,6 +123,7 @@ Coming in future phases:
 | `InvestmentGoal` | wealth_building / retirement / emergency_fund / short_term |
 | `ImmigrationStatus` | us_citizen / permanent_resident / work_visa / other |
 | `InvestmentAdvisor` | Interface for any AI model that generates recommendations |
+| `IdentityProvider` | Interface for any auth system; returns current userID from context |
 | `FinancialDataProvider` | Interface for any banking/account data source (Phase 5) |
 | `BrokerageProvider` | Interface for any trade execution service (Phase 4) |
 
@@ -149,3 +151,59 @@ Coming in future phases:
 - Do not skip error handling to keep code shorter
 - Do not create god files — one primary responsibility per file
 - Do not hardcode provider names, model names, or API URLs outside config
+- Do not read userId from anywhere except context — never from a global variable,
+  never hardcoded in a handler. Always call `identityProvider.GetCurrentUser(ctx)`.
+
+---
+
+## Phase completion log
+
+### Phase 1 — complete
+- Go backend with `/recommend` endpoint
+- Claude API integration
+- React + TypeScript frontend with Vite
+- Provider abstraction: `InvestmentAdvisor` interface with Claude implementation
+- App renamed from MoodMarket to InvestIQ
+- CLAUDE.md created with DDD + onion architecture rules
+
+### Phase 2 — complete
+- MongoDB connected
+- User profile schema: full financial profile with 8+ fields
+- `POST /users/profile` and `GET /users/profile` endpoints
+- DEV_MODE middleware: auto-login as `krishna_local` in development
+- `IdentityProvider` interface in `domain/ports`
+- All endpoints scoped to userId via context — no hardcoded user IDs anywhere
+- `.env` loaded automatically at startup
+- Auth foundation complete:
+  - `AuthProvider` interface in `domain/ports/auth.go` with `UserIdentity` value object
+  - `DevAuthProvider` — DEV_MODE=true, ValidateToken always succeeds, identity from env
+  - `ClerkAuthProvider` stub — DEV_MODE=false, ready to wire real Clerk SDK in Phase 4
+  - `NewAuthProvider()` factory in `infrastructure/auth/` — sole DEV_MODE branch point
+  - Middleware updated: takes `AuthProvider`, reads bearer token, skips `/auth/` routes
+  - `GET /auth/dev-login` endpoint returns placeholder token for frontend login flow
+  - `UserIdentity` (UserID, Email, Name) stored in context; `IdentityProvider` still returns just userID
+  - Frontend Login page with "Dev login" button (visible only when `VITE_DEV_MODE=true`)
+  - Frontend attaches `Authorization: Bearer <token>` on all API calls
+
+### Phase 3 — planned
+- Market data API integration (`MarketDataProvider` interface from day one)
+- Claude prompt enriched with live market context + user profile
+
+### Phase 4 — planned
+- Clerk auth integration:
+  - Fill in `ClerkAuthProvider.ValidateToken` with real Clerk JWT validation (no interface changes needed)
+  - Wire `ClerkAuthProvider.GetLoginURL` to real Clerk OAuth flow
+  - Replace localStorage token with Clerk session management in the frontend
+  - `AuthProvider` interface already in place — swap is one file change
+- Alpaca paper trading integration
+- One-tap invest button with real execution
+
+### Phase 5 — planned
+- Plaid bank + 401k account connection
+- `FinancialDataProvider` interface
+- Auto-pull real account balances into investment context
+
+### Phase 6 — planned
+- Fully autonomous daily investment agent
+- Push notifications
+- Portfolio performance tracking

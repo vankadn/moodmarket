@@ -11,11 +11,12 @@ import (
 )
 
 type ProfileHandler struct {
-	repo ports.ProfileRepository
+	repo     ports.ProfileRepository
+	identity ports.IdentityProvider
 }
 
-func NewProfileHandler(repo ports.ProfileRepository) *ProfileHandler {
-	return &ProfileHandler{repo: repo}
+func NewProfileHandler(repo ports.ProfileRepository, identity ports.IdentityProvider) *ProfileHandler {
+	return &ProfileHandler{repo: repo, identity: identity}
 }
 
 func (h *ProfileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +36,13 @@ func (h *ProfileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ProfileHandler) getProfile(w http.ResponseWriter, r *http.Request) {
-	profile, err := h.repo.GetByUserID(r.Context(), defaultUserID)
+	userID, err := h.identity.GetCurrentUser(r.Context())
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	profile, err := h.repo.GetByUserID(r.Context(), userID)
 	if errors.Is(err, ports.ErrProfileNotFound) {
 		http.Error(w, "profile not found", http.StatusNotFound)
 		return
@@ -50,12 +57,18 @@ func (h *ProfileHandler) getProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ProfileHandler) saveProfile(w http.ResponseWriter, r *http.Request) {
+	userID, err := h.identity.GetCurrentUser(r.Context())
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var profile models.UserProfile
 	if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	profile.UserID = defaultUserID
+	profile.UserID = userID
 
 	if err := h.repo.Upsert(r.Context(), &profile); err != nil {
 		log.Printf("profile handler: upsert: %v", err)

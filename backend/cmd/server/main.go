@@ -11,8 +11,10 @@ import (
 
 	"github.com/krishnarajivvns/investiq/internal/api/handlers"
 	"github.com/krishnarajivvns/investiq/internal/application/services"
+	infraauth "github.com/krishnarajivvns/investiq/internal/infrastructure/auth"
 	infraadvisor "github.com/krishnarajivvns/investiq/internal/infrastructure/advisor"
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
+	"github.com/krishnarajivvns/investiq/internal/middleware"
 )
 
 // loadEnv reads KEY=VALUE lines from a .env file and sets any that aren't already in the environment.
@@ -50,7 +52,6 @@ func main() {
 	defer mongoClient.Disconnect(ctx) //nolint:errcheck
 
 	database := mongoClient.Database("investiq")
-
 	profileRepo := infradb.NewMongoProfileRepository(database)
 
 	advisor, err := infraadvisor.NewAdvisor()
@@ -58,11 +59,14 @@ func main() {
 		log.Fatalf("advisor init failed: %v", err)
 	}
 
+	authProvider := infraauth.NewAuthProvider()
 	recommendSvc := services.NewRecommendationService(advisor, profileRepo)
+	idp := middleware.ContextIdentityProvider{}
 
 	mux := http.NewServeMux()
-	mux.Handle("/recommend", handlers.NewRecommendHandler(recommendSvc))
-	mux.Handle("/users/profile", handlers.NewProfileHandler(profileRepo))
+	mux.Handle("/auth/dev-login", handlers.NewDevLoginHandler())
+	mux.Handle("/recommend", handlers.NewRecommendHandler(recommendSvc, idp))
+	mux.Handle("/users/profile", handlers.NewProfileHandler(profileRepo, idp))
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -70,5 +74,5 @@ func main() {
 	}
 
 	fmt.Printf("  InvestIQ backend running on :%s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Fatal(http.ListenAndServe(":"+port, middleware.UserIdentity(authProvider, mux)))
 }

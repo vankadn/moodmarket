@@ -8,22 +8,20 @@ import (
 	"time"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
+	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
-// defaultUserID is a stub for the single-user phase. Replace with token extraction when auth lands.
-const defaultUserID = "default"
-
-// recommendationUseCase is the application-layer contract this handler depends on.
 type recommendationUseCase interface {
 	GetDailyRecommendation(ctx context.Context, userID string, req models.InvestmentRequest) (*models.Recommendation, error)
 }
 
 type RecommendHandler struct {
-	service recommendationUseCase
+	service  recommendationUseCase
+	identity ports.IdentityProvider
 }
 
-func NewRecommendHandler(svc recommendationUseCase) *RecommendHandler {
-	return &RecommendHandler{service: svc}
+func NewRecommendHandler(svc recommendationUseCase, identity ports.IdentityProvider) *RecommendHandler {
+	return &RecommendHandler{service: svc, identity: identity}
 }
 
 func (h *RecommendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +32,12 @@ func (h *RecommendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID, err := h.identity.GetCurrentUser(r.Context())
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -49,7 +53,7 @@ func (h *RecommendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	rec, err := h.service.GetDailyRecommendation(ctx, defaultUserID, req)
+	rec, err := h.service.GetDailyRecommendation(ctx, userID, req)
 	if err != nil {
 		log.Printf("recommend handler: %v", err)
 		http.Error(w, "failed to generate recommendation", http.StatusInternalServerError)
