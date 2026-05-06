@@ -67,7 +67,10 @@ func main() {
 
 	decisionRepo := infradb.NewMongoDecisionRepository(database)
 
-	authProvider := infraauth.NewAuthProvider()
+	authProvider, err := infraauth.NewAuthProvider()
+	if err != nil {
+		log.Fatalf("auth provider init failed: %v", err)
+	}
 	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo)
 	idp := middleware.ContextIdentityProvider{}
 

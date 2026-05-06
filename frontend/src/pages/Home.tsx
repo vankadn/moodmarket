@@ -4,6 +4,7 @@ import { getRecommendation, Recommendation, UserProfile } from "../services/api"
 
 interface Props {
   profile: UserProfile;
+  onSignOut?: () => void;
 }
 
 const goalLabel: Record<string, string> = {
@@ -20,7 +21,7 @@ const horizonLabel: Record<string, string> = {
   ten_plus: "10+ years",
 };
 
-export function Home({ profile }: Props) {
+export function Home({ profile, onSignOut }: Props) {
   const [extra, setExtra] = useState<number>(0);
   const [rec, setRec] = useState<Recommendation | null>(null);
   const [loading, setLoading] = useState(false);
@@ -50,9 +51,19 @@ export function Home({ profile }: Props) {
 
   return (
     <div style={{ maxWidth: "560px", margin: "0 auto", padding: "2rem 1rem" }}>
-      <div style={{ marginBottom: "1.5rem" }}>
-        <h1 style={{ fontSize: "22px", fontWeight: 600, margin: "0 0 4px" }}>InvestIQ</h1>
-        <p style={{ fontSize: "14px", color: "#666", margin: 0 }}>Daily investment advisor</p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
+        <div>
+          <h1 style={{ fontSize: "22px", fontWeight: 600, margin: "0 0 4px" }}>InvestIQ</h1>
+          <p style={{ fontSize: "14px", color: "#666", margin: 0 }}>Daily investment advisor</p>
+        </div>
+        {onSignOut && (
+          <button
+            onClick={onSignOut}
+            style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
+          >
+            Sign out
+          </button>
+        )}
       </div>
 
       {/* Profile summary card */}

@@ -40,15 +40,25 @@ export interface Recommendation {
   risk_level: "low" | "medium" | "high";
 }
 
-function authHeaders(): HeadersInit {
-  const token = localStorage.getItem("auth_token");
+// tokenFetcher is the pluggable source of the bearer token.
+// Dev mode: reads from localStorage. Clerk mode: calls Clerk's getToken().
+// Swap by calling setTokenFetcher() before the first API call.
+type TokenFetcher = () => Promise<string | null>;
+let tokenFetcher: TokenFetcher = async () => localStorage.getItem("auth_token");
+
+export function setTokenFetcher(fn: TokenFetcher): void {
+  tokenFetcher = fn;
+}
+
+async function authHeaders(): Promise<HeadersInit> {
+  const token = await tokenFetcher();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export async function getRecommendation(req: InvestmentRequest): Promise<Recommendation> {
   const res = await fetch(`${API_BASE}/recommend`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify(req),
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -57,7 +67,7 @@ export async function getRecommendation(req: InvestmentRequest): Promise<Recomme
 
 export async function getProfile(): Promise<UserProfile> {
   const res = await fetch(`${API_BASE}/users/profile`, {
-    headers: authHeaders(),
+    headers: await authHeaders(),
   });
   if (res.status === 404) throw new Error("not_found");
   if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -67,7 +77,7 @@ export async function getProfile(): Promise<UserProfile> {
 export async function saveProfile(profile: UserProfile): Promise<UserProfile> {
   const res = await fetch(`${API_BASE}/users/profile`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify(profile),
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
