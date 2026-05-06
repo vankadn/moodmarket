@@ -81,7 +81,7 @@ layer, stop and redesign. That is an architecture violation.
 | Database | MongoDB (current) | Behind interface — swappable |
 | AI Provider | Claude (current) | Behind interface — swappable |
 | Auth | DEV_MODE middleware now, Clerk in Phase 4 | Behind IdentityProvider interface |
-| Market Data | TBD | Behind interface — swappable |
+| Market Data | Polygon (current) | Behind interface — swappable; mock available via MARKET_PROVIDER=mock |
 | Banking | Plaid (Phase 5) | Behind interface — swappable |
 | Brokerage | Alpaca (Phase 4) | Behind interface — swappable |
 
@@ -89,7 +89,7 @@ layer, stop and redesign. That is an architecture violation.
 
 ## Current phase context
 
-**Phase 2 — complete**
+**Phase 3 — complete**
 
 What exists:
 - Go backend with `/recommend` and `/users/profile` endpoints
@@ -100,13 +100,18 @@ What exists:
 - `IdentityProvider` interface — all endpoints scoped to userId via context
 - DEV_MODE middleware: auto-login as `krishna_local` in local development
 - `.env` loaded automatically at server startup — no manual `export` needed
-- Provider factory pattern for AI provider selection
+- Provider factory pattern for AI, market, and auth provider selection
+- `MarketDataProvider` interface with Polygon implementation and mock fallback
+- Live SPY, QQQ, and sector ETF data enriching every Claude recommendation
+- `DecisionRepository` interface with MongoDB implementation — every recommendation persisted
+- Claude advisor: prompt caching, differentiated retry (parse vs API errors), exponential backoff
 
-**Phase 3 — next up**
+**Phase 4 — next up**
 
 What to build:
-- Market data API integration (define `MarketDataProvider` interface first)
-- Enrich Claude prompt with live market context + user profile
+- Clerk auth integration (ClerkAuthProvider stub already in place)
+- Alpaca paper trading integration (`BrokerageProvider` interface first)
+- One-tap invest button wired to real trade execution
 
 ---
 
@@ -185,9 +190,40 @@ What to build:
   - Frontend Login page with "Dev login" button (visible only when `VITE_DEV_MODE=true`)
   - Frontend attaches `Authorization: Bearer <token>` on all API calls
 
-### Phase 3 — planned
-- Market data API integration (`MarketDataProvider` interface from day one)
-- Claude prompt enriched with live market context + user profile
+### Phase 3 — complete
+- `MarketDataProvider` interface in `domain/ports/market.go`
+- `MarketSnapshot` + `TickerSnapshot` value objects in `domain/models/market.go`
+- Polygon implementation in `infrastructure/market/polygon.go`:
+  - Free-tier compatible: concurrent `/v2/aggs/ticker/{ticker}/prev` calls per sector ETF
+  - In-memory daily cache — Polygon hit once per day, every subsequent call served from cache
+  - Factory reads `MARKET_PROVIDER` env var; `mock` available for local development without API key
+- Claude prompt enriched with live SPY %, QQQ %, sector performance, and market sentiment
+- `DecisionRepository` interface in `domain/ports/decision_repository.go`
+- `MongoDecisionRepository` in `infrastructure/db/mongo_decision_repository.go` — every recommendation persisted
+- Claude advisor hardened:
+  - Prompt caching (`anthropic-beta: prompt-caching-2024-07-31`) — system prompt cached after first call
+  - Differentiated retry: parse errors get a JSON correction turn; API errors (529) get a clean retry
+  - Exponential backoff: 5s before retry 1, 10s before retry 2
+  - maxAttempts raised from 2 to 3
+
+#### Phase 3 — issues encountered and resolutions
+
+| Issue | Root cause | Resolution |
+|---|---|---|
+| Polygon 403 on sector data | `/v2/snapshot` batch endpoint requires paid plan | Switched to individual `/prev` calls per ETF — free tier compatible |
+| Polygon 429 rate limiting | 7 concurrent calls exceed free tier 5 req/min limit; some sectors dropped | Daily cache limits this to once per server start; serialization deferred |
+| Claude retry sending wrong correction | On 529, `full` response text is empty — retry was telling Claude "not valid JSON" when it never responded | Differentiated parse errors (send correction) from API errors (clean retry with backoff) |
+| Claude consistent 529 overloaded | Free tier low RPM + peak hours | Prompt caching reduces token processing per request; backoff gives server breathing room |
+
+#### Phase 3 — shortcuts taken (technical debt)
+
+| Shortcut | Impact | Correct fix (future) |
+|---|---|---|
+| **Yesterday's data only** — `/prev` endpoint returns the last trading day's close, not live prices | Recommendations use data that can be 1–3 days stale on Mondays or after holidays | Upgrade to Polygon paid plan and use `/v2/aggs/ticker/{ticker}/range` or WebSocket for live prices |
+| **QQQ fetched twice** — once for main QQQ metric, once as Technology sector ETF | Extra API call per day; contributes to rate limit pressure | Pass fetched QQQ value into `fetchSectorPerformance` to avoid the duplicate call |
+| **Concurrent sector calls without rate limiting** — 5 goroutines fire simultaneously | On free tier, 2 of 5 ETFs regularly get 429'd, giving Claude partial sector data | Serialize sector calls or add a token-bucket rate limiter; negligible latency impact since result is cached daily |
+| **In-memory daily cache** — resets on every server restart | During development, Polygon is hit on every restart even within the same day | Persist cache to MongoDB or Redis so it survives restarts |
+| **Sector ETF price not populated** — `Price: 0` in all `TickerSnapshot` entries | Claude receives change % only, no absolute price context | Populate price from the `/prev` response `c` (close) field already available in the response |
 
 ### Phase 4 — planned
 - Clerk auth integration:

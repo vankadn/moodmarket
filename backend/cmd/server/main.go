@@ -14,6 +14,7 @@ import (
 	infraauth "github.com/krishnarajivvns/investiq/internal/infrastructure/auth"
 	infraadvisor "github.com/krishnarajivvns/investiq/internal/infrastructure/advisor"
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
+	inframarket "github.com/krishnarajivvns/investiq/internal/infrastructure/market"
 	"github.com/krishnarajivvns/investiq/internal/middleware"
 )
 
@@ -59,8 +60,15 @@ func main() {
 		log.Fatalf("advisor init failed: %v", err)
 	}
 
+	marketProvider, err := inframarket.NewMarketDataProvider()
+	if err != nil {
+		log.Fatalf("market data provider init failed: %v", err)
+	}
+
+	decisionRepo := infradb.NewMongoDecisionRepository(database)
+
 	authProvider := infraauth.NewAuthProvider()
-	recommendSvc := services.NewRecommendationService(advisor, profileRepo)
+	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo)
 	idp := middleware.ContextIdentityProvider{}
 
 	mux := http.NewServeMux()

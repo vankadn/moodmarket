@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
 )
@@ -19,9 +20,9 @@ const (
 	claudeModel  = "claude-sonnet-4-6"
 )
 
-// maxAttempts caps total API calls per user request (1 initial + 1 correction).
+// maxAttempts caps total API calls per user request (1 initial + 2 retries).
 // Raise only with deliberate intent — each attempt burns tokens.
-const maxAttempts = 2
+const maxAttempts = 3
 
 const systemPrompt = `You are InvestIQ, a personal investment advisor. Recommend how to split a daily investment budget based on the user's complete financial profile.
 
@@ -51,11 +52,21 @@ type claudeMessage struct {
 	Content string `json:"content"`
 }
 
+type claudeCacheControl struct {
+	Type string `json:"type"` // "ephemeral"
+}
+
+type claudeSystemBlock struct {
+	Type         string              `json:"type"`
+	Text         string              `json:"text"`
+	CacheControl *claudeCacheControl `json:"cache_control,omitempty"`
+}
+
 type claudeAPIRequest struct {
-	Model     string          `json:"model"`
-	MaxTokens int             `json:"max_tokens"`
-	System    string          `json:"system"`
-	Messages  []claudeMessage `json:"messages"`
+	Model     string              `json:"model"`
+	MaxTokens int                 `json:"max_tokens"`
+	System    []claudeSystemBlock `json:"system"`
+	Messages  []claudeMessage     `json:"messages"`
 }
 
 type claudeContentBlock struct {
@@ -80,8 +91,8 @@ func newClaudeAdvisor() *claudeAdvisor {
 }
 
 // GetRecommendation calls Claude with a JSON prefill and retries once on parse failure.
-func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.InvestmentRequest, profile *models.UserProfile) (*models.Recommendation, error) {
-	userMsg := buildUserMessage(req, profile)
+func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.InvestmentRequest, profile *models.UserProfile, snapshot *models.MarketSnapshot) (*models.Recommendation, error) {
+	userMsg := buildUserMessage(req, profile, snapshot)
 
 	messages := []claudeMessage{
 		{Role: "user", Content: userMsg},
@@ -95,11 +106,24 @@ func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.Invest
 		}
 		lastErr = err
 		if attempt < maxAttempts {
-			log.Printf("advisor: attempt %d/%d failed (%v), sending correction", attempt, maxAttempts, err)
-			messages = []claudeMessage{
-				{Role: "user", Content: userMsg},
-				{Role: "assistant", Content: full},
-				{Role: "user", Content: "Your previous response was not valid JSON. Return only the corrected JSON object with no other text, no markdown, no code fences."},
+			if full != "" {
+				// Claude responded but the JSON was malformed — send a correction turn.
+				log.Printf("advisor: attempt %d/%d failed (parse error), sending correction", attempt, maxAttempts)
+				messages = []claudeMessage{
+					{Role: "user", Content: userMsg},
+					{Role: "assistant", Content: full},
+					{Role: "user", Content: "Your previous response was not valid JSON. Return only the corrected JSON object with no other text, no markdown, no code fences."},
+				}
+			} else {
+				// API/network error — back off before retrying so we don't immediately
+				// hammer an already-overloaded server (529 is the common case here).
+				backoff := time.Duration(attempt) * 5 * time.Second
+				log.Printf("advisor: attempt %d/%d failed (API error: %v), retrying in %s", attempt, maxAttempts, err, backoff)
+				select {
+				case <-time.After(backoff):
+				case <-ctx.Done():
+					return nil, fmt.Errorf("advisor: context cancelled during backoff: %w", ctx.Err())
+				}
 			}
 		}
 	}
@@ -111,8 +135,14 @@ func (c *claudeAdvisor) callClaude(ctx context.Context, messages []claudeMessage
 	body := claudeAPIRequest{
 		Model:     claudeModel,
 		MaxTokens: 1024,
-		System:    systemPrompt,
-		Messages:  messages,
+		System: []claudeSystemBlock{
+			{
+				Type:         "text",
+				Text:         systemPrompt,
+				CacheControl: &claudeCacheControl{Type: "ephemeral"},
+			},
+		},
+		Messages: messages,
 	}
 
 	payload, err := json.Marshal(body)
@@ -127,6 +157,7 @@ func (c *claudeAdvisor) callClaude(ctx context.Context, messages []claudeMessage
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", c.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -180,9 +211,23 @@ func extractJSON(s string) string {
 	return s
 }
 
-func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile) string {
+func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile, snapshot *models.MarketSnapshot) string {
 	total := req.BaseBudget + req.ExtraMoney
 	msg := fmt.Sprintf("Total to invest today: $%.2f\n\n", total)
+
+	if snapshot != nil {
+		msg += fmt.Sprintf("Today's market context (%s):\n", snapshot.Date)
+		msg += fmt.Sprintf("- Overall sentiment: %s\n", snapshot.MarketSentiment)
+		msg += fmt.Sprintf("- SPY (S&P 500 ETF): %+.2f%%\n", snapshot.SPYChangePercent)
+		msg += fmt.Sprintf("- QQQ (Nasdaq ETF): %+.2f%%\n", snapshot.QQQChangePercent)
+		if len(snapshot.TopMovers) > 0 {
+			msg += "- Top moving sectors today:\n"
+			for _, m := range snapshot.TopMovers {
+				msg += fmt.Sprintf("  • %s: %+.2f%%\n", m.Symbol, m.ChangePercent)
+			}
+		}
+		msg += "\n"
+	}
 
 	if profile != nil {
 		msg += "User financial profile:\n"
