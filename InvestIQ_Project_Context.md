@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-07 (Phase 4 complete, Phase 5 in progress)
+> Last updated: 2026-05-07 (Phase 5 complete)
 
 ---
 
@@ -92,7 +92,7 @@ Key interfaces:
 - `MarketDataProvider` — live prices (Phase 3 ✓)
 - `DecisionRepository` — investment decision persistence (Phase 3 ✓)
 - `BrokerageProvider` — trade execution (Phase 4 ✓, Alpaca paper trading)
-- `FinancialDataProvider` — bank + 401k data (Phase 5, Plaid)
+- `FinancialDataProvider` — bank + 401k data (Phase 5 ✓, Plaid)
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
 
 ### DEV_MODE pattern
@@ -111,7 +111,7 @@ Key interfaces:
 | Auth | Clerk (email + Google SSO) | Behind AuthProvider interface; DEV_MODE=true still works locally |
 | Market Data | Polygon.io (previous-day, free tier) | Behind MarketDataProvider interface; mock available for dev |
 | Brokerage | Alpaca (paper trading) | Behind BrokerageProvider interface; mock available for dev |
-| Banking | Plaid (Phase 5) | Behind FinancialDataProvider interface; sandbox first |
+| Banking | Plaid (current) | Behind FinancialDataProvider interface; FINANCIAL_DATA_PROVIDER=mock available for dev |
 | Secrets | Encrypted Mongo now, Vault pre go-live | Behind SecretsProvider interface |
 
 ---
@@ -271,24 +271,41 @@ User taps "Invest today"
 | Partial order failures logged but not surfaced in UI | Show partial failure state in ReceiptScreen |
 | Receipt screen shows order status at placement time (PENDING NEW) | Poll Alpaca for final fill status and update ReceiptScreen |
 
-### Phase 5 — In Progress
-- `FinancialDataProvider` interface in `domain/ports/`
-- Plaid sandbox integration: connect real bank accounts + 401k via Plaid Link popup
-- Per-user `plaid_connections` array stored on user document in MongoDB (institution, access_token, item_id)
-- Auto-pull account balances into investment context on every `/recommend` call
-- Claude prompt enriched with real cash position, account balances, connected institution summary
-- Token revocation endpoint: `DELETE /plaid/accounts/:item_id` — calls Plaid revoke API + removes from Mongo
-- `decisions` collection updated to snapshot Plaid balance data at time of each decision
+### Phase 5 — Complete
+
+- `FinancialDataProvider` interface in `domain/ports/financial_data_provider.go`
+- `PlaidConnection`, `BankAccount`, `BalanceSummary`, `PlaidConnectionSummary` value objects in `domain/models/banking.go`
+- Plaid REST client in `infrastructure/banking/plaid.go` — net/http only, no Plaid SDK
+- Mock provider in `infrastructure/banking/mock.go` — `FINANCIAL_DATA_PROVIDER=mock` for dev
+- `ProfileRepository` extended with 3 new methods: `SavePlaidConnection` ($push), `GetPlaidConnections` (decrypt on read), `RemovePlaidConnection` ($pull)
+- AES-256-GCM encryption in `infrastructure/db/encryption.go` — key loaded once via `sync.Once`; access tokens never stored in plaintext
+- `GET /users/profile` now returns `connected_accounts` (institution + item_id only — access token never exposed to API or frontend)
+- `RecommendationService` fetches live Plaid balances before every recommendation; fetch failure is non-fatal (logs + continues)
+- Claude prompt enriched with: total cash, total investments, institution names, account count, data pull timestamp
+- `POST /plaid/link-token`, `POST /plaid/exchange`, `DELETE /plaid/accounts/{item_id}` handlers
+- Frontend: `usePlaidSetup` hook, `PlaidLinkButton` (react-plaid-link), `ConnectedAccounts` list with disconnect
+- Frontend: `Profile.tsx` page — connected account management + add new account
+- Home header: "Bank accounts" button navigates to Profile page; investment state machine unchanged
 
 **Plaid token flow:**
 ```
-Frontend calls POST /plaid/link-token → backend creates Plaid link token
+POST /plaid/link-token → Plaid returns link token
 → Plaid Link popup opens in browser
-→ User connects bank → Plaid returns public_token to frontend
-→ Frontend calls POST /plaid/exchange → backend exchanges for access_token
-→ access_token stored in MongoDB on user document (encrypted at field level)
-→ All future /recommend calls pull live balances silently using stored token
+→ User connects bank → Plaid calls onSuccess with public_token
+→ POST /plaid/exchange → backend: exchange → item/get → institutions/get_by_id
+→ access_token AES-256-GCM encrypted, stored in plaid_connections array on user document
+→ Every /recommend call: GetPlaidConnections → decrypt → GetBalanceSummary → inject into Claude prompt
+→ DELETE /plaid/accounts/{item_id} → Plaid item/remove → $pull from Mongo
 ```
+
+**Known debt carried into Phase 6:**
+
+| Shortcut | Future fix |
+|----------|-----------|
+| Encrypted Mongo for tokens | Vault / AWS Secrets Manager before any real user connects a real account |
+| No transaction history in prompt | Add Plaid Transactions product to enrich spending context |
+| Balance fetch on every `/recommend` call | Cache with short TTL (5 min) to reduce Plaid API calls at scale |
+| `PLAID_ENV=production` not tested | Test full production flow with real institution before launch |
 
 ### Phase 6 — Planned
 - Fully autonomous daily investment agent
