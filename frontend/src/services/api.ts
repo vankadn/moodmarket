@@ -74,6 +74,37 @@ export async function getProfile(): Promise<UserProfile> {
   return res.json();
 }
 
+export interface TradeReceipt {
+  order_id: string;
+  ticker: string;
+  filled_amount: number;
+  filled_price: number;
+  status: string;
+  timestamp: string;
+}
+
+export interface InvestRequest {
+  allocations: Allocation[];
+  total_amount: number;
+  risk_level: string;
+  summary: string;
+}
+
+export interface InvestResponse {
+  receipts: TradeReceipt[];
+  decision_id: string;
+}
+
+export async function invest(req: InvestRequest): Promise<InvestResponse> {
+  const res = await fetch(`${API_BASE}/invest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
 export async function saveProfile(profile: UserProfile): Promise<UserProfile> {
   const res = await fetch(`${API_BASE}/users/profile`, {
     method: "POST",

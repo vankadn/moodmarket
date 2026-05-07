@@ -1,0 +1,87 @@
+import { Recommendation } from "../services/api";
+
+const riskColor: Record<string, string> = {
+  low: "#E6F1FB", medium: "#FAEEDA", high: "#FAECE7",
+};
+
+interface Props {
+  rec: Recommendation;
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}
+
+export function ConfirmScreen({ rec, onConfirm, onCancel, loading }: Props) {
+  return (
+    <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: "12px", padding: "1.25rem 1.5rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: "15px", color: "#111" }}>Confirm investment</div>
+          <div style={{ fontSize: "13px", color: "#666", marginTop: "2px" }}>{rec.summary}</div>
+        </div>
+        <span style={{ background: riskColor[rec.risk_level], padding: "4px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 500 }}>
+          {rec.risk_level} risk
+        </span>
+      </div>
+
+      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "1.25rem", fontSize: "13px" }}>
+        <thead>
+          <tr style={{ borderBottom: "1px solid #f0f0f0", color: "#999", textAlign: "left" }}>
+            <th style={{ padding: "6px 0", fontWeight: 500 }}>Ticker</th>
+            <th style={{ padding: "6px 0", fontWeight: 500 }}>Name</th>
+            <th style={{ padding: "6px 0", fontWeight: 500, textAlign: "right" }}>Amount</th>
+            <th style={{ padding: "6px 0", fontWeight: 500, textAlign: "right" }}>%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rec.allocations.map((a) => (
+            <tr key={a.ticker} style={{ borderBottom: "1px solid #f8f8f8" }}>
+              <td style={{ padding: "10px 0" }}>
+                <span style={{ background: "#f0f0f0", padding: "2px 8px", borderRadius: "6px", fontSize: "12px", fontWeight: 500 }}>
+                  {a.ticker}
+                </span>
+              </td>
+              <td style={{ padding: "10px 8px", color: "#444" }}>{a.name}</td>
+              <td style={{ padding: "10px 0", textAlign: "right", fontWeight: 500 }}>${a.amount.toFixed(2)}</td>
+              <td style={{ padding: "10px 0", textAlign: "right", color: "#888" }}>{a.percentage.toFixed(0)}%</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={2} style={{ padding: "10px 0", fontWeight: 600 }}>Total</td>
+            <td style={{ padding: "10px 0", textAlign: "right", fontWeight: 600 }}>${rec.total_budget.toFixed(2)}</td>
+            <td />
+          </tr>
+        </tfoot>
+      </table>
+
+      <div style={{ display: "flex", gap: "10px" }}>
+        <button
+          onClick={onConfirm}
+          disabled={loading}
+          style={{
+            flex: 1, padding: "12px",
+            background: loading ? "#ccc" : "#1a1a1a",
+            color: "white", border: "none", borderRadius: "8px",
+            fontSize: "14px", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer",
+          }}
+        >
+          {loading ? "Placing orders…" : "Confirm & Invest"}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={loading}
+          style={{
+            padding: "12px 20px",
+            background: "transparent", color: "#666",
+            border: "1px solid #ddd", borderRadius: "8px",
+            fontSize: "14px", cursor: loading ? "not-allowed" : "pointer",
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}

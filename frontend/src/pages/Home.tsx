@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { RecommendationCard } from "../components/RecommendationCard";
-import { getRecommendation, Recommendation, UserProfile } from "../services/api";
+import { ConfirmScreen } from "../components/ConfirmScreen";
+import { ReceiptScreen } from "../components/ReceiptScreen";
+import { getRecommendation, invest, Recommendation, TradeReceipt, UserProfile } from "../services/api";
 
 interface Props {
   profile: UserProfile;
@@ -21,25 +22,65 @@ const horizonLabel: Record<string, string> = {
   ten_plus: "10+ years",
 };
 
+type HomeState = "idle" | "confirming" | "investing" | "receipt";
+
 export function Home({ profile, onSignOut }: Props) {
   const [extra, setExtra] = useState<number>(0);
+  const [homeState, setHomeState] = useState<HomeState>("idle");
   const [rec, setRec] = useState<Recommendation | null>(null);
+  const [receipts, setReceipts] = useState<TradeReceipt[]>([]);
+  const [decisionId, setDecisionId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const total = 100 + extra;
 
-  async function handleInvest() {
+  async function handleGetRecommendation() {
     setLoading(true);
     setError(null);
     try {
       const result = await getRecommendation({ base_budget: 100, extra_money: extra });
       setRec(result);
+      setHomeState("confirming");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleConfirmInvest() {
+    if (!rec) return;
+    setHomeState("investing");
+    setError(null);
+    try {
+      const response = await invest({
+        allocations: rec.allocations,
+        total_amount: rec.total_budget,
+        risk_level: rec.risk_level,
+        summary: rec.summary,
+      });
+      setReceipts(response.receipts);
+      setDecisionId(response.decision_id);
+      setHomeState("receipt");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Investment failed");
+      setHomeState("confirming");
+    }
+  }
+
+  function handleCancel() {
+    setRec(null);
+    setHomeState("idle");
+    setError(null);
+  }
+
+  function handleDone() {
+    setRec(null);
+    setReceipts([]);
+    setDecisionId("");
+    setHomeState("idle");
+    setError(null);
   }
 
   const profileSummary = [
@@ -81,48 +122,77 @@ export function Home({ profile, onSignOut }: Props) {
         </div>
       </div>
 
-      {/* Extra money input */}
-      <div style={{ marginBottom: "1.5rem" }}>
-        <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
-          Extra money today (optional)
-        </label>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
-          <div style={{ display: "flex", alignItems: "center", border: "1px solid #e0e0e0", borderRadius: "8px", overflow: "hidden" }}>
-            <span style={{ padding: "8px 10px", fontSize: "14px", color: "#888", background: "#f8f8f8", borderRight: "1px solid #e0e0e0" }}>$</span>
-            <input
-              type="number" min={0} step={10} value={extra || ""}
-              onChange={(e) => setExtra(Math.max(0, Number(e.target.value)))}
-              placeholder="0"
-              style={{ width: "100px", padding: "8px 10px", border: "none", outline: "none", fontSize: "14px" }}
-            />
+      {homeState === "idle" && (
+        <>
+          {/* Extra money input */}
+          <div style={{ marginBottom: "1.5rem" }}>
+            <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+              Extra money today (optional)
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", border: "1px solid #e0e0e0", borderRadius: "8px", overflow: "hidden" }}>
+                <span style={{ padding: "8px 10px", fontSize: "14px", color: "#888", background: "#f8f8f8", borderRight: "1px solid #e0e0e0" }}>$</span>
+                <input
+                  type="number" min={0} step={10} value={extra || ""}
+                  onChange={(e) => setExtra(Math.max(0, Number(e.target.value)))}
+                  placeholder="0"
+                  style={{ width: "100px", padding: "8px 10px", border: "none", outline: "none", fontSize: "14px" }}
+                />
+              </div>
+              <span style={{ fontSize: "13px", color: "#888" }}>
+                = <strong style={{ color: "#333" }}>${total} total</strong>
+              </span>
+            </div>
           </div>
-          <span style={{ fontSize: "13px", color: "#888" }}>
-            = <strong style={{ color: "#333" }}>${total} total</strong>
-          </span>
-        </div>
-      </div>
 
-      <button
-        onClick={handleInvest}
-        disabled={loading}
-        style={{
-          width: "100%", padding: "13px",
-          background: loading ? "#ccc" : "#1a1a1a",
-          color: "white", border: "none", borderRadius: "10px",
-          fontSize: "15px", fontWeight: 500,
-          cursor: loading ? "not-allowed" : "pointer",
-          marginBottom: "1.5rem",
-        }}
-      >
-        {loading ? "Generating recommendation…" : `Invest $${total} today`}
-      </button>
+          <button
+            onClick={handleGetRecommendation}
+            disabled={loading}
+            style={{
+              width: "100%", padding: "13px",
+              background: loading ? "#ccc" : "#1a1a1a",
+              color: "white", border: "none", borderRadius: "10px",
+              fontSize: "15px", fontWeight: 500,
+              cursor: loading ? "not-allowed" : "pointer",
+              marginBottom: "1.5rem",
+            }}
+          >
+            {loading ? "Generating recommendation…" : `Get recommendation for $${total}`}
+          </button>
+        </>
+      )}
 
       {error && (
         <div style={{ color: "#c0392b", fontSize: "13px", padding: "10px", background: "#fdf0ee", borderRadius: "8px", marginBottom: "1rem" }}>
           {error}
         </div>
       )}
-      {rec && <RecommendationCard rec={rec} />}
+
+      {homeState === "confirming" && rec && (
+        <ConfirmScreen
+          rec={rec}
+          onConfirm={handleConfirmInvest}
+          onCancel={handleCancel}
+          loading={false}
+        />
+      )}
+
+      {homeState === "investing" && rec && (
+        <ConfirmScreen
+          rec={rec}
+          onConfirm={handleConfirmInvest}
+          onCancel={handleCancel}
+          loading={true}
+        />
+      )}
+
+      {homeState === "receipt" && (
+        <ReceiptScreen
+          receipts={receipts}
+          decisionId={decisionId}
+          onDone={handleDone}
+        />
+      )}
     </div>
   );
 }

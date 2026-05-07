@@ -22,9 +22,19 @@ type decisionDocument struct {
 	Timestamp      time.Time           `bson:"timestamp"`
 	MarketSnapshot *marketSnapshotDoc  `bson:"market_snapshot,omitempty"`
 	Allocations    []allocationDoc     `bson:"allocations"`
+	Receipts       []tradeReceiptDoc   `bson:"receipts,omitempty"`
 	TotalAmount    float64             `bson:"total_amount"`
 	RiskLevel      string              `bson:"risk_level"`
 	Summary        string              `bson:"summary"`
+}
+
+type tradeReceiptDoc struct {
+	OrderID      string    `bson:"order_id"`
+	Ticker       string    `bson:"ticker"`
+	FilledAmount float64   `bson:"filled_amount"`
+	FilledPrice  float64   `bson:"filled_price"`
+	Status       string    `bson:"status"`
+	Timestamp    time.Time `bson:"timestamp"`
 }
 
 type marketSnapshotDoc struct {
@@ -108,6 +118,7 @@ func fromDecision(d *models.InvestmentDecision) *decisionDocument {
 		UserID:      d.UserID,
 		Timestamp:   d.Timestamp,
 		Allocations: fromAllocations(d.Allocations),
+		Receipts:    fromReceipts(d.Receipts),
 		TotalAmount: d.TotalAmount,
 		RiskLevel:   d.RiskLevel,
 		Summary:     d.Summary,
@@ -124,6 +135,7 @@ func toDecision(doc *decisionDocument) models.InvestmentDecision {
 		UserID:      doc.UserID,
 		Timestamp:   doc.Timestamp,
 		Allocations: toAllocations(doc.Allocations),
+		Receipts:    toReceipts(doc.Receipts),
 		TotalAmount: doc.TotalAmount,
 		RiskLevel:   doc.RiskLevel,
 		Summary:     doc.Summary,
@@ -192,4 +204,34 @@ func toAllocations(docs []allocationDoc) []models.Allocation {
 		}
 	}
 	return allocations
+}
+
+func fromReceipts(receipts []models.TradeReceipt) []tradeReceiptDoc {
+	docs := make([]tradeReceiptDoc, len(receipts))
+	for i, r := range receipts {
+		docs[i] = tradeReceiptDoc{
+			OrderID:      r.OrderID,
+			Ticker:       r.Ticker,
+			FilledAmount: r.FilledAmount,
+			FilledPrice:  r.FilledPrice,
+			Status:       r.Status,
+			Timestamp:    r.Timestamp,
+		}
+	}
+	return docs
+}
+
+func toReceipts(docs []tradeReceiptDoc) []models.TradeReceipt {
+	receipts := make([]models.TradeReceipt, len(docs))
+	for i, d := range docs {
+		receipts[i] = models.TradeReceipt{
+			OrderID:      d.OrderID,
+			Ticker:       d.Ticker,
+			FilledAmount: d.FilledAmount,
+			FilledPrice:  d.FilledPrice,
+			Status:       d.Status,
+			Timestamp:    d.Timestamp,
+		}
+	}
+	return receipts
 }

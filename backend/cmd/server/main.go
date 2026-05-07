@@ -13,6 +13,7 @@ import (
 	"github.com/krishnarajivvns/investiq/internal/application/services"
 	infraauth "github.com/krishnarajivvns/investiq/internal/infrastructure/auth"
 	infraadvisor "github.com/krishnarajivvns/investiq/internal/infrastructure/advisor"
+	inflabrokerage "github.com/krishnarajivvns/investiq/internal/infrastructure/brokerage"
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
 	inframarket "github.com/krishnarajivvns/investiq/internal/infrastructure/market"
 	"github.com/krishnarajivvns/investiq/internal/middleware"
@@ -67,16 +68,24 @@ func main() {
 
 	decisionRepo := infradb.NewMongoDecisionRepository(database)
 
+	brokerageProvider, err := inflabrokerage.NewBrokerageProvider()
+	if err != nil {
+		log.Fatalf("brokerage provider init failed: %v", err)
+	}
+
 	authProvider, err := infraauth.NewAuthProvider()
 	if err != nil {
 		log.Fatalf("auth provider init failed: %v", err)
 	}
+
 	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo)
+	investSvc := services.NewInvestmentService(brokerageProvider, decisionRepo, marketProvider)
 	idp := middleware.ContextIdentityProvider{}
 
 	mux := http.NewServeMux()
 	mux.Handle("/auth/dev-login", handlers.NewDevLoginHandler())
 	mux.Handle("/recommend", handlers.NewRecommendHandler(recommendSvc, idp))
+	mux.Handle("/invest", handlers.NewInvestHandler(investSvc, idp))
 	mux.Handle("/users/profile", handlers.NewProfileHandler(profileRepo, idp))
 
 	port := os.Getenv("PORT")

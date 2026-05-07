@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-06
+> Last updated: 2026-05-06 (Phase 4 complete)
 
 ---
 
@@ -86,11 +86,11 @@ Every external dependency is hidden behind an interface defined in `domain/ports
 Key interfaces:
 - `InvestmentAdvisor` — AI recommendation engine (Claude today, Deepseek tomorrow)
 - `ProfileRepository` — user profile persistence (MongoDB today)
-- `AuthProvider` — identity (DevAuth today, Clerk in Phase 4)
+- `AuthProvider` — identity (DevAuth for local dev, Clerk in production ✓)
 - `IdentityProvider` — userId in request context
 - `MarketDataProvider` — live prices (Phase 3 ✓)
 - `DecisionRepository` — investment decision persistence (Phase 3 ✓)
-- `BrokerageProvider` — trade execution (Phase 4, Alpaca)
+- `BrokerageProvider` — trade execution (Phase 4 ✓, Alpaca paper trading)
 - `FinancialDataProvider` — bank + 401k data (Phase 5, Plaid)
 
 ### DEV_MODE pattern
@@ -106,9 +106,9 @@ Key interfaces:
 | Frontend | React + TypeScript + Vite | No UI component libraries |
 | Database | MongoDB | Behind ProfileRepository interface |
 | AI Provider | Claude (current) | Behind InvestmentAdvisor interface |
-| Auth | DEV_MODE now, Clerk Phase 4 | Behind AuthProvider interface |
+| Auth | Clerk (email + Google SSO) | Behind AuthProvider interface; DEV_MODE=true still works locally |
 | Market Data | Polygon.io (previous-day, free tier) | Behind MarketDataProvider interface; mock available for dev |
-| Brokerage | Alpaca Phase 4 | Paper trading first, then live |
+| Brokerage | Alpaca (paper trading) | Behind BrokerageProvider interface; mock available for dev |
 | Banking | Plaid Phase 5 | Behind FinancialDataProvider interface |
 
 ---
@@ -132,7 +132,10 @@ Key interfaces:
 | `AuthProvider` | Interface for any authentication system |
 | `DecisionRepository` | Interface for persisting investment decisions |
 | `FinancialDataProvider` | Interface for bank/account data (Phase 5) |
-| `BrokerageProvider` | Interface for trade execution (Phase 4) |
+| `BrokerageProvider` | Interface for trade execution (Phase 4 ✓) |
+| `TradeOrder` | Value object: UserID, Ticker, Amount (dollar-based notional) |
+| `TradeReceipt` | Value object: OrderID, Ticker, FilledAmount, FilledPrice, Status, Timestamp |
+| `Position` | Brokerage holding: Ticker, Quantity, MarketValue |
 
 ---
 
@@ -156,7 +159,7 @@ Key interfaces:
 | Collection | Purpose |
 |-----------|---------|
 | `users` | User profile + financial goals |
-| `decisions` | Every daily investment decision logged (userId, timestamp, market snapshot, allocations) |
+| `decisions` | Every daily investment decision logged (userId, timestamp, market snapshot, allocations, trade receipts) |
 | `portfolio` | Simulated holdings tracker |
 | `market_snapshots` | Daily price context (Phase 3) |
 
@@ -217,13 +220,50 @@ Key interfaces:
 | In-memory cache resets on server restart | Persist cache to MongoDB |
 | Sector price always 0 | Read `c` (close) from the `/prev` response already in hand |
 
-### Phase 4 — Planned
-- Clerk auth: fill in `ClerkAuthProvider` stub with real Clerk SDK
-- Replace DEV_MODE middleware with Clerk session management
-- `BrokerageProvider` interface in `domain/ports/`
-- Alpaca paper trading implementation
-- One-tap invest button: Claude recommends → Alpaca executes
-- Trade confirmation screen + receipt saved to MongoDB
+### Phase 4 — Complete
+
+**Phase 4a — Clerk Auth**
+- `ClerkAuthProvider` stub filled in — JWT verification via Clerk backend API (Go standard library only)
+- `infrastructure/auth/factory.go` routes DEV_MODE=false → Clerk, DEV_MODE=true → DevAuth (no change)
+- Frontend: `@clerk/clerk-react` installed, app wrapped in `<ClerkProvider>`
+- Login supports email + password and Google SSO
+- When `VITE_DEV_MODE=false`, Clerk `<SignIn>` component replaces dev login button
+- All API requests attach Clerk session token as `Authorization: Bearer <token>`
+- Domain layer untouched — handlers still just see `UserIdentity` from context
+
+**Phase 4b — Alpaca Paper Trading**
+- `BrokerageProvider` interface in `domain/ports/brokerage.go` — `PlaceMarketOrder`, `GetPositions`
+- `TradeOrder` + `TradeReceipt` + `Position` value objects in `domain/models/trade.go`
+- Alpaca implementation in `infrastructure/brokerage/alpaca.go` — notional (dollar-based) market orders via paper API
+- Mock provider in `infrastructure/brokerage/mock.go` — zero API calls, hardcoded receipts
+- `infrastructure/brokerage/factory.go` — routes via `BROKERAGE_PROVIDER` env var
+- `application/services/investment_service.go` — orchestrates: allocations → orders → decision → persist
+- `POST /invest` handler — accepts recommendation payload, returns receipts + decisionId
+- `InvestmentDecision` updated to include `Receipts []TradeReceipt`
+- MongoDB decision repository updated with receipts field + conversion helpers
+- Frontend: `ConfirmScreen.tsx` — allocations table (ticker, amount, %), risk level badge, total, confirm/cancel
+- Frontend: `ReceiptScreen.tsx` — per-order receipt display (order ID, filled price, status)
+- `Home.tsx` state machine: idle → confirming → investing → receipt
+
+**Full invest loop now works:**
+```
+User taps "Invest today"
+→ GET /recommend → Claude returns allocations
+→ ConfirmScreen: allocations + risk level + total
+→ User taps "Confirm & Invest"
+→ POST /invest → Alpaca places paper orders → MongoDB saves full decision
+→ ReceiptScreen: order IDs, filled prices, status per ticker
+```
+
+**Known debt carried into Phase 5:**
+
+| Shortcut | Future fix |
+|----------|-----------|
+| Paper trading only | Swap ALPACA_BASE_URL + keys for live trading |
+| Auth tied to Clerk free tier | Monitor MAU — paid plan at 50k users |
+| No portfolio position tracking in UI | Phase 6 history view |
+| Partial order failures logged but not surfaced in UI | Show partial failure state in ReceiptScreen |
+| Receipt screen shows order status at placement time (PENDING NEW) | Poll Alpaca for final fill status and update ReceiptScreen with filled price + confirmed status |
 
 ### Phase 5 — Planned
 - `FinancialDataProvider` interface in `domain/ports/`
@@ -237,6 +277,19 @@ Key interfaces:
 - Runs every morning, invests automatically
 - Push notifications with daily summary
 - Portfolio performance tracking + history view
+
+### Phase 7 — Planned
+- Dashboard: total dollars invested via InvestIQ, number of decisions made
+- Dashboard: allocation breakdown pie chart by ticker and sector (from decisions collection)
+- Dashboard: investment timeline — when and how much per decision
+- Receipt screen: poll Alpaca for final fill status instead of showing PENDING NEW
+
+### Phase 8 — Planned
+- NewsProvider interface in domain/ports/
+- Polygon news endpoint implementation — fetch top relevant headlines daily
+- Inject news context into Claude prompt alongside market snapshot
+- Claude reasons across market data + user profile + current events together
+- Examples: energy risk from geopolitical events, sector rotation from Fed decisions, earnings surprises
 
 ---
 
@@ -273,6 +326,11 @@ Eventually: fully autonomous. App runs at 9am, invests, sends a notification. Us
 | Polygon.io over Alpha Vantage | Alpha Vantage free tier: 25 req/day cap, unreliable after-hours responses. Polygon free tier: unlimited previous-day data |
 | Daily cache on market provider | One Polygon API call per day regardless of how many `/recommend` calls are made |
 | Mock provider for dev | Zero API calls during development — swap via MARKET_PROVIDER env var |
+| Clerk for auth | 50k free MAU, dev instance unlocks all Pro features, clean React SDK, Go backend just verifies JWT |
+| Alpaca for brokerage | Visa-friendly, paper trading requires no brokerage account, paper → live is a config change not a code change |
+| Notional (dollar-based) orders | User thinks in dollars not shares — $60 into VTI is clearer than 0.27 shares |
+| BROKERAGE_PROVIDER mock for dev | Test full invest loop without touching Alpaca API during development |
+| Partial order failure tolerance | One bad ticker shouldn't block the whole investment — log and continue, return partial receipts |
 
 ---
 
