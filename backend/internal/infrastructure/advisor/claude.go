@@ -245,6 +245,20 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 		msg += "No profile on file. Use a balanced moderate strategy.\n"
 	}
 
+	if req.BalanceSummary != nil {
+		s := req.BalanceSummary
+		msg += "\nCONNECTED FINANCIAL ACCOUNTS (live Plaid data):\n"
+		msg += fmt.Sprintf("- Total cash (checking/savings): $%.2f\n", s.TotalCash)
+		msg += fmt.Sprintf("- Total investments (brokerage/retirement): $%.2f\n", s.TotalInvestments)
+		if len(s.Institutions) > 0 {
+			msg += fmt.Sprintf("- Connected institutions: %s\n", strings.Join(s.Institutions, ", "))
+		}
+		msg += fmt.Sprintf("- Accounts connected: %d\n", s.AccountCount)
+		msg += fmt.Sprintf("- Data pulled at: %s\n", s.PulledAt.Format(time.RFC3339))
+	} else {
+		msg += "\nFINANCIAL ACCOUNTS: No bank accounts connected. Using profile estimates only.\n"
+	}
+
 	msg += "\nGive me today's investment allocation."
 	return msg
 }

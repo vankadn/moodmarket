@@ -1,3 +1,4 @@
+// domain/models/user_profile.go
 package models
 
 type TimeHorizon string
@@ -36,15 +37,16 @@ const (
 )
 
 type UserProfile struct {
-	UserID                    string            `json:"user_id"`
-	FullName                  string            `json:"full_name"`
-	Salary                    float64           `json:"salary"`
-	MonthlySavings            float64           `json:"monthly_savings"`
-	RetirementContributionPct float64           `json:"retirement_contribution_percent"`
-	ExistingPortfolioValue    float64           `json:"existing_portfolio_value"`
-	TimeHorizon               TimeHorizon       `json:"time_horizon"`
-	ImmigrationStatus         ImmigrationStatus `json:"immigration_status"`
-	RiskTolerance             RiskTolerance     `json:"risk_tolerance"`
-	InvestmentGoal            InvestmentGoal    `json:"investment_goal"`
-	HasEmergencyFund          bool              `json:"has_emergency_fund"`
+	UserID                    string                   `json:"user_id"`
+	FullName                  string                   `json:"full_name"`
+	Salary                    float64                  `json:"salary"`
+	MonthlySavings            float64                  `json:"monthly_savings"`
+	RetirementContributionPct float64                  `json:"retirement_contribution_percent"`
+	ExistingPortfolioValue    float64                  `json:"existing_portfolio_value"`
+	TimeHorizon               TimeHorizon              `json:"time_horizon"`
+	ImmigrationStatus         ImmigrationStatus        `json:"immigration_status"`
+	RiskTolerance             RiskTolerance            `json:"risk_tolerance"`
+	InvestmentGoal            InvestmentGoal           `json:"investment_goal"`
+	HasEmergencyFund          bool                     `json:"has_emergency_fund"`
+	ConnectedAccounts         []PlaidConnectionSummary `json:"connected_accounts,omitempty"` // institution + item_id only; populated by repository, never written back on save
 }

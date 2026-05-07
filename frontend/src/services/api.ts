@@ -5,6 +5,11 @@ export type ImmigrationStatus = "us_citizen" | "permanent_resident" | "work_visa
 export type RiskTolerance = "conservative" | "moderate" | "aggressive";
 export type InvestmentGoal = "wealth_building" | "retirement" | "emergency_fund" | "short_term_savings";
 
+export interface PlaidConnectionSummary {
+  institution: string;
+  item_id: string;
+}
+
 export interface UserProfile {
   user_id?: string;
   full_name: string;
@@ -17,6 +22,7 @@ export interface UserProfile {
   risk_tolerance: RiskTolerance;
   investment_goal: InvestmentGoal;
   has_emergency_fund: boolean;
+  connected_accounts?: PlaidConnectionSummary[];
 }
 
 export interface InvestmentRequest {
@@ -103,6 +109,34 @@ export async function invest(req: InvestRequest): Promise<InvestResponse> {
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
+}
+
+export async function createLinkToken(): Promise<string> {
+  const res = await fetch(`${API_BASE}/plaid/link-token`, {
+    method: "POST",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  const data = await res.json();
+  return data.link_token;
+}
+
+export async function exchangePublicToken(publicToken: string): Promise<{ institution: string; connected_accounts: number }> {
+  const res = await fetch(`${API_BASE}/plaid/exchange`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify({ public_token: publicToken }),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function deletePlaidAccount(itemId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/plaid/accounts/${itemId}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
 
 export async function saveProfile(profile: UserProfile): Promise<UserProfile> {

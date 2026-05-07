@@ -11,8 +11,9 @@ import (
 
 	"github.com/krishnarajivvns/investiq/internal/api/handlers"
 	"github.com/krishnarajivvns/investiq/internal/application/services"
-	infraauth "github.com/krishnarajivvns/investiq/internal/infrastructure/auth"
 	infraadvisor "github.com/krishnarajivvns/investiq/internal/infrastructure/advisor"
+	infraauth "github.com/krishnarajivvns/investiq/internal/infrastructure/auth"
+	infrabanking "github.com/krishnarajivvns/investiq/internal/infrastructure/banking"
 	inflabrokerage "github.com/krishnarajivvns/investiq/internal/infrastructure/brokerage"
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
 	inframarket "github.com/krishnarajivvns/investiq/internal/infrastructure/market"
@@ -55,6 +56,7 @@ func main() {
 
 	database := mongoClient.Database("investiq")
 	profileRepo := infradb.NewMongoProfileRepository(database)
+	decisionRepo := infradb.NewMongoDecisionRepository(database)
 
 	advisor, err := infraadvisor.NewAdvisor()
 	if err != nil {
@@ -66,11 +68,14 @@ func main() {
 		log.Fatalf("market data provider init failed: %v", err)
 	}
 
-	decisionRepo := infradb.NewMongoDecisionRepository(database)
-
 	brokerageProvider, err := inflabrokerage.NewBrokerageProvider()
 	if err != nil {
 		log.Fatalf("brokerage provider init failed: %v", err)
+	}
+
+	financialDataProvider, err := infrabanking.NewFinancialDataProvider()
+	if err != nil {
+		log.Fatalf("financial data provider init failed: %v", err)
 	}
 
 	authProvider, err := infraauth.NewAuthProvider()
@@ -78,15 +83,20 @@ func main() {
 		log.Fatalf("auth provider init failed: %v", err)
 	}
 
-	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo)
+	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider)
 	investSvc := services.NewInvestmentService(brokerageProvider, decisionRepo, marketProvider)
 	idp := middleware.ContextIdentityProvider{}
+
+	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)
 
 	mux := http.NewServeMux()
 	mux.Handle("/auth/dev-login", handlers.NewDevLoginHandler())
 	mux.Handle("/recommend", handlers.NewRecommendHandler(recommendSvc, idp))
 	mux.Handle("/invest", handlers.NewInvestHandler(investSvc, idp))
 	mux.Handle("/users/profile", handlers.NewProfileHandler(profileRepo, idp))
+	mux.Handle("/plaid/link-token", plaidHandler)
+	mux.Handle("/plaid/exchange", plaidHandler)
+	mux.Handle("/plaid/accounts/", plaidHandler) // trailing slash = prefix match for /{item_id}
 
 	port := os.Getenv("PORT")
 	if port == "" {

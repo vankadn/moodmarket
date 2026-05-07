@@ -1,13 +1,13 @@
 // frontend/src/ClerkApp.tsx
 // Clerk-specific app shell. Only rendered when VITE_DEV_MODE=false.
-// Manages auth state via Clerk hooks; dev mode App.tsx is untouched.
 import { useEffect, useState } from "react";
 import { useAuth, useClerk, SignIn } from "@clerk/clerk-react";
 import { Onboarding } from "./pages/Onboarding";
 import { Home } from "./pages/Home";
+import { Profile } from "./pages/Profile";
 import { getProfile, UserProfile, setTokenFetcher } from "./services/api";
 
-type AppState = "loading" | "onboarding" | "home";
+type AppState = "loading" | "onboarding" | "home" | "profile";
 
 function Spinner() {
   return (
@@ -39,7 +39,6 @@ export function ClerkApp() {
 
   if (!isLoaded) return <Spinner />;
 
-  // Not signed in — show Clerk's embedded sign-in component.
   if (!isSignedIn) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0a0a0a" }}>
@@ -58,10 +57,26 @@ export function ClerkApp() {
     );
   }
 
+  if (state === "profile") {
+    return (
+      <Profile
+        profile={profile!}
+        onBack={() => setState("home")}
+        onAccountsChanged={() => {
+          setState("loading");
+          getProfile()
+            .then((p) => { setProfile(p); setState("profile"); }) // stay on profile page after refresh
+            .catch(() => setState("home"));
+        }}
+      />
+    );
+  }
+
   return (
     <Home
       profile={profile!}
       onSignOut={() => signOut()}
+      onManageAccounts={() => setState("profile")}
     />
   );
 }

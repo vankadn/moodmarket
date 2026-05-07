@@ -6,6 +6,7 @@ import { getRecommendation, invest, Recommendation, TradeReceipt, UserProfile } 
 interface Props {
   profile: UserProfile;
   onSignOut?: () => void;
+  onManageAccounts?: () => void;
 }
 
 const goalLabel: Record<string, string> = {
@@ -24,8 +25,8 @@ const horizonLabel: Record<string, string> = {
 
 type HomeState = "idle" | "confirming" | "investing" | "receipt";
 
-export function Home({ profile, onSignOut }: Props) {
-  const [extra, setExtra] = useState<number>(0);
+export function Home({ profile, onSignOut, onManageAccounts }: Props) {
+  const [amount, setAmount] = useState<number>(100);
   const [homeState, setHomeState] = useState<HomeState>("idle");
   const [rec, setRec] = useState<Recommendation | null>(null);
   const [receipts, setReceipts] = useState<TradeReceipt[]>([]);
@@ -33,13 +34,11 @@ export function Home({ profile, onSignOut }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const total = 100 + extra;
-
   async function handleGetRecommendation() {
     setLoading(true);
     setError(null);
     try {
-      const result = await getRecommendation({ base_budget: 100, extra_money: extra });
+      const result = await getRecommendation({ base_budget: amount, extra_money: 0 });
       setRec(result);
       setHomeState("confirming");
     } catch (e: unknown) {
@@ -97,14 +96,24 @@ export function Home({ profile, onSignOut }: Props) {
           <h1 style={{ fontSize: "22px", fontWeight: 600, margin: "0 0 4px" }}>InvestIQ</h1>
           <p style={{ fontSize: "14px", color: "#666", margin: 0 }}>Daily investment advisor</p>
         </div>
-        {onSignOut && (
-          <button
-            onClick={onSignOut}
-            style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
-          >
-            Sign out
-          </button>
-        )}
+        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+          {onManageAccounts && (
+            <button
+              onClick={onManageAccounts}
+              style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
+            >
+              Bank accounts
+            </button>
+          )}
+          {onSignOut && (
+            <button
+              onClick={onSignOut}
+              style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
+            >
+              Sign out
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Profile summary card */}
@@ -124,24 +133,21 @@ export function Home({ profile, onSignOut }: Props) {
 
       {homeState === "idle" && (
         <>
-          {/* Extra money input */}
+          {/* Investment amount input */}
           <div style={{ marginBottom: "1.5rem" }}>
             <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
-              Extra money today (optional)
+              Today's investment
             </label>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", marginTop: "8px" }}>
               <div style={{ display: "flex", alignItems: "center", border: "1px solid #e0e0e0", borderRadius: "8px", overflow: "hidden" }}>
                 <span style={{ padding: "8px 10px", fontSize: "14px", color: "#888", background: "#f8f8f8", borderRight: "1px solid #e0e0e0" }}>$</span>
                 <input
-                  type="number" min={0} step={10} value={extra || ""}
-                  onChange={(e) => setExtra(Math.max(0, Number(e.target.value)))}
-                  placeholder="0"
-                  style={{ width: "100px", padding: "8px 10px", border: "none", outline: "none", fontSize: "14px" }}
+                  type="number" min={1} step={10} value={amount}
+                  disabled={loading}
+                  onChange={(e) => setAmount(Math.max(1, Number(e.target.value)))}
+                  style={{ width: "100px", padding: "8px 10px", border: "none", outline: "none", fontSize: "14px", background: loading ? "#f8f8f8" : "white" }}
                 />
               </div>
-              <span style={{ fontSize: "13px", color: "#888" }}>
-                = <strong style={{ color: "#333" }}>${total} total</strong>
-              </span>
             </div>
           </div>
 
@@ -157,7 +163,7 @@ export function Home({ profile, onSignOut }: Props) {
               marginBottom: "1.5rem",
             }}
           >
-            {loading ? "Generating recommendation…" : `Get recommendation for $${total}`}
+            {loading ? "Generating recommendation…" : `Get recommendation for $${amount}`}
           </button>
         </>
       )}

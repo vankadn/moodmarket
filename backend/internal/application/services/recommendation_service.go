@@ -13,10 +13,11 @@ import (
 )
 
 type RecommendationService struct {
-	advisor      ports.InvestmentAdvisor
-	profileRepo  ports.ProfileRepository
-	marketData   ports.MarketDataProvider
-	decisionRepo ports.DecisionRepository
+	advisor       ports.InvestmentAdvisor
+	profileRepo   ports.ProfileRepository
+	marketData    ports.MarketDataProvider
+	decisionRepo  ports.DecisionRepository
+	financialData ports.FinancialDataProvider
 }
 
 func NewRecommendationService(
@@ -24,19 +25,20 @@ func NewRecommendationService(
 	profileRepo ports.ProfileRepository,
 	marketData ports.MarketDataProvider,
 	decisionRepo ports.DecisionRepository,
+	financialData ports.FinancialDataProvider,
 ) *RecommendationService {
 	return &RecommendationService{
-		advisor:      advisor,
-		profileRepo:  profileRepo,
-		marketData:   marketData,
-		decisionRepo: decisionRepo,
+		advisor:       advisor,
+		profileRepo:   profileRepo,
+		marketData:    marketData,
+		decisionRepo:  decisionRepo,
+		financialData: financialData,
 	}
 }
 
-// GetDailyRecommendation fetches the user's profile and today's market snapshot,
-// asks the advisor for an allocation, then logs the decision to the repository.
-// Market data failure and decision save failure are both non-fatal — the
-// recommendation is returned to the caller regardless.
+// GetDailyRecommendation fetches the user's profile, today's market snapshot, and live Plaid
+// balances (if accounts are connected), then asks the advisor for an allocation and logs the decision.
+// Market data and Plaid failures are both non-fatal — the recommendation is returned regardless.
 func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, userID string, req models.InvestmentRequest) (*models.Recommendation, error) {
 	profile, err := s.profileRepo.GetByUserID(ctx, userID)
 	if err != nil && !errors.Is(err, ports.ErrProfileNotFound) {
@@ -47,6 +49,19 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	if err != nil {
 		log.Printf("recommendation service: market data unavailable (%v) — proceeding without it", err)
 		snapshot = nil
+	}
+
+	// Enrich with live Plaid balances if the user has connected accounts.
+	connections, err := s.profileRepo.GetPlaidConnections(ctx, userID)
+	if err != nil {
+		log.Printf("recommendation service: fetch plaid connections (%v) — proceeding without bank data", err)
+	} else if len(connections) > 0 {
+		summary, err := s.financialData.GetBalanceSummary(ctx, connections)
+		if err != nil {
+			log.Printf("recommendation service: fetch balance summary (%v) — proceeding without bank data", err)
+		} else {
+			req.BalanceSummary = &summary
+		}
 	}
 
 	rec, err := s.advisor.GetRecommendation(ctx, req, profile, snapshot)

@@ -1,8 +1,10 @@
+// domain/models/investment.go
 package models
 
 type InvestmentRequest struct {
-	BaseBudget float64 `json:"base_budget"`
-	ExtraMoney float64 `json:"extra_money"`
+	BaseBudget     float64         `json:"base_budget"`
+	ExtraMoney     float64         `json:"extra_money"`
+	BalanceSummary *BalanceSummary `json:"-"` // injected by recommendation service; never decoded from HTTP body
 }
 
 type Allocation struct {
