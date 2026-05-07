@@ -40,7 +40,7 @@ func NewRecommendationService(
 // balances (if accounts are connected), then asks the advisor for an allocation and logs the decision.
 // Market data and Plaid failures are both non-fatal — the recommendation is returned regardless.
 func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, userID string, req models.InvestmentRequest) (*models.Recommendation, error) {
-	log.Printf("[recommend] ── START for user %s (budget $%.0f) ──────────────────", userID, req.BaseBudget+req.ExtraMoney)
+	log.Printf("[recommend] ── START for user %s ──────────────────────────────────", userID)
 
 	// Step 1: user profile
 	profile, err := s.profileRepo.GetByUserID(ctx, userID)
@@ -48,7 +48,7 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 		return nil, fmt.Errorf("recommendation service: fetch profile: %w", err)
 	}
 	if profile != nil {
-		log.Printf("[recommend] step 1/5  profile loaded (goal=%s risk=%s horizon=%s)", profile.InvestmentGoal, profile.RiskTolerance, profile.TimeHorizon)
+		log.Printf("[recommend] step 1/5  profile loaded")
 	} else {
 		log.Printf("[recommend] step 1/5  no profile found — using balanced defaults")
 	}
@@ -69,18 +69,14 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	} else if len(connections) == 0 {
 		log.Printf("[recommend] step 3/5  no bank accounts connected — Claude will use profile estimates only")
 	} else {
-		institutions := make([]string, len(connections))
-		for i, c := range connections {
-			institutions[i] = c.Institution
-		}
-		log.Printf("[recommend] step 3/5  %d plaid connection(s) found: %v — fetching live balances", len(connections), institutions)
+		log.Printf("[recommend] step 3/5  %d plaid connection(s) found — fetching live balances", len(connections))
 
 		summary, err := s.financialData.GetBalanceSummary(ctx, connections)
 		if err != nil {
 			log.Printf("[recommend] step 3/5  balance fetch failed (%v) — skipped", err)
 		} else {
 			req.BalanceSummary = &summary
-			log.Printf("[recommend] step 3/5  balances: cash=$%.2f investments=$%.2f accounts=%d institutions=%v", summary.TotalCash, summary.TotalInvestments, summary.AccountCount, summary.Institutions)
+			log.Printf("[recommend] step 3/5  balances loaded (%d accounts)", summary.AccountCount)
 		}
 	}
 
@@ -90,7 +86,7 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	if err != nil {
 		return nil, fmt.Errorf("recommendation service: advisor: %w", err)
 	}
-	log.Printf("[recommend] step 4/5  Claude returned %d allocations totalling $%.2f (risk=%s)", len(rec.Allocations), rec.TotalBudget, rec.RiskLevel)
+	log.Printf("[recommend] step 4/5  Claude returned %d allocations (risk=%s)", len(rec.Allocations), rec.RiskLevel)
 
 	// Step 5: persist decision
 	decision := &models.InvestmentDecision{

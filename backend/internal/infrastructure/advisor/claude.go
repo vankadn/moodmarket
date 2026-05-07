@@ -93,7 +93,6 @@ func newClaudeAdvisor() *claudeAdvisor {
 // GetRecommendation calls Claude with a JSON prefill and retries once on parse failure.
 func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.InvestmentRequest, profile *models.UserProfile, snapshot *models.MarketSnapshot) (*models.Recommendation, error) {
 	userMsg := buildUserMessage(req, profile, snapshot)
-	log.Printf("[claude] ── USER MESSAGE ──────────────────────────────────────────\n%s\n[claude] ────────────────────────────────────────────────────────────", userMsg)
 
 	messages := []claudeMessage{
 		{Role: "user", Content: userMsg},
