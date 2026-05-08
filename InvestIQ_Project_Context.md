@@ -295,9 +295,52 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Poll Alpaca for final fill status instead of showing PENDING NEW
 
 ### Phase 8 — Planned
+
+**Goal:** Make the Claude prompt as strong as possible with maximum real context.
+
+**News:**
 - `NewsProvider` interface in `domain/ports/`
 - Polygon news endpoint — fetch top headlines daily
-- Inject news context into Claude prompt alongside market snapshot
+- Inject news context into Claude prompt
+
+**Stronger prompt additions:**
+- Current Alpaca positions — what the user already holds; Claude avoids over-concentrating
+- Recent decision history (last 5-10) — Claude doesn't repeat the same allocation daily
+- Plaid transaction history — is cash about to drop? spending spike?
+- Prompt structure review — ordering, tone, instruction clarity, output contract
+
+### Phase 9 — Planned
+
+**Goal:** Deploy the app. Share a real URL with a friend. Real user, real account, real trades.
+
+Full deployment plan covering:
+- Backend: containerize Go server, deploy to cloud (Railway / Fly.io / Render TBD)
+- Frontend: deploy React app (Vercel or same host TBD)
+- MongoDB: Atlas (already used in dev, promote to production cluster)
+- Secrets: move Plaid tokens from encrypted Mongo to Vault or AWS Secrets Manager
+- Clerk: switch from dev instance to production instance
+- Alpaca: evaluate paper → live switch for real user
+- Environment config: production `.env` strategy, no secrets in repo
+- Domain + HTTPS
+- Smoke test checklist before sharing URL
+
+### Phase 10 — TBD
+
+Pick one item from Known Debt or Wishlist based on what matters most after Phase 9 real-user feedback.
+
+---
+
+## Backlog
+
+Features defined but not yet scheduled. Reviewed after each phase — promoted when the time is right.
+
+| Item | Notes |
+|------|-------|
+| Macro indicators (Fed rate, inflation) | News context covers this for now |
+| Earnings calendar | Adds complexity, marginal value at current scale |
+| Per-user scheduler interval | Get one real user working first (Phase 9) |
+| Multiple auto-invest configs per user | Phase 9 first |
+| Redis for Plaid balance cache | In-memory is fine until scale demands it |
 
 ---
 
@@ -386,10 +429,10 @@ Background data access is legitimate when:
 |----------|-----------|
 | Paper trading only | Swap ALPACA_BASE_URL + keys for live |
 | Log provider for notifications | Real push (FCM or APNs) |
-| Per-user interval not supported | Phase 9 — user sets own interval from settings |
+| Per-user interval not supported | Wishlist — user sets own interval from settings |
 | Market holiday awareness | Add NYSE calendar check before scheduler executes |
-| Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale |
-| Encrypted Mongo for Plaid tokens | Vault / AWS Secrets Manager before any real user beyond developer |
-| No transaction history in prompt | Add Plaid Transactions scope in Phase 8 |
-| One config per user only | Phase 9 — multiple schedules with different risk levels |
+| Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale (Wishlist) |
+| Encrypted Mongo for Plaid tokens | Vault / AWS Secrets Manager — Phase 9 deployment |
+| No transaction history in prompt | Phase 8 — Plaid Transactions scope |
+| One config per user only | Wishlist — multiple schedules with different risk levels |
 | Receipt shows PENDING NEW | Poll Alpaca for final fill status |
