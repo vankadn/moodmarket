@@ -58,3 +58,4 @@ Update when:
 - Touching frontend → read `skills/react-rules.md`
 - Starting a new feature implementation → read `skills/new-feature-checklist.md`
 - Committing or pushing → read `skills/pre-commit-checklist.md`
+- Adding or changing business logic → read `skills/testing-rules.md`

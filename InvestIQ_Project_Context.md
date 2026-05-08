@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-08 (Phase 8a complete)
+> Last updated: 2026-05-08 (Phase 8b complete)
 
 ---
 
@@ -48,7 +48,8 @@ infrastructure/      ← implementations of domain ports
   advisor/           ← AI provider implementations (Claude + mock)
   db/                ← MongoDB
   auth/              ← Auth providers (DEV + Clerk)
-  market/            ← stock price APIs
+  market/            ← stock price APIs (Polygon + mock)
+  news/              ← market headlines (Polygon + mock)
   banking/           ← Plaid
   brokerage/         ← Alpaca
   notifications/     ← log provider (dev), push (future)
@@ -71,6 +72,7 @@ Key interfaces:
 - `AuthProvider` — identity (DevAuth for local dev, Clerk in production)
 - `IdentityProvider` — userId in request context
 - `MarketDataProvider` — live prices (Polygon or mock)
+- `NewsProvider` — market headlines (Polygon or mock)
 - `DecisionRepository` — investment decision persistence
 - `BrokerageProvider` — trade execution (Alpaca or mock)
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
@@ -100,6 +102,7 @@ Key interfaces:
 | Secrets | Encrypted Mongo now, Vault pre go-live | Behind SecretsProvider interface |
 | Scheduler | Go time.Ticker | Drives autonomous investment cycle; interval from AUTO_INVEST_INTERVAL env var |
 | Notifications | Log provider (dev) | Behind NotificationProvider interface; logs to stdout |
+| News | Polygon.io `/v2/reference/news` / mock | Behind NewsProvider interface; daily cache; top 5 SPY-tagged headlines injected into Claude prompt |
 
 ---
 
@@ -136,6 +139,7 @@ See README.md for the full env var reference and provider swap table.
 | `PlaidConnection` | Per-institution token record: institution name, access_token, item_id |
 | `AutoInvestConfig` | First-class domain model (own collection): Enabled, Amount, Risk, EnabledAt, UpdatedAt |
 | `SchedulerRun` | Audit record for one autonomous cycle: RunID, StartedAt, CompletedAt, UsersProcessed, TotalInvested, Errors |
+| `NewsItem` | One market headline: Headline, Summary, Source, PublishedAt |
 
 ---
 
@@ -322,32 +326,24 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 ---
 
-### Phase 8b — Polygon news (zero new dependencies, existing key)
+### Phase 8b — Complete
 
-**Why Polygon over Finnhub:** Already paying for Polygon (same free tier key used for market data). Adding a second API key and provider for Finnhub violates the principle of getting more from existing dependencies before adding new ones. Claude can infer sentiment from headline text — structured sentiment scores are a nice-to-have, not a need-to-have at this stage. Finnhub is in the backlog for when individual stock recommendations make per-ticker sentiment genuinely valuable.
+**Polygon news — zero new dependencies, existing key**
 
-**NewsProvider interface:**
-```go
-type NewsProvider interface {
-    GetMarketNews(ctx context.Context) ([]NewsItem, error)
-}
+**Why Polygon over Finnhub:** Already using Polygon for market data (same free-tier key). Adding Finnhub would be a new key, new dependency, new failure surface. Claude infers sentiment from headline text well enough at this stage. Finnhub backlogged for when per-ticker sentiment on individual stocks becomes genuinely valuable.
 
-type NewsItem struct {
-    Headline    string
-    Summary     string
-    Source      string
-    PublishedAt time.Time
-}
-```
-
-**Implementation:**
-- `infrastructure/news/polygon.go` — Polygon `/v2/reference/news?ticker=SPY&limit=10`, existing API key
-- `infrastructure/news/mock.go` — 3 hardcoded headlines
-- `infrastructure/news/factory.go` — routes via `NEWS_PROVIDER=polygon|mock`
-- Daily cache on the provider — one Polygon call per day, same pattern as market data
-- Inject into Claude prompt: top 5 headlines with source and date
-
-**New env vars:** `NEWS_PROVIDER=polygon` (POLYGON_API_KEY already set)
+- `domain/models/news.go` — `NewsItem`: Headline, Summary, Source, PublishedAt
+- `domain/ports/news.go` — `NewsProvider.GetDailyNews(ctx) ([]NewsItem, error)`
+- `infrastructure/news/polygon.go` — Polygon `/v2/reference/news?ticker=SPY&limit=10`; daily cache; reuses `POLYGON_API_KEY`
+- `infrastructure/news/mock.go` — 3 hardcoded headlines (Fed, S&P, Oil)
+- `infrastructure/news/factory.go` — `NEWS_PROVIDER=polygon|mock`; defaults to mock
+- `MOCK_ALL=true` sets `NEWS_PROVIDER=mock`
+- `RecommendationService` now 7 steps: profile → market → Plaid → positions → decisions → news → Claude
+- News failure is non-fatal — recommendation proceeds without headlines
+- Claude prompt: `TODAY'S MARKET NEWS` section (top 5) with source + headline; instruction to factor in macro events
+- New env var: `NEWS_PROVIDER=polygon` (POLYGON_API_KEY already required by market data)
+- Prompt tests updated: 3 new cases added (`no_news_omits_section`, `news_present_shows_section_and_macro_instruction`, `news_capped_at_five_headlines`) — total now 15 cases
+- `[8b-debug]` temporary logs added with `// TODO: remove after 8b testing` markers — grep `[8b-debug]` to find them
 
 ---
 
@@ -496,4 +492,5 @@ Background data access is legitimate when:
 | One config per user only | Wishlist — multiple schedules with different risk levels |
 | Receipt shows PENDING NEW | Fixed in Phase 7 — polls until terminal status |
 | `[8a-debug]` log lines in `recommendation_service.go` | Remove after Phase 8a testing is verified; grep `[8a-debug]` |
+| `[8b-debug]` log lines in `recommendation_service.go` | Remove after Phase 8b testing is verified; grep `[8b-debug]` |
 | Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |

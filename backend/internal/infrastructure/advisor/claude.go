@@ -299,6 +299,18 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 		msg += "Vary today's allocation — do not repeat the exact same split as yesterday.\n"
 	}
 
+	if len(req.NewsItems) > 0 {
+		limit := 5
+		if len(req.NewsItems) < limit {
+			limit = len(req.NewsItems)
+		}
+		msg += "\nTODAY'S MARKET NEWS (top headlines):\n"
+		for _, n := range req.NewsItems[:limit] {
+			msg += fmt.Sprintf("- [%s] %s\n", n.Source, n.Headline)
+		}
+		msg += "Factor in any macro events or sector-specific news when choosing allocations.\n"
+	}
+
 	msg += "\nGive me today's investment allocation."
 	return msg
 }

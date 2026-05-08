@@ -18,6 +18,7 @@ import (
 	inflabrokerage "github.com/krishnarajivvns/investiq/internal/infrastructure/brokerage"
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
 	inframarket "github.com/krishnarajivvns/investiq/internal/infrastructure/market"
+	infranews "github.com/krishnarajivvns/investiq/internal/infrastructure/news"
 	infranotifications "github.com/krishnarajivvns/investiq/internal/infrastructure/notifications"
 	"github.com/krishnarajivvns/investiq/internal/middleware"
 )
@@ -55,6 +56,7 @@ func main() {
 		os.Setenv("MARKET_PROVIDER", "mock")
 		os.Setenv("FINANCIAL_DATA_PROVIDER", "mock")
 		os.Setenv("BROKERAGE_PROVIDER", "mock")
+		os.Setenv("NEWS_PROVIDER", "mock")
 		os.Setenv("DEV_MODE", "true")
 	}
 
@@ -90,6 +92,11 @@ func main() {
 		log.Fatalf("financial data provider init failed: %v", err)
 	}
 
+	newsProvider, err := infranews.NewNewsProvider()
+	if err != nil {
+		log.Fatalf("news provider init failed: %v", err)
+	}
+
 	authProvider, err := infraauth.NewAuthProvider()
 	if err != nil {
 		log.Fatalf("auth provider init failed: %v", err)
@@ -99,7 +106,7 @@ func main() {
 	autoInvestRepo := infradb.NewMongoAutoInvestRepository(database)
 	notificationProvider := infranotifications.NewNotificationProvider()
 
-	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageProvider)
+	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageProvider, newsProvider)
 	investSvc := services.NewInvestmentService(brokerageProvider, decisionRepo, marketProvider)
 	idp := middleware.ContextIdentityProvider{}
 
