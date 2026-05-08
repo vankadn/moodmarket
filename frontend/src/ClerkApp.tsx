@@ -6,9 +6,10 @@ import { Onboarding } from "./pages/Onboarding";
 import { Home } from "./pages/Home";
 import { Profile } from "./pages/Profile";
 import { AutoInvestSettings } from "./pages/AutoInvestSettings";
+import { Activity } from "./pages/Activity";
 import { getProfile, UserProfile, setTokenFetcher } from "./services/api";
 
-type AppState = "loading" | "onboarding" | "home" | "profile" | "auto-invest-settings";
+type AppState = "loading" | "onboarding" | "home" | "profile" | "auto-invest-settings" | "activity";
 
 function Spinner() {
   return (
@@ -77,12 +78,17 @@ export function ClerkApp() {
     return <AutoInvestSettings onBack={() => setState("home")} />;
   }
 
+  if (state === "activity") {
+    return <Activity onBack={() => setState("home")} />;
+  }
+
   return (
     <Home
       profile={profile!}
       onSignOut={() => signOut()}
       onManageAccounts={() => setState("profile")}
       onAutoInvestSettings={() => setState("auto-invest-settings")}
+      onActivity={() => setState("activity")}
     />
   );
 }

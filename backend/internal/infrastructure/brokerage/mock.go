@@ -27,6 +27,17 @@ func (m *MockBrokerageProvider) PlaceMarketOrder(_ context.Context, order models
 	}, nil
 }
 
+func (m *MockBrokerageProvider) GetOrder(_ context.Context, orderID string) (*models.TradeReceipt, error) {
+	return &models.TradeReceipt{
+		OrderID:      orderID,
+		Ticker:       "MOCK",
+		FilledAmount: 100.00,
+		FilledPrice:  150.00,
+		Status:       "filled",
+		Timestamp:    time.Now(),
+	}, nil
+}
+
 func (m *MockBrokerageProvider) GetPositions(_ context.Context, _ string) ([]ports.Position, error) {
 	return []ports.Position{
 		{Ticker: "VTI", Quantity: 0.42, MarketValue: 98.50},

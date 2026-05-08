@@ -21,4 +21,6 @@ type BrokerageProvider interface {
 	PlaceMarketOrder(ctx context.Context, order models.TradeOrder) (*models.TradeReceipt, error)
 	// GetPositions returns all open positions for the given user.
 	GetPositions(ctx context.Context, userID string) ([]Position, error)
+	// GetOrder returns the current status of a previously placed order.
+	GetOrder(ctx context.Context, orderID string) (*models.TradeReceipt, error)
 }

@@ -167,6 +167,36 @@ export async function saveAutoInvestConfig(config: AutoInvestConfig): Promise<Au
   return res.json();
 }
 
+export interface ActivityDecision {
+  id: string;
+  timestamp: string;
+  total_amount: number;
+  risk_level: string;
+}
+
+export interface ActivitySummary {
+  total_decisions: number;
+  total_invested: number;
+  decisions: ActivityDecision[];
+}
+
+export async function getActivity(since: Date | null): Promise<ActivitySummary> {
+  const url = since
+    ? `${API_BASE}/users/activity?since=${encodeURIComponent(since.toISOString())}`
+    : `${API_BASE}/users/activity`;
+  const res = await fetch(url, { headers: await authHeaders() });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function getOrderStatus(orderID: string): Promise<TradeReceipt> {
+  const res = await fetch(`${API_BASE}/orders/${orderID}`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
 export async function saveProfile(profile: UserProfile): Promise<UserProfile> {
   const res = await fetch(`${API_BASE}/users/profile`, {
     method: "POST",

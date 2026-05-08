@@ -110,6 +110,34 @@ func (r *MongoDecisionRepository) ListByUser(ctx context.Context, userID string,
 	return decisions, nil
 }
 
+func (r *MongoDecisionRepository) ListByUserSince(ctx context.Context, userID string, since *time.Time) ([]models.InvestmentDecision, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	filter := bson.M{"user_id": userID}
+	if since != nil {
+		filter["timestamp"] = bson.M{"$gte": *since}
+	}
+
+	opts := options.Find().SetSort(bson.D{{Key: "timestamp", Value: -1}})
+	cursor, err := r.collection.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, fmt.Errorf("mongo decision repo: list since: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var docs []decisionDocument
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, fmt.Errorf("mongo decision repo: decode since: %w", err)
+	}
+
+	decisions := make([]models.InvestmentDecision, len(docs))
+	for i, doc := range docs {
+		decisions[i] = toDecision(&doc)
+	}
+	return decisions, nil
+}
+
 // --- Conversion helpers ---
 
 func fromDecision(d *models.InvestmentDecision) *decisionDocument {

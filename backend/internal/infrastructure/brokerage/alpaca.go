@@ -147,6 +147,55 @@ func (p *AlpacaProvider) GetPositions(ctx context.Context, _ string) ([]ports.Po
 	return positions, nil
 }
 
+// GetOrder fetches the current status of a single order from Alpaca.
+func (p *AlpacaProvider) GetOrder(ctx context.Context, orderID string) (*models.TradeReceipt, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/v2/orders/"+orderID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("alpaca: build get-order request: %w", err)
+	}
+	p.setHeaders(req)
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("alpaca: get order %s: %w", orderID, err)
+	}
+	defer resp.Body.Close()
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("alpaca: read order response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("alpaca: get order API %d: %s", resp.StatusCode, rawBody)
+	}
+
+	var alpacaOrder struct {
+		ID             string  `json:"id"`
+		Symbol         string  `json:"symbol"`
+		Status         string  `json:"status"`
+		CreatedAt      string  `json:"created_at"`
+		FilledNotional *string `json:"filled_notional"`
+		FilledAvgPrice *string `json:"filled_avg_price"`
+	}
+	if err := json.Unmarshal(rawBody, &alpacaOrder); err != nil {
+		return nil, fmt.Errorf("alpaca: parse order response: %w", err)
+	}
+
+	receipt := &models.TradeReceipt{
+		OrderID:   alpacaOrder.ID,
+		Ticker:    alpacaOrder.Symbol,
+		Status:    alpacaOrder.Status,
+		Timestamp: parseAlpacaTime(alpacaOrder.CreatedAt),
+	}
+	if alpacaOrder.FilledNotional != nil {
+		receipt.FilledAmount, _ = strconv.ParseFloat(*alpacaOrder.FilledNotional, 64)
+	}
+	if alpacaOrder.FilledAvgPrice != nil {
+		receipt.FilledPrice, _ = strconv.ParseFloat(*alpacaOrder.FilledAvgPrice, 64)
+	}
+	return receipt, nil
+}
+
 func (p *AlpacaProvider) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("APCA-API-KEY-ID", p.apiKey)

@@ -8,28 +8,7 @@
 ## Who I am
 
 - Background: React + Go developer (professional experience)
-- AI experience: New to Claude and AI development — learning by building
-- Goal: Build a real product while earning the Anthropic CPN certification simultaneously
 - Dev environment: MacBook Pro (Intel), VS Code + Claude Code extension, terminal
-
----
-
-## The two goals running in parallel
-
-### Goal 1 — CPN Certification
-Complete the Anthropic Claude Partner Network certification via Anthropic Academy (anthropic.skilljar.com). Access was granted through a company CPN application. The certification is called **Claude Certified Architect, Foundations** — multiple choice exam, passing score 720/1000, free for CPN members.
-
-**Course order:**
-1. Claude 101 (~30 mins) — start here
-2. Building with the Claude API (~8 hrs) — maps directly to what we are building
-3. Introduction to Agent Skills
-4. Introduction to Model Context Protocol (MCP)
-5. Claude Code in Action
-
-The strategy: every CPN module studied maps to a feature built in InvestIQ. Learning and building together.
-
-### Goal 2 — InvestIQ app
-A smart daily investment assistant. Described in full below.
 
 ---
 
@@ -273,8 +252,6 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - `infrastructure/db/mongo_scheduler_repository.go` — `scheduler_runs` collection
 - CORS moved to outermost `middleware.CORS()` wrapper in `main.go` — covers all routes universally
 
-**CPN relevance:** Autonomous agent with explicit user consent, defined scope, audit trail, graceful failure, and a way to stop. Covers the Agent Skills module in practice.
-
 ### Phase 6b — Complete
 
 **Goal:** Promote AutoInvestConfig to a first-class domain model with its own collection and a dedicated settings screen.
@@ -305,10 +282,17 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - README rewritten: zero-external-calls setup, provider swap table, Plaid and Alpaca config sections
 
 ### Phase 7 — Current
-- Dashboard: total dollars invested, number of decisions made
-- Dashboard: allocation breakdown by ticker and sector (from decisions collection)
-- Dashboard: investment timeline — when and how much per decision
-- Receipt screen: poll Alpaca for final fill status instead of showing PENDING NEW
+
+**Goal:** Activity dashboard showing what the user has done through InvestIQ. No profit/loss — activity only.
+
+**Dashboard:**
+- Total decisions made + total dollars invested — both filtered by selected time range
+- Time range filter: three numeric inputs (hours / days / months) — hours accepts decimals (e.g. 0.5 = 30 min), useful for local scheduler testing; user fills any combination, app combines into a date range; includes a reset button that defaults back to 30 days
+- Investment timeline: list of decisions within selected period showing date + amount invested
+- All data aggregated from `decisions` collection
+
+**Receipt screen:**
+- Poll Alpaca for final fill status instead of showing PENDING NEW
 
 ### Phase 8 — Planned
 - `NewsProvider` interface in `domain/ports/`

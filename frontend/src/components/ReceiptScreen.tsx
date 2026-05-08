@@ -1,12 +1,18 @@
-import { TradeReceipt } from "../services/api";
+import { useEffect, useRef, useState } from "react";
+import { TradeReceipt, getOrderStatus } from "../services/api";
 
 const statusColor: Record<string, string> = {
-  filled: "#1D9E75",
-  pending_new: "#888",
-  accepted: "#888",
+  filled:           "#1D9E75",
+  pending_new:      "#888",
+  accepted:         "#888",
   partially_filled: "#E6873A",
-  canceled: "#C0392B",
+  canceled:         "#C0392B",
+  expired:          "#C0392B",
+  rejected:         "#C0392B",
 };
+
+const TERMINAL = new Set(["filled", "canceled", "expired", "rejected", "replaced"]);
+const POLL_MS = 3000;
 
 interface Props {
   receipts: TradeReceipt[];
@@ -14,15 +20,52 @@ interface Props {
   onDone: () => void;
 }
 
-export function ReceiptScreen({ receipts, decisionId, onDone }: Props) {
+export function ReceiptScreen({ receipts: initial, decisionId, onDone }: Props) {
+  const [receipts, setReceipts] = useState<TradeReceipt[]>(initial);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const allSettled = receipts.every((r) => TERMINAL.has(r.status));
+
+  useEffect(() => {
+    if (allSettled) return;
+
+    function poll() {
+      const pending = receipts.filter((r) => !TERMINAL.has(r.status));
+      if (pending.length === 0) return;
+
+      Promise.allSettled(pending.map((r) => getOrderStatus(r.order_id))).then((results) => {
+        setReceipts((prev) => {
+          const updated = [...prev];
+          results.forEach((result, i) => {
+            if (result.status === "fulfilled") {
+              const idx = updated.findIndex((r) => r.order_id === pending[i].order_id);
+              if (idx !== -1) updated[idx] = result.value;
+            }
+          });
+          return updated;
+        });
+      });
+
+      timerRef.current = setTimeout(poll, POLL_MS);
+    }
+
+    timerRef.current = setTimeout(poll, POLL_MS);
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [allSettled]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: "12px", padding: "1.25rem 1.5rem" }}>
       <div style={{ marginBottom: "1.25rem" }}>
         <div style={{ fontWeight: 600, fontSize: "15px", color: "#111" }}>
           {receipts.length > 0 ? "Orders placed" : "No orders placed"}
         </div>
-        <div style={{ fontSize: "11px", color: "#bbb", marginTop: "4px", fontFamily: "monospace" }}>
-          decision {decisionId}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
+          <span style={{ fontSize: "11px", color: "#bbb", fontFamily: "monospace" }}>
+            decision {decisionId}
+          </span>
+          {!allSettled && (
+            <span style={{ fontSize: "11px", color: "#aaa" }}>· polling for fill…</span>
+          )}
         </div>
       </div>
 

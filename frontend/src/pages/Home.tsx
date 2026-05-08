@@ -8,6 +8,7 @@ interface Props {
   onSignOut?: () => void;
   onManageAccounts?: () => void;
   onAutoInvestSettings?: () => void;
+  onActivity?: () => void;
 }
 
 const goalLabel: Record<string, string> = {
@@ -26,7 +27,7 @@ const horizonLabel: Record<string, string> = {
 
 type HomeState = "idle" | "confirming" | "investing" | "receipt";
 
-export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings }: Props) {
+export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onActivity }: Props) {
   const [amount, setAmount] = useState<number>(100);
   const [autoInvestConfig, setAutoInvestConfig] = useState<AutoInvestConfig | null>(null);
   const [homeState, setHomeState] = useState<HomeState>("idle");
@@ -107,6 +108,14 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
           <p style={{ fontSize: "14px", color: "#666", margin: 0 }}>Daily investment advisor</p>
         </div>
         <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+          {onActivity && (
+            <button
+              onClick={onActivity}
+              style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
+            >
+              Activity
+            </button>
+          )}
           {onManageAccounts && (
             <button
               onClick={onManageAccounts}
