@@ -42,6 +42,16 @@ Before any commit or push, read `skills/pre-commit-checklist.md` and verify ever
 2. You verify it works
 3. You say "commit" or "push" — then do it
 
+## Project context
+
+`InvestIQ_Project_Context.md` is the source of truth for phases, decisions, and known debt. Keep it current — update it as part of the same session that completes a feature, not after the fact.
+
+Update when:
+- A phase or sub-phase is marked complete
+- A new architectural or product decision is made
+- Known debt is resolved or added
+- A domain model, collection, or interface changes
+
 ## Skills — load when relevant
 
 - Adding or reviewing logs → read `skills/logging-rules.md`
