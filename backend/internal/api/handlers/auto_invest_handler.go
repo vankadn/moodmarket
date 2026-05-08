@@ -24,6 +24,11 @@ type autoInvestRequest struct {
 }
 
 func (h *autoInvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	setCORSHeaders(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if r.Method != http.MethodPut {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
