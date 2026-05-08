@@ -296,18 +296,71 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 ### Phase 8 — Planned
 
-**Goal:** Make the Claude prompt as strong as possible with maximum real context.
+**Goal:** Make the Claude prompt as strong as possible with maximum real context. Sub-phases ordered by benefit — do 8a before touching news or Plaid.
 
-**News:**
-- `NewsProvider` interface in `domain/ports/`
-- Polygon news endpoint — fetch top headlines daily
-- Inject news context into Claude prompt
+---
 
-**Stronger prompt additions:**
-- Current Alpaca positions — what the user already holds; Claude avoids over-concentrating
-- Recent decision history (last 5-10) — Claude doesn't repeat the same allocation daily
-- Plaid transaction history — is cash about to drop? spending spike?
-- Prompt structure review — ordering, tone, instruction clarity, output contract
+### Phase 8a — Prompt strengthening with existing data (highest benefit, zero new APIs)
+
+Wire data we already fetch into the Claude prompt. No new interfaces, no new API keys, no new risk.
+
+**Alpaca positions → concentration awareness**
+- Call `BrokerageProvider.GetPositions()` in `RecommendationService` before building the prompt
+- Format as: "Current holdings: VTI $1,240 (42%), QQQ $890 (30%), BND $820 (28%)"
+- Claude avoids doubling down on what the user already holds heavily
+
+**Recent decision history → allocation diversity**
+- Call `DecisionRepository.ListByUser(ctx, userID, 10)` in `RecommendationService`
+- Format as: "Last 5 investments: VTI/QQQ/BND (Jun 1), VTI/VXUS (May 31)…"
+- Claude doesn't repeat the same allocation 5 days in a row
+
+**Prompt structure review**
+- Review current prompt ordering, instruction clarity, output contract enforcement
+- Ensure allocations always sum to 100%, rationale is specific not generic
+- Add explicit instruction: do not suggest any ticker already over 40% of portfolio
+
+---
+
+### Phase 8b — Polygon news (zero new dependencies, existing key)
+
+**Why Polygon over Finnhub:** Already paying for Polygon (same free tier key used for market data). Adding a second API key and provider for Finnhub violates the principle of getting more from existing dependencies before adding new ones. Claude can infer sentiment from headline text — structured sentiment scores are a nice-to-have, not a need-to-have at this stage. Finnhub is in the backlog for when individual stock recommendations make per-ticker sentiment genuinely valuable.
+
+**NewsProvider interface:**
+```go
+type NewsProvider interface {
+    GetMarketNews(ctx context.Context) ([]NewsItem, error)
+}
+
+type NewsItem struct {
+    Headline    string
+    Summary     string
+    Source      string
+    PublishedAt time.Time
+}
+```
+
+**Implementation:**
+- `infrastructure/news/polygon.go` — Polygon `/v2/reference/news?ticker=SPY&limit=10`, existing API key
+- `infrastructure/news/mock.go` — 3 hardcoded headlines
+- `infrastructure/news/factory.go` — routes via `NEWS_PROVIDER=polygon|mock`
+- Daily cache on the provider — one Polygon call per day, same pattern as market data
+- Inject into Claude prompt: top 5 headlines with source and date
+
+**New env vars:** `NEWS_PROVIDER=polygon` (POLYGON_API_KEY already set)
+
+---
+
+### Phase 8c — Plaid transaction history (highest risk, new Plaid scope)
+
+**What it adds:** Is the user's cash about to drop? Did they have a spending spike? Claude can suggest a smaller investment today if a large bill is due.
+
+**Why last:** New Plaid product scope (`transactions`) may require re-approval on some environments. Transaction data is a different shape than balances — requires more parsing and formatting work. Keep 8a+8b stable before touching this.
+
+**Changes:**
+- Add `GetRecentTransactions(ctx, connections) ([]Transaction, error)` to `FinancialDataProvider`
+- New Plaid call: `/transactions/get` with 30-day window
+- Inject into prompt: total spend last 7 days, largest pending transaction, estimated cash runway
+- Mock returns a small set of realistic fake transactions
 
 ### Phase 9 — Planned
 
@@ -341,6 +394,7 @@ Features defined but not yet scheduled. Reviewed after each phase — promoted w
 | Per-user scheduler interval | Get one real user working first (Phase 9) |
 | Multiple auto-invest configs per user | Phase 9 first |
 | Redis for Plaid balance cache | In-memory is fine until scale demands it |
+| Finnhub news + sentiment scores | Revisit when individual stock recommendations make per-ticker sentiment worth a new dependency; structured sentiment ("2 bearish") is stronger signal than Claude inferring from text, but not worth the extra key at current ETF-only scope |
 
 ---
 
@@ -420,6 +474,9 @@ Background data access is legitimate when:
 | Failure = skip not crash | One user's Plaid/Claude/Alpaca failure must not stop the scheduler for other users |
 | CORS as outermost middleware | No handler can accidentally miss CORS — one place, universal coverage |
 | Git workflow: write → verify → commit | No autonomous pushes — developer reviews before any commit |
+| Polygon over Finnhub for news | Polygon already integrated — no new key, no new dependency. Claude infers sentiment from text. Finnhub backlogged for when individual stocks make per-ticker sentiment worth the extra dependency |
+| Dependency principle: exhaust before adding | Before adding a new API/service, check if an existing one can do the job. New keys = new cost, new failure surface, new rotation burden |
+| Phase 8 ordered 8a → 8b → 8c | 8a: zero risk, wires existing data; 8b: Polygon news, zero new deps; 8c: new Plaid scope, most complex — keep isolated |
 
 ---
 
@@ -427,6 +484,7 @@ Background data access is legitimate when:
 
 | Shortcut | Future fix |
 |----------|-----------|
+| Polygon market data is previous-day close | `/prev` endpoint always gives yesterday's prices — Claude recommends based on stale data if the market moves overnight. Acceptable for personal/dev use; becomes misleading in volatile sessions. Real-time quotes (e.g. Finnhub) fix this but add a new dependency — deferred until this meaningfully hurts recommendation quality |
 | Paper trading only | Swap ALPACA_BASE_URL + keys for live |
 | Log provider for notifications | Real push (FCM or APNs) |
 | Per-user interval not supported | Wishlist — user sets own interval from settings |
