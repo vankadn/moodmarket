@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ConfirmScreen } from "../components/ConfirmScreen";
 import { ReceiptScreen } from "../components/ReceiptScreen";
-import { getRecommendation, invest, Recommendation, TradeReceipt, UserProfile } from "../services/api";
+import { getRecommendation, invest, updateAutoInvest, Recommendation, TradeReceipt, UserProfile } from "../services/api";
 
 interface Props {
   profile: UserProfile;
@@ -27,6 +27,8 @@ type HomeState = "idle" | "confirming" | "investing" | "receipt";
 
 export function Home({ profile, onSignOut, onManageAccounts }: Props) {
   const [amount, setAmount] = useState<number>(100);
+  const [autoInvest, setAutoInvest] = useState<boolean>(profile.auto_invest_enabled ?? false);
+  const [autoInvestLoading, setAutoInvestLoading] = useState(false);
   const [homeState, setHomeState] = useState<HomeState>("idle");
   const [rec, setRec] = useState<Recommendation | null>(null);
   const [receipts, setReceipts] = useState<TradeReceipt[]>([]);
@@ -72,6 +74,19 @@ export function Home({ profile, onSignOut, onManageAccounts }: Props) {
     setRec(null);
     setHomeState("idle");
     setError(null);
+  }
+
+  async function handleAutoInvestToggle() {
+    const next = !autoInvest;
+    setAutoInvestLoading(true);
+    try {
+      await updateAutoInvest(next);
+      setAutoInvest(next);
+    } catch {
+      // leave state unchanged if the API call fails
+    } finally {
+      setAutoInvestLoading(false);
+    }
   }
 
   function handleDone() {
@@ -149,6 +164,35 @@ export function Home({ profile, onSignOut, onManageAccounts }: Props) {
                 />
               </div>
             </div>
+          </div>
+
+          {/* Auto-invest toggle */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem", padding: "12px 14px", background: "#f8f8f8", borderRadius: "10px" }}>
+            <div>
+              <div style={{ fontSize: "13px", fontWeight: 500, color: "#222" }}>Auto-invest daily</div>
+              <div style={{ fontSize: "11px", color: "#999", marginTop: "2px" }}>
+                {autoInvest
+                  ? (profile.auto_invest_enabled_at ? `Enabled — runs every day automatically` : "Enabled — runs every day automatically")
+                  : "Tap Invest today manually each day"}
+              </div>
+            </div>
+            <button
+              onClick={handleAutoInvestToggle}
+              disabled={autoInvestLoading}
+              style={{
+                width: "44px", height: "24px", borderRadius: "12px", border: "none",
+                background: autoInvest ? "#1a1a1a" : "#d0d0d0",
+                cursor: autoInvestLoading ? "not-allowed" : "pointer",
+                position: "relative", transition: "background 0.2s", flexShrink: 0,
+              }}
+            >
+              <span style={{
+                position: "absolute", top: "3px",
+                left: autoInvest ? "23px" : "3px",
+                width: "18px", height: "18px", borderRadius: "50%",
+                background: "white", transition: "left 0.2s",
+              }} />
+            </button>
           </div>
 
           <button

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/krishnarajivvns/investiq/internal/api/handlers"
+	"github.com/krishnarajivvns/investiq/internal/application/scheduler"
 	"github.com/krishnarajivvns/investiq/internal/application/services"
 	infraadvisor "github.com/krishnarajivvns/investiq/internal/infrastructure/advisor"
 	infraauth "github.com/krishnarajivvns/investiq/internal/infrastructure/auth"
@@ -17,6 +18,7 @@ import (
 	inflabrokerage "github.com/krishnarajivvns/investiq/internal/infrastructure/brokerage"
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
 	inframarket "github.com/krishnarajivvns/investiq/internal/infrastructure/market"
+	infranotifications "github.com/krishnarajivvns/investiq/internal/infrastructure/notifications"
 	"github.com/krishnarajivvns/investiq/internal/middleware"
 )
 
@@ -83,9 +85,15 @@ func main() {
 		log.Fatalf("auth provider init failed: %v", err)
 	}
 
+	schedulerRepo := infradb.NewMongoSchedulerRepository(database)
+	notificationProvider := infranotifications.NewNotificationProvider()
+
 	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider)
 	investSvc := services.NewInvestmentService(brokerageProvider, decisionRepo, marketProvider)
 	idp := middleware.ContextIdentityProvider{}
+
+	autoInvestScheduler := scheduler.NewAutoInvestScheduler(profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider)
+	go autoInvestScheduler.Start(ctx)
 
 	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)
 
@@ -97,6 +105,7 @@ func main() {
 	mux.Handle("/plaid/link-token", plaidHandler)
 	mux.Handle("/plaid/exchange", plaidHandler)
 	mux.Handle("/plaid/accounts/", plaidHandler) // trailing slash = prefix match for /{item_id}
+	mux.Handle("/users/auto-invest", handlers.NewAutoInvestHandler(profileRepo, idp))
 
 	port := os.Getenv("PORT")
 	if port == "" {

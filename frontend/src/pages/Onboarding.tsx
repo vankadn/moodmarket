@@ -42,6 +42,7 @@ const defaultProfile: UserProfile = {
   time_horizon: "five_to_ten",
   immigration_status: "us_citizen",
   risk_tolerance: "moderate",
+  auto_invest_enabled: false,
   investment_goal: "wealth_building",
   has_emergency_fund: false,
 };

@@ -4,6 +4,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
 )
@@ -26,4 +27,11 @@ type ProfileRepository interface {
 
 	// RemovePlaidConnection removes the connection matching itemID from the user's document.
 	RemovePlaidConnection(ctx context.Context, userID string, itemID string) error
+
+	// GetAutoInvestUsers returns all users with auto_invest_enabled: true.
+	GetAutoInvestUsers(ctx context.Context) ([]models.UserProfile, error)
+
+	// SetAutoInvest updates only the auto_invest_enabled flag and consent timestamp.
+	// It never touches any other profile field.
+	SetAutoInvest(ctx context.Context, userID string, enabled bool, enabledAt time.Time) error
 }

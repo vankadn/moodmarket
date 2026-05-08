@@ -26,6 +26,7 @@ type plaidConnectionDoc struct {
 // profileDocument is the MongoDB-specific representation.
 // bson tags are intentionally isolated here and never appear in domain models.
 // PlaidConnections uses omitempty so fromProfile (used in $set) never touches the plaid_connections array.
+// AutoInvestEnabled uses omitempty (bool) so fromProfile's zero value is omitted — $set never resets the flag.
 type profileDocument struct {
 	UserID                    string               `bson:"user_id"`
 	FullName                  string               `bson:"full_name"`
@@ -38,6 +39,8 @@ type profileDocument struct {
 	RiskTolerance             string               `bson:"risk_tolerance"`
 	InvestmentGoal            string               `bson:"investment_goal"`
 	HasEmergencyFund          bool                 `bson:"has_emergency_fund"`
+	AutoInvestEnabled         bool                 `bson:"auto_invest_enabled,omitempty"`
+	AutoInvestEnabledAt       time.Time            `bson:"auto_invest_enabled_at,omitempty"`
 	PlaidConnections          []plaidConnectionDoc `bson:"plaid_connections,omitempty"`
 }
 
@@ -160,6 +163,8 @@ func toProfile(doc *profileDocument) *models.UserProfile {
 		RiskTolerance:             models.RiskTolerance(doc.RiskTolerance),
 		InvestmentGoal:            models.InvestmentGoal(doc.InvestmentGoal),
 		HasEmergencyFund:          doc.HasEmergencyFund,
+		AutoInvestEnabled:         doc.AutoInvestEnabled,
+		AutoInvestEnabledAt:       doc.AutoInvestEnabledAt,
 	}
 
 	// Populate ConnectedAccounts with institution + item_id only; access token is never exposed.
@@ -176,7 +181,8 @@ func toProfile(doc *profileDocument) *models.UserProfile {
 }
 
 func fromProfile(p *models.UserProfile) *profileDocument {
-	// PlaidConnections is intentionally omitted — $set must never overwrite plaid_connections.
+	// PlaidConnections and AutoInvestEnabled are intentionally omitted —
+	// $set must never overwrite those fields during a normal profile save.
 	return &profileDocument{
 		UserID:                    p.UserID,
 		FullName:                  p.FullName,
@@ -190,4 +196,45 @@ func fromProfile(p *models.UserProfile) *profileDocument {
 		InvestmentGoal:            string(p.InvestmentGoal),
 		HasEmergencyFund:          p.HasEmergencyFund,
 	}
+}
+
+// GetAutoInvestUsers returns all profiles where auto_invest_enabled is true.
+func (r *MongoProfileRepository) GetAutoInvestUsers(ctx context.Context) ([]models.UserProfile, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cursor, err := r.collection.Find(ctx, bson.M{"auto_invest_enabled": true})
+	if err != nil {
+		return nil, fmt.Errorf("mongo profile repo: get auto-invest users: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var docs []profileDocument
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, fmt.Errorf("mongo profile repo: decode auto-invest users: %w", err)
+	}
+
+	profiles := make([]models.UserProfile, len(docs))
+	for i, doc := range docs {
+		profiles[i] = *toProfile(&doc)
+	}
+	return profiles, nil
+}
+
+// SetAutoInvest updates only the auto_invest_enabled flag and its consent timestamp.
+// Uses a targeted $set so no other profile fields are touched.
+func (r *MongoProfileRepository) SetAutoInvest(ctx context.Context, userID string, enabled bool, enabledAt time.Time) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	filter := bson.M{"user_id": userID}
+	update := bson.M{"$set": bson.M{
+		"auto_invest_enabled":    enabled,
+		"auto_invest_enabled_at": enabledAt,
+	}}
+	opts := options.Update().SetUpsert(true)
+	if _, err := r.collection.UpdateOne(ctx, filter, update, opts); err != nil {
+		return fmt.Errorf("mongo profile repo: set auto-invest: %w", err)
+	}
+	return nil
 }

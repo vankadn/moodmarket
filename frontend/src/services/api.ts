@@ -22,6 +22,8 @@ export interface UserProfile {
   risk_tolerance: RiskTolerance;
   investment_goal: InvestmentGoal;
   has_emergency_fund: boolean;
+  auto_invest_enabled: boolean;
+  auto_invest_enabled_at?: string;
   connected_accounts?: PlaidConnectionSummary[];
 }
 
@@ -135,6 +137,15 @@ export async function deletePlaidAccount(itemId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/plaid/accounts/${itemId}`, {
     method: "DELETE",
     headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+}
+
+export async function updateAutoInvest(enabled: boolean): Promise<void> {
+  const res = await fetch(`${API_BASE}/users/auto-invest`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify({ enabled }),
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
