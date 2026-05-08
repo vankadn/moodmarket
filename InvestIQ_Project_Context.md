@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-07 (Phase 5 complete)
+> Last updated: 2026-05-08 (Phase 6 complete, Phase 7 planned)
 
 ---
 
@@ -92,7 +92,8 @@ Key interfaces:
 - `MarketDataProvider` — live prices (Phase 3 ✓)
 - `DecisionRepository` — investment decision persistence (Phase 3 ✓)
 - `BrokerageProvider` — trade execution (Phase 4 ✓, Alpaca paper trading)
-- `FinancialDataProvider` — bank + 401k data (Phase 5 ✓, Plaid)
+- `FinancialDataProvider` — bank + 401k data (Phase 5 ✓, Plaid production)
+- `NotificationProvider` — push notifications (Phase 6, provider TBD)
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
 
 ### DEV_MODE pattern
@@ -111,8 +112,10 @@ Key interfaces:
 | Auth | Clerk (email + Google SSO) | Behind AuthProvider interface; DEV_MODE=true still works locally |
 | Market Data | Polygon.io (previous-day, free tier) | Behind MarketDataProvider interface; mock available for dev |
 | Brokerage | Alpaca (paper trading) | Behind BrokerageProvider interface; mock available for dev |
-| Banking | Plaid (current) | Behind FinancialDataProvider interface; FINANCIAL_DATA_PROVIDER=mock available for dev |
+| Banking | Plaid (production, 10 free connections) | Behind FinancialDataProvider interface ✓ |
 | Secrets | Encrypted Mongo now, Vault pre go-live | Behind SecretsProvider interface |
+| Scheduler | Go time.Ticker | Drives autonomous investment cycle, interval from env var |
+| Notifications | TBD Phase 6 | Behind NotificationProvider interface |
 
 ---
 
@@ -142,6 +145,9 @@ Key interfaces:
 | `BankAccount` | Plaid-sourced account: institution, type, balance |
 | `BalanceSummary` | Aggregated view: total cash, total investments, net worth signal |
 | `PlaidConnection` | Per-institution token record: institution name, access_token, item_id |
+| `NotificationProvider` | Interface for push notifications (Phase 6) |
+| `AutoInvestConfig` | Value object on UserProfile: Enabled bool + EnabledAt time.Time — consent record |
+| `SchedulerRun` | Audit record for one autonomous cycle: RunID, StartedAt, CompletedAt, UsersProcessed, TotalInvested, Errors |
 
 ---
 
@@ -157,6 +163,8 @@ Key interfaces:
 - `risk_tolerance` enum: conservative / moderate / aggressive
 - `investment_goal` enum: wealth_building / retirement / emergency_fund / short_term_savings
 - `has_emergency_fund` boolean
+- `auto_invest_enabled` boolean (Phase 6 — consent to autonomous trading)
+- `auto_invest_enabled_at` timestamp (Phase 6 — legal record of when consent was given)
 
 ---
 
@@ -164,10 +172,11 @@ Key interfaces:
 
 | Collection | Purpose |
 |-----------|---------|
-| `users` | User profile + financial goals + Plaid connections array |
-| `decisions` | Every daily investment decision logged (userId, timestamp, market snapshot, allocations, trade receipts, Plaid snapshot at time of decision) |
+| `users` | User profile + financial goals + Plaid connections array + auto-invest config |
+| `decisions` | Every daily investment decision logged (userId, timestamp, market snapshot, allocations, trade receipts, Plaid snapshot) |
 | `portfolio` | Simulated holdings tracker |
 | `market_snapshots` | Daily price context (Phase 3) |
+| `scheduler_runs` | One document per autonomous cycle run — runID, timestamp, users processed, total invested, errors (Phase 6) |
 
 ---
 
@@ -272,50 +281,134 @@ User taps "Invest today"
 | Receipt screen shows order status at placement time (PENDING NEW) | Poll Alpaca for final fill status and update ReceiptScreen |
 
 ### Phase 5 — Complete
-
-- `FinancialDataProvider` interface in `domain/ports/financial_data_provider.go`
-- `PlaidConnection`, `BankAccount`, `BalanceSummary`, `PlaidConnectionSummary` value objects in `domain/models/banking.go`
-- Plaid REST client in `infrastructure/banking/plaid.go` — net/http only, no Plaid SDK
-- Mock provider in `infrastructure/banking/mock.go` — `FINANCIAL_DATA_PROVIDER=mock` for dev
-- `ProfileRepository` extended with 3 new methods: `SavePlaidConnection` ($push), `GetPlaidConnections` (decrypt on read), `RemovePlaidConnection` ($pull)
-- AES-256-GCM encryption in `infrastructure/db/encryption.go` — key loaded once via `sync.Once`; access tokens never stored in plaintext
-- `GET /users/profile` now returns `connected_accounts` (institution + item_id only — access token never exposed to API or frontend)
-- `RecommendationService` fetches live Plaid balances before every recommendation; fetch failure is non-fatal (logs + continues)
-- Claude prompt enriched with: total cash, total investments, institution names, account count, data pull timestamp
-- `POST /plaid/link-token`, `POST /plaid/exchange`, `DELETE /plaid/accounts/{item_id}` handlers
-- Frontend: `usePlaidSetup` hook, `PlaidLinkButton` (react-plaid-link), `ConnectedAccounts` list with disconnect
-- Frontend: `Profile.tsx` page — connected account management + add new account
-- Home header: "Bank accounts" button navigates to Profile page; investment state machine unchanged
+- `FinancialDataProvider` interface in `domain/ports/`
+- Plaid sandbox integration: connect real bank accounts + 401k via Plaid Link popup
+- Per-user `plaid_connections` array stored on user document in MongoDB (institution, access_token, item_id)
+- Auto-pull account balances into investment context on every `/recommend` call
+- Claude prompt enriched with real cash position, account balances, connected institution summary
+- Token revocation endpoint: `DELETE /plaid/accounts/:item_id` — calls Plaid revoke API + removes from Mongo
+- `decisions` collection updated to snapshot Plaid balance data at time of each decision
 
 **Plaid token flow:**
 ```
-POST /plaid/link-token → Plaid returns link token
+Frontend calls POST /plaid/link-token → backend creates Plaid link token
 → Plaid Link popup opens in browser
-→ User connects bank → Plaid calls onSuccess with public_token
-→ POST /plaid/exchange → backend: exchange → item/get → institutions/get_by_id
-→ access_token AES-256-GCM encrypted, stored in plaid_connections array on user document
-→ Every /recommend call: GetPlaidConnections → decrypt → GetBalanceSummary → inject into Claude prompt
-→ DELETE /plaid/accounts/{item_id} → Plaid item/remove → $pull from Mongo
+→ User connects bank → Plaid returns public_token to frontend
+→ Frontend calls POST /plaid/exchange → backend exchanges for access_token
+→ access_token stored in MongoDB on user document (encrypted at field level)
+→ All future /recommend calls pull live balances silently using stored token
 ```
+
+### Phase 5 — Complete
+
+- `FinancialDataProvider` interface in `domain/ports/financial_data_provider.go`
+- `PlaidConnection`, `BankAccount`, `BalanceSummary` value objects in `domain/models/banking.go`
+- Plaid REST client in `infrastructure/banking/plaid.go` — net/http only, no Plaid SDK
+- Mock provider in `infrastructure/banking/mock.go` — `FINANCIAL_DATA_PROVIDER=mock` for dev
+- `ProfileRepository` extended: `SavePlaidConnection` ($push), `GetPlaidConnections` (decrypt on read), `RemovePlaidConnection` ($pull)
+- AES-256-GCM encryption in `infrastructure/db/encryption.go` — key from `PLAID_TOKEN_ENCRYPTION_KEY` env var, loaded once via `sync.Once`
+- `GET /users/profile` returns `connected_accounts` (institution + item_id only — access token never exposed to frontend)
+- `RecommendationService` fetches live Plaid balances before every recommendation — fetch failure is non-fatal (logs and continues)
+- Claude prompt enriched with: total cash, total investments, institution names, account count, data pull timestamp
+- `POST /plaid/link-token`, `POST /plaid/exchange`, `DELETE /plaid/accounts/{item_id}` handlers
+- Frontend: `usePlaidSetup` hook, `PlaidLinkButton` (react-plaid-link), `ConnectedAccounts` list with disconnect
+- Frontend: `Profile.tsx` — connected account management + add new account
+- Plaid production approved — free trial, 10 real connections, real BofA account connected and tested
+- `PLAID_ENV=production` in `.env`
 
 **Known debt carried into Phase 6:**
 
 | Shortcut | Future fix |
 |----------|-----------|
-| Encrypted Mongo for tokens | Vault / AWS Secrets Manager before any real user connects a real account |
-| No transaction history in prompt | Add Plaid Transactions product to enrich spending context |
-| Balance fetch on every `/recommend` call | Cache with short TTL (5 min) to reduce Plaid API calls at scale |
-| `PLAID_ENV=production` not tested | Test full production flow with real institution before launch |
+| Encrypted Mongo for tokens | Vault / AWS Secrets Manager before any real user beyond developer |
+| No transaction history in prompt | Add Plaid Transactions scope to enrich spending context in Phase 8 |
+| Balance fetch on every `/recommend` | Cache with short TTL (5 min) to reduce Plaid API calls at scale |
 
-### Phase 6 — Planned
-- Fully autonomous daily investment agent
-- Runs every morning at 9am, reads Plaid balances + market data, invests automatically
-- User explicitly opts in: `auto_invest_enabled: true` stored with consent timestamp in MongoDB
-- Every background Plaid call logged — timestamp, what was pulled, what decision it informed
-- Push notifications with daily summary
-- Portfolio performance tracking + history view
+### Phase 6 — Complete
 
-### Phase 7 — Planned
+**Goal:** Fully autonomous investment agent. The app runs the investment cycle on a configurable interval without any user interaction. Users opt in explicitly. Every run is fully logged.
+
+**Scheduler design:**
+- Go `time.Ticker` in `application/scheduler/auto_invest_scheduler.go`
+- Interval driven entirely by env var — no hardcoded times anywhere
+- Uses Go standard library `time.ParseDuration` — any valid duration string works with zero code changes
+- Started as a goroutine in `main.go` alongside the HTTP server
+
+**Env vars:**
+```
+AUTO_INVEST_INTERVAL=24h       ← production default
+AUTO_INVEST_INTERVAL=1m        ← dev/testing (fires every minute)
+AUTO_INVEST_INTERVAL=5m        ← dev with real APIs (reduce rate limit risk)
+```
+
+Valid examples: `1m`, `5m`, `30m`, `3h`, `12h`, `24h` — anything `time.ParseDuration` accepts. No code change needed for any value.
+
+**Scheduler flow on each tick:**
+1. Query MongoDB for all users where `auto_invest_enabled: true`
+2. For each user, run the full investment pipeline concurrently (goroutine per user)
+3. Fetch Plaid balances → fetch market snapshot → call Claude → place Alpaca orders → log decision
+4. Send push notification with summary
+5. Log every step — timestamp, userId, what was fetched, what was invested, any errors
+
+**Failure handling:**
+- Plaid fetch fails → log error, skip user for this cycle, do not invest
+- Claude call fails → retry 3 times (existing retry logic), then log and skip
+- Alpaca order fails → log partial failure, continue with other tickers, notify user of partial execution
+- Full cycle failure → log with full error context, send failure notification to user
+
+**New domain models:**
+- `AutoInvestConfig` on `UserProfile`: `{ Enabled bool, EnabledAt time.Time }` — consent record
+- `SchedulerRun` — audit record: `{ RunID, StartedAt, CompletedAt, UsersProcessed, TotalInvested, Errors []string }`
+
+**New files:**
+- `application/scheduler/auto_invest_scheduler.go` — ticker loop, user fan-out
+- `application/scheduler/auto_invest_runner.go` — single-user investment pipeline (reuses existing services)
+- `infrastructure/db/scheduler_repository.go` — persists `SchedulerRun` records to `scheduler_runs` collection
+- `domain/ports/notification_provider.go` — `NotificationProvider` interface: `SendInvestmentSummary`, `SendInvestmentFailure`
+- `infrastructure/notifications/log_provider.go` — dev implementation: logs to stdout instead of sending real push
+- `infrastructure/notifications/factory.go` — routes via `NOTIFICATION_PROVIDER` env var
+
+**New MongoDB collection:**
+- `scheduler_runs` — one document per cycle run: runID, timestamp, users processed, total invested, errors
+
+**User profile changes:**
+- Add `auto_invest_enabled bool` and `auto_invest_enabled_at time.Time` to `UserProfile` in `domain/models/`
+- Add `PUT /users/auto-invest` handler — body: `{ enabled: bool }` — writes consent record with timestamp
+
+**Frontend changes:**
+- Auto-invest toggle on Home screen — clearly labeled, shows last run time when enabled
+- When enabled: shows "Next run in X" countdown and "Last invested: $100 at 9:02am" summary
+- When a run completes: decision appears in home screen without user doing anything
+- Disable toggle immediately stops background access — calls `PUT /users/auto-invest` with `{ enabled: false }`
+
+**CPN relevance:** This is the Agent Skills module in practice. An autonomous agent needs: explicit user consent (opt-in), defined scope (investment only, nothing else), audit trail (every run logged), graceful failure (never silently fail), and a way to stop (disable toggle). InvestIQ Phase 6 implements all five.
+
+**What was built:**
+- `domain/models/scheduler.go` — `SchedulerRun` audit model
+- `domain/ports/notification_provider.go` — `NotificationProvider` interface
+- `domain/ports/scheduler_repository.go` — `SchedulerRepository` interface
+- `domain/models/user_profile.go` — `auto_invest_enabled` + `auto_invest_enabled_at` (consent record)
+- `domain/ports/profile_repository.go` — `GetAutoInvestUsers` + `SetAutoInvest`
+- `infrastructure/notifications/` — log provider (stdout); factory routes via `NOTIFICATION_PROVIDER`
+- `infrastructure/db/mongo_scheduler_repository.go` — `scheduler_runs` collection
+- `infrastructure/db/mongo_profile_repository.go` — auto_invest fields with omitempty (Upsert never resets flag)
+- `application/scheduler/auto_invest_scheduler.go` — ticker loop, concurrent user fan-out, audit save
+- `application/scheduler/auto_invest_runner.go` — single-user pipeline reusing existing services
+- `api/handlers/auto_invest_handler.go` — `PUT /users/auto-invest`
+- Frontend: animated toggle in Home.tsx, `updateAutoInvest()` in api.ts
+- `AUTO_INVEST_INTERVAL=1m` in `.env` (change to `24h` for production)
+- Verified: scheduler fires on interval, handles zero opted-in users cleanly
+
+**Known debt carried into Phase 7:**
+
+| Shortcut | Future fix |
+|----------|-----------|
+| Log provider for notifications | Real push notifications (FCM or APNs) |
+| Per-user interval not supported | Phase 9 — user sets their own interval from profile settings |
+| Market holiday awareness | Scheduler fires on holidays — add NYSE calendar check before executing |
+| Concurrent user runs not rate-limited | Add semaphore to limit concurrent Plaid/Alpaca calls at scale |
+
+### Phase 7 — Current Phase
 - Dashboard: total dollars invested via InvestIQ, number of decisions made
 - Dashboard: allocation breakdown pie chart by ticker and sector (from decisions collection)
 - Dashboard: investment timeline — when and how much per decision
@@ -422,6 +515,12 @@ Every Plaid data pull — whether triggered by a user action or a background aut
 | Log every background Plaid call | Audit trail protects both user and InvestIQ if access is ever questioned |
 | Token revocation on disconnect | Deleting from Mongo without revoking at Plaid is a compliance violation — token stays live at Plaid until explicitly revoked |
 | Principle of least privilege on Plaid scopes | Only request what the feature uses — over-requesting is a legal and trust risk |
+| AUTO_INVEST_INTERVAL env var for scheduler | Human readable, configurable without code changes — 1m for dev, 24h for prod, 3h just works |
+| time.ParseDuration for interval parsing | Any valid Go duration string works — no translation layer, no code change needed for new values |
+| Log provider for notifications in dev | No push infrastructure needed during development — stdout logs confirm the pipeline works |
+| Consent timestamp on auto-invest opt-in | Legal record of when user authorized background access and autonomous trading |
+| Scheduler run audit collection | Every autonomous cycle logged — protects InvestIQ if a user questions an automatic trade |
+| Failure = skip not crash | A user's Plaid/Claude/Alpaca failure should not stop the scheduler for other users |
 
 ---
 
