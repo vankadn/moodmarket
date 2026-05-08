@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
-	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
 // AlpacaProvider implements BrokerageProvider against the Alpaca paper trading REST API.
@@ -104,7 +103,7 @@ func (p *AlpacaProvider) PlaceMarketOrder(ctx context.Context, order models.Trad
 }
 
 // GetPositions returns all open positions from the Alpaca account.
-func (p *AlpacaProvider) GetPositions(ctx context.Context, _ string) ([]ports.Position, error) {
+func (p *AlpacaProvider) GetPositions(ctx context.Context, _ string) ([]models.Position, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/v2/positions", nil)
 	if err != nil {
 		return nil, fmt.Errorf("alpaca: build positions request: %w", err)
@@ -134,11 +133,11 @@ func (p *AlpacaProvider) GetPositions(ctx context.Context, _ string) ([]ports.Po
 		return nil, fmt.Errorf("alpaca: parse positions response: %w", err)
 	}
 
-	positions := make([]ports.Position, 0, len(alpacaPositions))
+	positions := make([]models.Position, 0, len(alpacaPositions))
 	for _, ap := range alpacaPositions {
 		qty, _ := strconv.ParseFloat(ap.Qty, 64)
 		mv, _ := strconv.ParseFloat(ap.MarketValue, 64)
-		positions = append(positions, ports.Position{
+		positions = append(positions, models.Position{
 			Ticker:      ap.Symbol,
 			Quantity:    qty,
 			MarketValue: mv,

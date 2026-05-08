@@ -2,9 +2,11 @@
 package models
 
 type InvestmentRequest struct {
-	BaseBudget     float64         `json:"base_budget"`
-	ExtraMoney     float64         `json:"extra_money"`
-	BalanceSummary *BalanceSummary `json:"-"` // injected by recommendation service; never decoded from HTTP body
+	BaseBudget        float64               `json:"base_budget"`
+	ExtraMoney        float64               `json:"extra_money"`
+	BalanceSummary    *BalanceSummary       `json:"-"` // injected by recommendation service; never decoded from HTTP body
+	Positions         []Position            `json:"-"` // current brokerage holdings; injected by recommendation service
+	RecentDecisions   []InvestmentDecision  `json:"-"` // last N decisions; injected by recommendation service
 }
 
 type Allocation struct {

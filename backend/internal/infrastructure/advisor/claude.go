@@ -24,28 +24,29 @@ const (
 // Raise only with deliberate intent — each attempt burns tokens.
 const maxAttempts = 3
 
-const systemPrompt = `You are InvestIQ, a personal investment advisor. Recommend how to split a daily investment budget based on the user's complete financial profile.
+const systemPrompt = `You are InvestIQ, a personal investment advisor. Your job is to recommend how to split a daily investment budget based on the user's complete financial picture.
 
-PROFILE-DRIVEN LOGIC:
-- conservative + short horizon + emergency_fund/short_term_savings: 80%+ bonds/money market (BND, SHV, SGOV)
-- moderate + mid horizon + wealth_building/retirement: 50% broad ETFs, 50% growth stocks
-- aggressive + long horizon + wealth_building/retirement: 20% broad ETFs, 80% growth stocks
-- work_visa holders: prefer ETFs over individual stocks, avoid complex instruments
+ALLOCATION LOGIC (apply in order):
+1. Risk + horizon + goal:
+   - conservative + short horizon + emergency_fund/short_term_savings → 80%+ bonds/money market (BND, SHV, SGOV)
+   - moderate + mid horizon + wealth_building/retirement → balanced: broad ETFs + some growth
+   - aggressive + long horizon + wealth_building/retirement → growth-heavy: 20% broad ETFs, 80% growth
+2. Immigration status: work_visa holders → ETFs only, no individual stocks, no complex instruments
+3. Emergency fund: if missing, weight toward capital preservation until one exists
+4. Existing positions: do NOT recommend any ticker where the new allocation would push the user above 40% concentration in that ticker across their total portfolio
+5. Recent history: do NOT repeat the exact same allocation as the previous day — vary tickers or weights meaningfully
 
-Always factor in existing portfolio size and whether the user has an emergency fund.
+OUTPUT CONTRACT:
+Return ONLY a raw JSON object. No markdown, no code fences, no text before or after.
+All fields required. Allocations must sum exactly to total_budget.
 
-Return ONLY a raw JSON object. Do not use markdown, code fences, or any text before or after the JSON.
-Use standard ASCII colons as key-value separators. The response must be parseable by Go's encoding/json.
+{"total_budget":100.00,"allocations":[{"ticker":"VTI","name":"Vanguard Total Market ETF","type":"etf","amount":60.00,"percentage":60.0,"rationale":"broad US equity exposure"},{"ticker":"BND","name":"Vanguard Bond ETF","type":"etf","amount":40.00,"percentage":40.0,"rationale":"fixed income stability"}],"summary":"One sentence describing today's strategy.","risk_level":"medium"}
 
-Example of the exact format required:
-{"total_budget":100.00,"allocations":[{"ticker":"VTI","name":"Vanguard Total Market ETF","type":"etf","amount":60.00,"percentage":60.0,"rationale":"broad US equity exposure"},{"ticker":"BND","name":"Vanguard Bond ETF","type":"etf","amount":40.00,"percentage":40.0,"rationale":"fixed income stability"}],"summary":"Balanced split between equities and bonds.","risk_level":"medium"}
-
-Rules:
-- allocations must sum exactly to total_budget
+RULES:
 - 3 to 5 allocations per recommendation
-- real tickers only (SPY, VTI, BND, QQQ, AAPL, MSFT, NVDA, AMZN, SGOV, SHV, etc.)
-- risk_level must be exactly one of: low, medium, high
-- rationale under 12 words each`
+- real tickers only (SPY, VTI, BND, QQQ, AAPL, MSFT, NVDA, AMZN, SGOV, SHV, VXUS, XLE, XLF, XLV, etc.)
+- risk_level: exactly one of low / medium / high
+- rationale: under 12 words, specific to today's context — not generic`
 
 type claudeMessage struct {
 	Role    string `json:"role"`
@@ -257,6 +258,45 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 		msg += fmt.Sprintf("- Data pulled at: %s\n", s.PulledAt.Format(time.RFC3339))
 	} else {
 		msg += "\nFINANCIAL ACCOUNTS: No bank accounts connected. Using profile estimates only.\n"
+	}
+
+	if len(req.Positions) > 0 {
+		var totalValue float64
+		for _, p := range req.Positions {
+			totalValue += p.MarketValue
+		}
+		msg += "\nCURRENT BROKERAGE POSITIONS:\n"
+		for _, p := range req.Positions {
+			pct := 0.0
+			if totalValue > 0 {
+				pct = p.MarketValue / totalValue * 100
+			}
+			msg += fmt.Sprintf("- %s: $%.2f (%.0f%% of portfolio)", p.Ticker, p.MarketValue, pct)
+			if pct >= 40 {
+				msg += " ← already at concentration limit, do not add more"
+			}
+			msg += "\n"
+		}
+		msg += fmt.Sprintf("- Total portfolio value: $%.2f\n", totalValue)
+		msg += "Do not recommend any ticker where the resulting position would exceed 40% of total portfolio value.\n"
+	} else {
+		msg += "\nBROKERAGE POSITIONS: No existing positions.\n"
+	}
+
+	if len(req.RecentDecisions) > 0 {
+		limit := 5
+		if len(req.RecentDecisions) < limit {
+			limit = len(req.RecentDecisions)
+		}
+		msg += "\nRECENT INVESTMENT HISTORY (last 5):\n"
+		for _, d := range req.RecentDecisions[:limit] {
+			tickers := make([]string, len(d.Allocations))
+			for i, a := range d.Allocations {
+				tickers[i] = fmt.Sprintf("%s %.0f%%", a.Ticker, a.Percentage)
+			}
+			msg += fmt.Sprintf("- %s: $%.0f — %s\n", d.Timestamp.Format("Jan 2"), d.TotalAmount, strings.Join(tickers, ", "))
+		}
+		msg += "Vary today's allocation — do not repeat the exact same split as yesterday.\n"
 	}
 
 	msg += "\nGive me today's investment allocation."

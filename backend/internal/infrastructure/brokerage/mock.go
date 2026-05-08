@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
-	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
 // MockBrokerageProvider returns realistic hardcoded receipts with no API calls.
@@ -38,8 +37,8 @@ func (m *MockBrokerageProvider) GetOrder(_ context.Context, orderID string) (*mo
 	}, nil
 }
 
-func (m *MockBrokerageProvider) GetPositions(_ context.Context, _ string) ([]ports.Position, error) {
-	return []ports.Position{
+func (m *MockBrokerageProvider) GetPositions(_ context.Context, _ string) ([]models.Position, error) {
+	return []models.Position{
 		{Ticker: "VTI", Quantity: 0.42, MarketValue: 98.50},
 		{Ticker: "BND", Quantity: 0.50, MarketValue: 37.25},
 	}, nil

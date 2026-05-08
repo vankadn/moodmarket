@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-08 (Phase 6b complete, Phase 7 current)
+> Last updated: 2026-05-08 (Phase 8a complete)
 
 ---
 
@@ -281,7 +281,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Skills system: logging rules, React rules, new-feature checklist, pre-commit checklist moved to `skills/` files — loaded on demand to save tokens
 - README rewritten: zero-external-calls setup, provider swap table, Plaid and Alpaca config sections
 
-### Phase 7 — Current
+### Phase 7 — Complete
 
 **Goal:** Activity dashboard showing what the user has done through InvestIQ. No profit/loss — activity only.
 
@@ -290,34 +290,35 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Time range filter: three numeric inputs (hours / days / months) — hours accepts decimals (e.g. 0.5 = 30 min), useful for local scheduler testing; user fills any combination, app combines into a date range; includes a reset button that defaults back to 30 days
 - Investment timeline: list of decisions within selected period showing date + amount invested
 - All data aggregated from `decisions` collection
+- `GET /users/activity?since=<RFC3339>` endpoint; `ListByUserSince` on `DecisionRepository`
+- Frontend: `Activity.tsx` with stats cards + timeline list
 
 **Receipt screen:**
-- Poll Alpaca for final fill status instead of showing PENDING NEW
+- Polls Alpaca every 3s for non-terminal orders; terminal set: filled, canceled, expired, rejected, replaced
+- Shows "polling for fill…" indicator while waiting
 
-### Phase 8 — Planned
+### Phase 8 — In Progress
 
 **Goal:** Make the Claude prompt as strong as possible with maximum real context. Sub-phases ordered by benefit — do 8a before touching news or Plaid.
 
 ---
 
-### Phase 8a — Prompt strengthening with existing data (highest benefit, zero new APIs)
+### Phase 8a — Complete
 
-Wire data we already fetch into the Claude prompt. No new interfaces, no new API keys, no new risk.
+**Prompt strengthening with existing data (zero new APIs)**
 
-**Alpaca positions → concentration awareness**
-- Call `BrokerageProvider.GetPositions()` in `RecommendationService` before building the prompt
-- Format as: "Current holdings: VTI $1,240 (42%), QQQ $890 (30%), BND $820 (28%)"
-- Claude avoids doubling down on what the user already holds heavily
+- `RecommendationService` now has 6 steps: profile → market snapshot → Plaid balances → Alpaca positions → decision history → Claude
+- `BrokerageProvider.GetPositions()` called before building prompt; injected as `req.Positions`
+- `DecisionRepository.ListByUser(ctx, userID, 10)` called; last 5 decisions injected as `req.RecentDecisions`
+- Concentration rule: any position at ≥ 40% of portfolio value gets "← already at concentration limit, do not add more" appended to its line; system prompt instructs Claude not to push any ticker above 40%
+- Diversity rule: last 5 decision allocations shown in prompt with "Vary today's allocation — do not repeat the exact same split as yesterday"
+- `[8a-debug]` temporary logs added with `// TODO: remove after 8a testing` markers — grep for `[8a-debug]` to find them
+- System prompt rewritten: numbered rules, explicit output contract, tighter rationale constraint (under 12 words)
+- Prompt caching: system prompt sent as `[]claudeSystemBlock` with `cache_control: ephemeral`; `anthropic-beta: prompt-caching-2024-07-31` header added
+- Retry: 3 attempts, 5s/10s exponential backoff; parse errors get correction turn, API errors get clean retry
+- Basic prompt tests: `infrastructure/advisor/prompt_test.go` — 12 table-driven cases covering concentration warning boundary, history section presence, balance fallback, profile inclusion, budget math; marked as tech debt for LLM-level assertion tests
 
-**Recent decision history → allocation diversity**
-- Call `DecisionRepository.ListByUser(ctx, userID, 10)` in `RecommendationService`
-- Format as: "Last 5 investments: VTI/QQQ/BND (Jun 1), VTI/VXUS (May 31)…"
-- Claude doesn't repeat the same allocation 5 days in a row
-
-**Prompt structure review**
-- Review current prompt ordering, instruction clarity, output contract enforcement
-- Ensure allocations always sum to 100%, rationale is specific not generic
-- Add explicit instruction: do not suggest any ticker already over 40% of portfolio
+**Concentration boundary (documented from test writing):** The `>= 40` check fires at exactly 40%, consistent with the rule "do not push above 40%" — any addition to a position already at 40% would exceed the limit. Test data for the "no warning" case must use positions where all are strictly under 40%.
 
 ---
 
@@ -493,4 +494,6 @@ Background data access is legitimate when:
 | Encrypted Mongo for Plaid tokens | Vault / AWS Secrets Manager — Phase 9 deployment |
 | No transaction history in prompt | Phase 8 — Plaid Transactions scope |
 | One config per user only | Wishlist — multiple schedules with different risk levels |
-| Receipt shows PENDING NEW | Poll Alpaca for final fill status |
+| Receipt shows PENDING NEW | Fixed in Phase 7 — polls until terminal status |
+| `[8a-debug]` log lines in `recommendation_service.go` | Remove after Phase 8a testing is verified; grep `[8a-debug]` |
+| Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |

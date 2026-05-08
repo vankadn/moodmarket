@@ -7,20 +7,13 @@ import (
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
 )
 
-// Position is a holding the user currently owns in their brokerage account.
-type Position struct {
-	Ticker      string
-	Quantity    float64
-	MarketValue float64
-}
-
 // BrokerageProvider is the port any trade execution system must implement.
 // Implementations live in infrastructure/brokerage — never imported by domain or application directly.
 type BrokerageProvider interface {
 	// PlaceMarketOrder places a notional (dollar-based) market buy order for the given ticker.
 	PlaceMarketOrder(ctx context.Context, order models.TradeOrder) (*models.TradeReceipt, error)
 	// GetPositions returns all open positions for the given user.
-	GetPositions(ctx context.Context, userID string) ([]Position, error)
+	GetPositions(ctx context.Context, userID string) ([]models.Position, error)
 	// GetOrder returns the current status of a previously placed order.
 	GetOrder(ctx context.Context, orderID string) (*models.TradeReceipt, error)
 }

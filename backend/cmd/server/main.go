@@ -99,7 +99,7 @@ func main() {
 	autoInvestRepo := infradb.NewMongoAutoInvestRepository(database)
 	notificationProvider := infranotifications.NewNotificationProvider()
 
-	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider)
+	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageProvider)
 	investSvc := services.NewInvestmentService(brokerageProvider, decisionRepo, marketProvider)
 	idp := middleware.ContextIdentityProvider{}
 

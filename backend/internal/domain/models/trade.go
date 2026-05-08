@@ -3,6 +3,13 @@ package models
 
 import "time"
 
+// Position is a holding the user currently owns in their brokerage account.
+type Position struct {
+	Ticker      string
+	Quantity    float64
+	MarketValue float64
+}
+
 // TradeOrder is the instruction sent to a brokerage: buy this ticker for this dollar amount.
 // Amount is notional (dollars), not shares — the brokerage calculates fractional shares.
 type TradeOrder struct {
