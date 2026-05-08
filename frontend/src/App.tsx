@@ -4,12 +4,13 @@ import { Login } from "./pages/Login";
 import { Onboarding } from "./pages/Onboarding";
 import { Home } from "./pages/Home";
 import { Profile } from "./pages/Profile";
+import { AutoInvestSettings } from "./pages/AutoInvestSettings";
 import { getProfile, UserProfile } from "./services/api";
 import { ClerkApp } from "./ClerkApp";
 
 const DEV_MODE = import.meta.env.VITE_DEV_MODE === "true";
 
-type DevAppState = "auth" | "loading" | "onboarding" | "home" | "profile";
+type DevAppState = "auth" | "loading" | "onboarding" | "home" | "profile" | "auto-invest-settings";
 
 function DevApp() {
   const [state, setState] = useState<DevAppState>(() =>
@@ -47,15 +48,20 @@ function DevApp() {
       <Profile
         profile={profile!}
         onBack={() => setState("home")}
-        onAccountsChanged={() => setState("loading")} // reload profile to pick up updated connected_accounts
+        onAccountsChanged={() => setState("loading")}
       />
     );
+  }
+
+  if (state === "auto-invest-settings") {
+    return <AutoInvestSettings onBack={() => setState("home")} />;
   }
 
   return (
     <Home
       profile={profile!}
       onManageAccounts={() => setState("profile")}
+      onAutoInvestSettings={() => setState("auto-invest-settings")}
     />
   );
 }

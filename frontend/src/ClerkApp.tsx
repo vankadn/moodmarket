@@ -5,9 +5,10 @@ import { useAuth, useClerk, SignIn } from "@clerk/clerk-react";
 import { Onboarding } from "./pages/Onboarding";
 import { Home } from "./pages/Home";
 import { Profile } from "./pages/Profile";
+import { AutoInvestSettings } from "./pages/AutoInvestSettings";
 import { getProfile, UserProfile, setTokenFetcher } from "./services/api";
 
-type AppState = "loading" | "onboarding" | "home" | "profile";
+type AppState = "loading" | "onboarding" | "home" | "profile" | "auto-invest-settings";
 
 function Spinner() {
   return (
@@ -72,11 +73,16 @@ export function ClerkApp() {
     );
   }
 
+  if (state === "auto-invest-settings") {
+    return <AutoInvestSettings onBack={() => setState("home")} />;
+  }
+
   return (
     <Home
       profile={profile!}
       onSignOut={() => signOut()}
       onManageAccounts={() => setState("profile")}
+      onAutoInvestSettings={() => setState("auto-invest-settings")}
     />
   );
 }

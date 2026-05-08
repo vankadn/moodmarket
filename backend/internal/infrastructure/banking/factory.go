@@ -31,7 +31,8 @@ func NewFinancialDataProvider() (ports.FinancialDataProvider, error) {
 		if env == "" {
 			env = "sandbox"
 		}
-		return NewPlaidProvider(clientID, secret, env), nil
+		cacheTTL := os.Getenv("PLAID_CACHE_TTL")
+		return NewPlaidProvider(clientID, secret, env, cacheTTL), nil
 	default:
 		return nil, fmt.Errorf("banking factory: unknown provider %q (set FINANCIAL_DATA_PROVIDER=mock or plaid)", provider)
 	}

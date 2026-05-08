@@ -18,19 +18,27 @@ import (
 // plaidProvider implements FinancialDataProvider using Plaid's REST API.
 // All calls use net/http only — no Plaid SDK.
 type plaidProvider struct {
-	clientID   string
-	secret     string
-	baseURL    string
-	httpClient *http.Client
+	clientID       string
+	secret         string
+	baseURL        string
+	httpClient     *http.Client
+	cacheTTL       time.Duration
+	cachedSummary  *models.BalanceSummary
+	cacheExpiresAt time.Time
 }
 
-func NewPlaidProvider(clientID, secret, environment string) *plaidProvider {
+func NewPlaidProvider(clientID, secret, environment, cacheTTL string) *plaidProvider {
 	baseURL := plaidBaseURL(environment)
+	ttl, err := time.ParseDuration(cacheTTL)
+	if err != nil || ttl <= 0 {
+		ttl = 5 * time.Minute
+	}
 	return &plaidProvider{
 		clientID:   clientID,
 		secret:     secret,
 		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
+		cacheTTL:   ttl,
 	}
 }
 
@@ -90,7 +98,7 @@ func (p *plaidProvider) CreateLinkToken(ctx context.Context, userID string) (str
 	body := p.authBody()
 	body["user"] = map[string]string{"client_user_id": userID}
 	body["client_name"] = "InvestIQ"
-	body["products"] = []string{"auth"}
+	body["products"] = []string{"transactions"}
 	body["country_codes"] = []string{"US"}
 	body["language"] = "en"
 
@@ -196,7 +204,13 @@ func (p *plaidProvider) GetAccounts(ctx context.Context, accessToken string) ([]
 
 // GetBalanceSummary aggregates balances across all connected institutions.
 // Failures on individual connections are logged and skipped — partial results are returned.
+// Results are cached for cacheTTL to avoid hammering Plaid during development.
 func (p *plaidProvider) GetBalanceSummary(ctx context.Context, connections []models.PlaidConnection) (models.BalanceSummary, error) {
+	if p.cachedSummary != nil && time.Now().Before(p.cacheExpiresAt) {
+		log.Printf("[plaid] balance cache hit (expires in %s)", time.Until(p.cacheExpiresAt).Round(time.Second))
+		return *p.cachedSummary, nil
+	}
+
 	summary := models.BalanceSummary{
 		PulledAt: time.Now(),
 	}
@@ -226,6 +240,8 @@ func (p *plaidProvider) GetBalanceSummary(ctx context.Context, connections []mod
 		}
 	}
 
+	p.cachedSummary = &summary
+	p.cacheExpiresAt = time.Now().Add(p.cacheTTL)
 	return summary, nil
 }
 

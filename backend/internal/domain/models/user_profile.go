@@ -1,8 +1,6 @@
 // domain/models/user_profile.go
 package models
 
-import "time"
-
 type TimeHorizon string
 
 const (
@@ -50,7 +48,5 @@ type UserProfile struct {
 	RiskTolerance             RiskTolerance            `json:"risk_tolerance"`
 	InvestmentGoal            InvestmentGoal           `json:"investment_goal"`
 	HasEmergencyFund          bool                     `json:"has_emergency_fund"`
-	AutoInvestEnabled         bool                     `json:"auto_invest_enabled"`
-	AutoInvestEnabledAt       time.Time                `json:"auto_invest_enabled_at,omitempty"`
 	ConnectedAccounts         []PlaidConnectionSummary `json:"connected_accounts,omitempty"` // institution + item_id only; populated by repository, never written back on save
 }

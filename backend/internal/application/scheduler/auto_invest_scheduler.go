@@ -17,16 +17,16 @@ import (
 // AutoInvestScheduler ticks on a configurable interval and runs the full
 // investment pipeline for every user who has opted into autonomous investing.
 type AutoInvestScheduler struct {
-	profileRepo   ports.ProfileRepository
-	recommendSvc  *services.RecommendationService
-	investSvc     *services.InvestmentService
-	schedulerRepo ports.SchedulerRepository
-	notifications ports.NotificationProvider
-	interval      time.Duration
+	autoInvestRepo ports.AutoInvestRepository
+	recommendSvc   *services.RecommendationService
+	investSvc      *services.InvestmentService
+	schedulerRepo  ports.SchedulerRepository
+	notifications  ports.NotificationProvider
+	interval       time.Duration
 }
 
 func NewAutoInvestScheduler(
-	profileRepo ports.ProfileRepository,
+	autoInvestRepo ports.AutoInvestRepository,
 	recommendSvc *services.RecommendationService,
 	investSvc *services.InvestmentService,
 	schedulerRepo ports.SchedulerRepository,
@@ -35,12 +35,12 @@ func NewAutoInvestScheduler(
 	interval := parseInterval()
 	log.Printf("[scheduler] auto-invest interval: %s", interval)
 	return &AutoInvestScheduler{
-		profileRepo:   profileRepo,
-		recommendSvc:  recommendSvc,
-		investSvc:     investSvc,
-		schedulerRepo: schedulerRepo,
-		notifications: notifications,
-		interval:      interval,
+		autoInvestRepo: autoInvestRepo,
+		recommendSvc:   recommendSvc,
+		investSvc:      investSvc,
+		schedulerRepo:  schedulerRepo,
+		notifications:  notifications,
+		interval:       interval,
 	}
 }
 
@@ -66,16 +66,16 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 	runID := fmt.Sprintf("run-%d", startedAt.UnixNano())
 	log.Printf("[scheduler] cycle %s started", runID)
 
-	users, err := s.profileRepo.GetAutoInvestUsers(ctx)
+	configs, err := s.autoInvestRepo.GetAllEnabled(ctx)
 	if err != nil {
-		log.Printf("[scheduler] cycle %s — failed to fetch users: %v", runID, err)
+		log.Printf("[scheduler] cycle %s — failed to fetch configs: %v", runID, err)
 		return
 	}
-	if len(users) == 0 {
+	if len(configs) == 0 {
 		log.Printf("[scheduler] cycle %s — no users with auto-invest enabled", runID)
 		return
 	}
-	log.Printf("[scheduler] cycle %s — running for %d user(s)", runID, len(users))
+	log.Printf("[scheduler] cycle %s — running for %d user(s)", runID, len(configs))
 
 	var (
 		mu            sync.Mutex
@@ -84,19 +84,19 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 		wg            sync.WaitGroup
 	)
 
-	for _, user := range users {
+	for _, cfg := range configs {
 		wg.Add(1)
-		go func(u models.UserProfile) {
+		go func(c models.AutoInvestConfig) {
 			defer wg.Done()
-			invested, err := runForUser(ctx, u.UserID, s.recommendSvc, s.investSvc, s.notifications)
+			invested, err := runForUser(ctx, c, s.recommendSvc, s.investSvc, s.notifications)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("user=%s: %v", u.UserID, err))
+				errs = append(errs, fmt.Sprintf("user=%s: %v", c.UserID, err))
 			} else {
 				totalInvested += invested
 			}
-		}(user)
+		}(cfg)
 	}
 	wg.Wait()
 
@@ -104,7 +104,7 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 		RunID:          runID,
 		StartedAt:      startedAt,
 		CompletedAt:    time.Now(),
-		UsersProcessed: len(users),
+		UsersProcessed: len(configs),
 		TotalInvested:  totalInvested,
 		Errors:         errs,
 	}
@@ -112,7 +112,7 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 		log.Printf("[scheduler] cycle %s — failed to save audit record: %v", runID, err)
 	}
 
-	log.Printf("[scheduler] cycle %s done — %d users, %d errors", runID, len(users), len(errs))
+	log.Printf("[scheduler] cycle %s done — %d users, %d errors", runID, len(configs), len(errs))
 }
 
 func parseInterval() time.Duration {

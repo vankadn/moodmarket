@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ConfirmScreen } from "../components/ConfirmScreen";
 import { ReceiptScreen } from "../components/ReceiptScreen";
-import { getRecommendation, invest, updateAutoInvest, Recommendation, TradeReceipt, UserProfile } from "../services/api";
+import { getRecommendation, invest, getAutoInvestConfig, AutoInvestConfig, Recommendation, TradeReceipt, UserProfile } from "../services/api";
 
 interface Props {
   profile: UserProfile;
   onSignOut?: () => void;
   onManageAccounts?: () => void;
+  onAutoInvestSettings?: () => void;
 }
 
 const goalLabel: Record<string, string> = {
@@ -25,16 +26,19 @@ const horizonLabel: Record<string, string> = {
 
 type HomeState = "idle" | "confirming" | "investing" | "receipt";
 
-export function Home({ profile, onSignOut, onManageAccounts }: Props) {
+export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings }: Props) {
   const [amount, setAmount] = useState<number>(100);
-  const [autoInvest, setAutoInvest] = useState<boolean>(profile.auto_invest_enabled ?? false);
-  const [autoInvestLoading, setAutoInvestLoading] = useState(false);
+  const [autoInvestConfig, setAutoInvestConfig] = useState<AutoInvestConfig | null>(null);
   const [homeState, setHomeState] = useState<HomeState>("idle");
   const [rec, setRec] = useState<Recommendation | null>(null);
   const [receipts, setReceipts] = useState<TradeReceipt[]>([]);
   const [decisionId, setDecisionId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getAutoInvestConfig().then(setAutoInvestConfig).catch(() => {});
+  }, []);
 
   async function handleGetRecommendation() {
     setLoading(true);
@@ -76,19 +80,6 @@ export function Home({ profile, onSignOut, onManageAccounts }: Props) {
     setError(null);
   }
 
-  async function handleAutoInvestToggle() {
-    const next = !autoInvest;
-    setAutoInvestLoading(true);
-    try {
-      await updateAutoInvest(next);
-      setAutoInvest(next);
-    } catch {
-      // leave state unchanged if the API call fails
-    } finally {
-      setAutoInvestLoading(false);
-    }
-  }
-
   function handleDone() {
     setRec(null);
     setReceipts([]);
@@ -103,6 +94,10 @@ export function Home({ profile, onSignOut, onManageAccounts }: Props) {
     { label: "Risk",    value: profile.risk_tolerance.charAt(0).toUpperCase() + profile.risk_tolerance.slice(1) },
     { label: "Horizon", value: horizonLabel[profile.time_horizon] ?? profile.time_horizon },
   ];
+
+  const autoInvestLabel = autoInvestConfig?.enabled
+    ? `Enabled — $${autoInvestConfig.amount}/day`
+    : "Off";
 
   return (
     <div style={{ maxWidth: "560px", margin: "0 auto", padding: "2rem 1rem" }}>
@@ -148,67 +143,54 @@ export function Home({ profile, onSignOut, onManageAccounts }: Props) {
 
       {homeState === "idle" && (
         <>
-          {/* Investment amount input */}
+          {/* Auto-invest settings row */}
+          <button
+            onClick={onAutoInvestSettings}
+            style={{
+              width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "12px 14px", background: "#f8f8f8", borderRadius: "10px",
+              border: "none", cursor: "pointer", marginBottom: "1.5rem", textAlign: "left",
+            }}
+          >
+            <div>
+              <div style={{ fontSize: "13px", fontWeight: 500, color: "#222" }}>Auto-invest</div>
+              <div style={{ fontSize: "11px", color: autoInvestConfig?.enabled ? "#27ae60" : "#999", marginTop: "2px" }}>
+                {autoInvestLabel}
+              </div>
+            </div>
+            <span style={{ color: "#bbb", fontSize: "16px" }}>›</span>
+          </button>
+
+          {/* Investment amount + action row */}
           <div style={{ marginBottom: "1.5rem" }}>
             <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
               Today's investment
             </label>
-            <div style={{ display: "flex", alignItems: "center", marginTop: "8px" }}>
-              <div style={{ display: "flex", alignItems: "center", border: "1px solid #e0e0e0", borderRadius: "8px", overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", border: "1px solid #e0e0e0", borderRadius: "8px", overflow: "hidden", flexShrink: 0 }}>
                 <span style={{ padding: "8px 10px", fontSize: "14px", color: "#888", background: "#f8f8f8", borderRight: "1px solid #e0e0e0" }}>$</span>
                 <input
                   type="number" min={1} step={10} value={amount}
                   disabled={loading}
                   onChange={(e) => setAmount(Math.max(1, Number(e.target.value)))}
-                  style={{ width: "100px", padding: "8px 10px", border: "none", outline: "none", fontSize: "14px", background: loading ? "#f8f8f8" : "white" }}
+                  style={{ width: "80px", padding: "8px 10px", border: "none", outline: "none", fontSize: "14px", background: loading ? "#f8f8f8" : "white" }}
                 />
               </div>
+              <button
+                onClick={handleGetRecommendation}
+                disabled={loading}
+                style={{
+                  flex: 1, padding: "8px 16px",
+                  background: loading ? "#ccc" : "#1a1a1a",
+                  color: "white", border: "none", borderRadius: "8px",
+                  fontSize: "14px", fontWeight: 500,
+                  cursor: loading ? "not-allowed" : "pointer",
+                }}
+              >
+                {loading ? "Generating…" : "Get recommendation"}
+              </button>
             </div>
           </div>
-
-          {/* Auto-invest toggle */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem", padding: "12px 14px", background: "#f8f8f8", borderRadius: "10px" }}>
-            <div>
-              <div style={{ fontSize: "13px", fontWeight: 500, color: "#222" }}>Auto-invest daily</div>
-              <div style={{ fontSize: "11px", color: "#999", marginTop: "2px" }}>
-                {autoInvest
-                  ? (profile.auto_invest_enabled_at ? `Enabled — runs every day automatically` : "Enabled — runs every day automatically")
-                  : "Tap Invest today manually each day"}
-              </div>
-            </div>
-            <button
-              onClick={handleAutoInvestToggle}
-              disabled={autoInvestLoading}
-              style={{
-                width: "44px", height: "24px", borderRadius: "12px", border: "none",
-                background: autoInvest ? "#1a1a1a" : "#d0d0d0",
-                cursor: autoInvestLoading ? "not-allowed" : "pointer",
-                position: "relative", transition: "background 0.2s", flexShrink: 0,
-              }}
-            >
-              <span style={{
-                position: "absolute", top: "3px",
-                left: autoInvest ? "23px" : "3px",
-                width: "18px", height: "18px", borderRadius: "50%",
-                background: "white", transition: "left 0.2s",
-              }} />
-            </button>
-          </div>
-
-          <button
-            onClick={handleGetRecommendation}
-            disabled={loading}
-            style={{
-              width: "100%", padding: "13px",
-              background: loading ? "#ccc" : "#1a1a1a",
-              color: "white", border: "none", borderRadius: "10px",
-              fontSize: "15px", fontWeight: 500,
-              cursor: loading ? "not-allowed" : "pointer",
-              marginBottom: "1.5rem",
-            }}
-          >
-            {loading ? "Generating recommendation…" : `Get recommendation for $${amount}`}
-          </button>
         </>
       )}
 

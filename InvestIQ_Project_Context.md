@@ -1,13 +1,12 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-08 (Phase 6 complete, Phase 7 planned)
+> Last updated: 2026-05-08 (Phase 6 complete + post-phase fixes, Phase 7 current)
 
 ---
 
 ## Who I am
 
-- Name: Krishna
 - Background: React + Go developer (professional experience)
 - AI experience: New to Claude and AI development — learning by building
 - Goal: Build a real product while earning the Anthropic CPN certification simultaneously
@@ -399,6 +398,10 @@ Valid examples: `1m`, `5m`, `30m`, `3h`, `12h`, `24h` — anything `time.ParseDu
 - `AUTO_INVEST_INTERVAL=1m` in `.env` (change to `24h` for production)
 - Verified: scheduler fires on interval, handles zero opted-in users cleanly
 
+**Post-Phase 6 fixes:**
+- CORS moved from per-handler `setCORSHeaders()` calls to a single `middleware.CORS` wrapper in `main.go` — covers all routes universally, no handler can miss it
+- Git workflow rule added to CLAUDE.md: Claude writes code, you verify, you trigger commit/push
+
 **Known debt carried into Phase 7:**
 
 | Shortcut | Future fix |
@@ -407,6 +410,35 @@ Valid examples: `1m`, `5m`, `30m`, `3h`, `12h`, `24h` — anything `time.ParseDu
 | Per-user interval not supported | Phase 9 — user sets their own interval from profile settings |
 | Market holiday awareness | Scheduler fires on holidays — add NYSE calendar check before executing |
 | Concurrent user runs not rate-limited | Add semaphore to limit concurrent Plaid/Alpaca calls at scale |
+| Plaid `BALANCE_LIMIT` 429 on rapid calls | Cache balance summary with 5-min TTL; free tier throttles `/accounts/balance/get` per item |
+
+### Phase 6b — Auto-Invest Config (Planned)
+
+**Goal:** Promote AutoInvestConfig from fields on UserProfile to a first-class domain model with its own collection and a dedicated settings screen.
+
+**Why:** Auto-invest needs its own amount and risk tolerance (separate from profile defaults). Future phases will support multiple configs with different risk levels and schedules.
+
+**Backend changes:**
+- New domain model: `domain/models/auto_invest_config.go` — fields: ID, UserID, Enabled, Amount (float64), Risk (RiskTolerance), EnabledAt, UpdatedAt
+- New port: `domain/ports/auto_invest_repository.go` — GetByUserID, Upsert, GetAllEnabled
+- New infrastructure: `infrastructure/db/mongo_auto_invest_repository.go` — collection: `auto_invest_configs`, upsert by user_id
+- Update scheduler: use `AutoInvestRepository.GetAllEnabled()` instead of querying users collection; pass config.Amount and config.Risk into runner
+- New handler: `api/handlers/auto_invest_config_handler.go` — GET and PUT `/users/auto-invest/config`
+- Remove `auto_invest_enabled` and `auto_invest_enabled_at` from UserProfile
+- Remove `SetAutoInvest` / `GetAutoInvestUsers` from ProfileRepository
+- Remove old `PUT /users/auto-invest` handler
+
+**Frontend changes:**
+- New page: `AutoInvestSettings.tsx` — toggle, dollar amount input, risk pill selector (3 buttons, not dropdown), save button
+- `api.ts`: add `AutoInvestConfig` type, `getAutoInvestConfig()`, `saveAutoInvestConfig()`
+- `Home.tsx`: auto-invest row navigates to settings instead of toggling directly; show "Enabled — $100/day" when active
+- New route in `App.tsx`: `/auto-invest/settings`
+
+**Design decision:** Home toggle is enable/disable only. All config lives in the settings screen. This pattern scales to multiple configs in Phase 9.
+
+**Known debt to carry forward:**
+- Only one config per user supported — Phase 9 adds multiple schedules with different risk levels
+- Frequency is daily only — weekly/monthly scheduling is a Phase 9 addition
 
 ### Phase 7 — Current Phase
 - Dashboard: total dollars invested via InvestIQ, number of decisions made
@@ -431,7 +463,7 @@ A unified financial operating system. The app knows:
 - Daily spending patterns
 
 When the user taps "Invest today", Claude receives a prompt like:
-> "Krishna has $4,200 in checking, $180,000 in 401k (60/40 allocation), $12,000 in brokerage mostly QQQ and AAPL, a $1,200 credit card bill due in 8 days, H1B visa, 10-year horizon, moderate risk. Invest $100 today."
+> "User has $4,200 in checking, $180,000 in 401k (60/40 allocation), $12,000 in brokerage mostly QQQ and AAPL, a $1,200 credit card bill due in 8 days, H1B visa, 10-year horizon, moderate risk. Invest $100 today."
 
 That context is what makes recommendations genuinely intelligent — not mood, not guesses.
 

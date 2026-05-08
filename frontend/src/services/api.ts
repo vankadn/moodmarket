@@ -22,9 +22,17 @@ export interface UserProfile {
   risk_tolerance: RiskTolerance;
   investment_goal: InvestmentGoal;
   has_emergency_fund: boolean;
-  auto_invest_enabled: boolean;
-  auto_invest_enabled_at?: string;
   connected_accounts?: PlaidConnectionSummary[];
+}
+
+export interface AutoInvestConfig {
+  id?: string;
+  user_id?: string;
+  enabled: boolean;
+  amount: number;
+  risk: RiskTolerance;
+  enabled_at?: string;
+  updated_at?: string;
 }
 
 export interface InvestmentRequest {
@@ -141,13 +149,22 @@ export async function deletePlaidAccount(itemId: string): Promise<void> {
   if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
 
-export async function updateAutoInvest(enabled: boolean): Promise<void> {
-  const res = await fetch(`${API_BASE}/users/auto-invest`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-    body: JSON.stringify({ enabled }),
+export async function getAutoInvestConfig(): Promise<AutoInvestConfig> {
+  const res = await fetch(`${API_BASE}/users/auto-invest/config`, {
+    headers: await authHeaders(),
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function saveAutoInvestConfig(config: AutoInvestConfig): Promise<AutoInvestConfig> {
+  const res = await fetch(`${API_BASE}/users/auto-invest/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
 }
 
 export async function saveProfile(profile: UserProfile): Promise<UserProfile> {

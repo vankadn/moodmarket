@@ -48,6 +48,16 @@ func loadEnv(path string) {
 
 func main() {
 	loadEnv(".env")
+
+	if os.Getenv("MOCK_ALL") == "true" {
+		log.Println("[config] MOCK_ALL=true — overriding all providers to mock")
+		os.Setenv("AI_PROVIDER", "mock")
+		os.Setenv("MARKET_PROVIDER", "mock")
+		os.Setenv("FINANCIAL_DATA_PROVIDER", "mock")
+		os.Setenv("BROKERAGE_PROVIDER", "mock")
+		os.Setenv("DEV_MODE", "true")
+	}
+
 	ctx := context.Background()
 
 	mongoClient, err := infradb.Connect(ctx)
@@ -86,13 +96,14 @@ func main() {
 	}
 
 	schedulerRepo := infradb.NewMongoSchedulerRepository(database)
+	autoInvestRepo := infradb.NewMongoAutoInvestRepository(database)
 	notificationProvider := infranotifications.NewNotificationProvider()
 
 	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider)
 	investSvc := services.NewInvestmentService(brokerageProvider, decisionRepo, marketProvider)
 	idp := middleware.ContextIdentityProvider{}
 
-	autoInvestScheduler := scheduler.NewAutoInvestScheduler(profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider)
+	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider)
 	go autoInvestScheduler.Start(ctx)
 
 	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)
@@ -105,7 +116,7 @@ func main() {
 	mux.Handle("/plaid/link-token", plaidHandler)
 	mux.Handle("/plaid/exchange", plaidHandler)
 	mux.Handle("/plaid/accounts/", plaidHandler) // trailing slash = prefix match for /{item_id}
-	mux.Handle("/users/auto-invest", handlers.NewAutoInvestHandler(profileRepo, idp))
+	mux.Handle("/users/auto-invest/config", handlers.NewAutoInvestConfigHandler(autoInvestRepo, idp))
 
 	port := os.Getenv("PORT")
 	if port == "" {

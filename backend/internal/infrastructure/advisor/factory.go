@@ -17,7 +17,9 @@ func NewAdvisor() (ports.InvestmentAdvisor, error) {
 	switch provider {
 	case "claude":
 		return newClaudeAdvisor(), nil
+	case "mock":
+		return newMockAdvisor(), nil
 	default:
-		return nil, fmt.Errorf("advisor factory: unknown provider %q (set AI_PROVIDER=claude)", provider)
+		return nil, fmt.Errorf("advisor factory: unknown provider %q (set AI_PROVIDER=claude or mock)", provider)
 	}
 }

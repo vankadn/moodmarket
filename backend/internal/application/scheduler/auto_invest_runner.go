@@ -11,30 +11,28 @@ import (
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
-// runForUser executes the full investment pipeline for a single user.
-// Returns the total dollar amount invested on success, or an error if the pipeline fails.
-// Partial order failures (some tickers succeed, some fail) are not treated as errors here —
-// they are logged inside InvestmentService and the user is notified of what did complete.
+// runForUser executes the full investment pipeline for a single user using their config.
+// Returns the total dollar amount invested, or an error if the pipeline fails.
 func runForUser(
 	ctx context.Context,
-	userID string,
+	config models.AutoInvestConfig,
 	recommendSvc *services.RecommendationService,
 	investSvc *services.InvestmentService,
 	notifications ports.NotificationProvider,
 ) (float64, error) {
-	log.Printf("[scheduler] user=%s pipeline start", userID)
+	log.Printf("[scheduler] user=%s pipeline start (amount=%.0f)", config.UserID, config.Amount)
 
-	req := models.InvestmentRequest{BaseBudget: 100, ExtraMoney: 0}
+	req := models.InvestmentRequest{BaseBudget: config.Amount, ExtraMoney: 0}
 
-	rec, err := recommendSvc.GetDailyRecommendation(ctx, userID, req)
+	rec, err := recommendSvc.GetDailyRecommendation(ctx, config.UserID, req)
 	if err != nil {
-		_ = notifications.SendInvestmentFailure(ctx, userID, fmt.Sprintf("recommendation failed: %v", err))
+		_ = notifications.SendInvestmentFailure(ctx, config.UserID, fmt.Sprintf("recommendation failed: %v", err))
 		return 0, fmt.Errorf("recommendation: %w", err)
 	}
 
-	receipts, _, err := investSvc.Execute(ctx, userID, rec.Allocations, rec.TotalBudget, rec.RiskLevel, rec.Summary)
+	receipts, _, err := investSvc.Execute(ctx, config.UserID, rec.Allocations, rec.TotalBudget, rec.RiskLevel, rec.Summary)
 	if err != nil {
-		_ = notifications.SendInvestmentFailure(ctx, userID, fmt.Sprintf("execution failed: %v", err))
+		_ = notifications.SendInvestmentFailure(ctx, config.UserID, fmt.Sprintf("execution failed: %v", err))
 		return 0, fmt.Errorf("execution: %w", err)
 	}
 
@@ -43,10 +41,10 @@ func runForUser(
 		totalFilled += r.FilledAmount
 	}
 
-	if err := notifications.SendInvestmentSummary(ctx, userID, receipts, totalFilled); err != nil {
-		log.Printf("[scheduler] user=%s notification failed: %v", userID, err)
+	if err := notifications.SendInvestmentSummary(ctx, config.UserID, receipts, totalFilled); err != nil {
+		log.Printf("[scheduler] user=%s notification failed: %v", config.UserID, err)
 	}
 
-	log.Printf("[scheduler] user=%s pipeline done — %d positions placed", userID, len(receipts))
+	log.Printf("[scheduler] user=%s pipeline done — %d positions placed", config.UserID, len(receipts))
 	return totalFilled, nil
 }

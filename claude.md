@@ -25,22 +25,6 @@ Every external dependency (AI, database, auth, market data, brokerage, banking) 
 
 `DEV_MODE=true` bypasses auth. That branch lives in exactly one place: `infrastructure/auth/factory.go`. No DEV_MODE checks anywhere else in the codebase.
 
-## Logging rules
-
-Logs are for understanding flow, not recording data. Never commit a log line that contains PII or sensitive user data.
-
-**Never log:**
-- Financial amounts (salary, balances, budget, portfolio value)
-- Institution or account names
-- Personal profile fields (name, email, immigration status)
-- Full prompts or API payloads sent to external services
-
-**Safe to log:**
-- User ID (opaque identifier, not personal data)
-- Step completion and counts (`3 allocations`, `2 accounts`)
-- Categorical values that don't identify a person (`risk=medium`, `sentiment=bullish`)
-- Error messages and latency
-
 ## Go rules
 
 - Standard library only — no Gin, Echo, GORM, or any third-party framework
@@ -50,16 +34,17 @@ Logs are for understanding flow, not recording data. Never commit a log line tha
 - userId comes from context only — always `identityProvider.GetCurrentUser(ctx)`, never a global or hardcoded value
 - Business logic lives in the domain layer — never in handlers or infrastructure
 
-## React rules
+## Git workflow
 
-- TypeScript + Vite only — no UI component libraries (MUI, Chakra, Shadcn, etc.)
-- No Redux — component and hook state only
+Before any commit or push, read `skills/pre-commit-checklist.md` and verify every item.
 
-## When writing code
+1. Write and build the code
+2. You verify it works
+3. You say "commit" or "push" — then do it
 
-1. State the layer you are working in
-2. Name the interface before writing the implementation
-3. Show `// path/to/file.go` at the top of every code block
-4. One sentence explaining *why* per significant decision
-5. Flag architecture violations instead of complying — propose the correct approach
-6. End with the exact commands to verify the change works
+## Skills — load when relevant
+
+- Adding or reviewing logs → read `skills/logging-rules.md`
+- Touching frontend → read `skills/react-rules.md`
+- Starting a new feature implementation → read `skills/new-feature-checklist.md`
+- Committing or pushing → read `skills/pre-commit-checklist.md`
