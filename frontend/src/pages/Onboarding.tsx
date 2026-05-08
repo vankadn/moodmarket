@@ -44,6 +44,7 @@ const defaultProfile: UserProfile = {
   risk_tolerance: "moderate",
   investment_goal: "wealth_building",
   has_emergency_fund: false,
+  include_cash_context: false,
 };
 
 export function Onboarding({ onComplete }: Props) {

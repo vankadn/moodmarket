@@ -24,6 +24,11 @@ type FinancialDataProvider interface {
 	// Failures on individual connections are logged and skipped — partial results are returned.
 	GetBalanceSummary(ctx context.Context, connections []models.PlaidConnection) (models.BalanceSummary, error)
 
+	// GetTransactionSummary aggregates recent spending across all connected institutions.
+	// Returns a pre-computed summary (7-day spend, 30-day spend, largest pending charge).
+	// Failures on individual connections are logged and skipped — partial results are returned.
+	GetTransactionSummary(ctx context.Context, connections []models.PlaidConnection) (models.TransactionSummary, error)
+
 	// RevokeToken permanently revokes an access token (calls item/remove on Plaid).
 	RevokeToken(ctx context.Context, accessToken string) error
 }

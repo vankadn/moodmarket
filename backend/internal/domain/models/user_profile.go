@@ -48,5 +48,6 @@ type UserProfile struct {
 	RiskTolerance             RiskTolerance            `json:"risk_tolerance"`
 	InvestmentGoal            InvestmentGoal           `json:"investment_goal"`
 	HasEmergencyFund          bool                     `json:"has_emergency_fund"`
+	IncludeCashContext        bool                     `json:"include_cash_context"`         // user opted in to cash-context signal in Claude prompt
 	ConnectedAccounts         []PlaidConnectionSummary `json:"connected_accounts,omitempty"` // institution + item_id only; populated by repository, never written back on save
 }

@@ -260,6 +260,19 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 		msg += "\nFINANCIAL ACCOUNTS: No bank accounts connected. Using profile estimates only.\n"
 	}
 
+	if profile != nil && profile.IncludeCashContext && req.TransactionSummary != nil {
+		ts := req.TransactionSummary
+		msg += "\nSPENDING CONTEXT:\n"
+		msg += fmt.Sprintf("- Spend last 7 days: $%.2f\n", ts.SpendLast7Days)
+		msg += fmt.Sprintf("- Spend last 30 days: $%.2f\n", ts.SpendLast30Days)
+		if req.BalanceSummary != nil && ts.SpendLast30Days > 0 {
+			dailySpend := ts.SpendLast30Days / 30
+			runway := int(req.BalanceSummary.TotalCash / dailySpend)
+			msg += fmt.Sprintf("- Cash runway: ~%d days at current spend rate\n", runway)
+		}
+		msg += "Use as background context only — do not override the user's stated risk tolerance or investment amount.\n"
+	}
+
 	if len(req.Positions) > 0 {
 		var totalValue float64
 		for _, p := range req.Positions {

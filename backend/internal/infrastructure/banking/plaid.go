@@ -245,6 +245,70 @@ func (p *plaidProvider) GetBalanceSummary(ctx context.Context, connections []mod
 	return summary, nil
 }
 
+// GetTransactionSummary fetches up to 30 days of transactions for all connections and
+// returns aggregated spend signals for the Claude prompt.
+func (p *plaidProvider) GetTransactionSummary(ctx context.Context, connections []models.PlaidConnection) (models.TransactionSummary, error) {
+	now := time.Now()
+	endDate := now.Format("2006-01-02")
+	startDate := now.AddDate(0, 0, -30).Format("2006-01-02")
+	cutoff7 := now.AddDate(0, 0, -7)
+
+	summary := models.TransactionSummary{PulledAt: now}
+
+	for _, conn := range connections {
+		body := p.authBody()
+		body["access_token"] = conn.AccessToken
+		body["start_date"] = startDate
+		body["end_date"] = endDate
+		body["options"] = map[string]any{"count": 500}
+
+		var resp struct {
+			Transactions []struct {
+				Amount  float64 `json:"amount"` // positive = debit (spending)
+				Date    string  `json:"date"`
+				Name    string  `json:"name"`
+				Pending bool    `json:"pending"`
+			} `json:"transactions"`
+		}
+		if err := p.post(ctx, "/transactions/get", body, &resp); err != nil {
+			if strings.Contains(err.Error(), "ADDITIONAL_CONSENT_REQUIRED") {
+				log.Printf("[plaid] transaction fetch skipped for %s — re-authorization needed (disconnect and reconnect in app to grant transaction consent)", conn.Institution)
+			} else {
+				log.Printf("[plaid] transaction fetch failed for %s (skipped): %v", conn.Institution, err)
+			}
+			continue
+		}
+
+		log.Printf("[plaid-txn] %s: %d transaction(s) returned for %s to %s", conn.Institution, len(resp.Transactions), startDate, endDate)
+		var debits, credits int
+		for i, tx := range resp.Transactions {
+			// Log first 5 raw transactions so we can diagnose amount signs and date format
+			if i < 5 {
+				log.Printf("[plaid-txn] raw[%d]: date=%s amount=%.2f pending=%v name=%q", i, tx.Date, tx.Amount, tx.Pending, tx.Name)
+			}
+			if tx.Amount <= 0 {
+				credits++
+				continue // credit, refund, or transfer — skip
+			}
+			debits++
+			summary.SpendLast30Days += tx.Amount
+
+			txDate, err := time.Parse("2006-01-02", tx.Date)
+			if err == nil && !txDate.Before(cutoff7) {
+				summary.SpendLast7Days += tx.Amount
+			}
+
+			if tx.Pending && tx.Amount > summary.LargestPendingAmount {
+				summary.LargestPendingAmount = tx.Amount
+				summary.LargestPendingName = tx.Name
+			}
+		}
+		log.Printf("[plaid-txn] %s: %d debits counted, %d credits/transfers skipped", conn.Institution, debits, credits)
+	}
+
+	return summary, nil
+}
+
 // RevokeToken permanently removes an item from Plaid (item/remove).
 func (p *plaidProvider) RevokeToken(ctx context.Context, accessToken string) error {
 	body := p.authBody()

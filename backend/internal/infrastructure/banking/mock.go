@@ -40,6 +40,16 @@ func (m *mockProvider) GetBalanceSummary(_ context.Context, _ []models.PlaidConn
 	}, nil
 }
 
+func (m *mockProvider) GetTransactionSummary(_ context.Context, _ []models.PlaidConnection) (models.TransactionSummary, error) {
+	return models.TransactionSummary{
+		SpendLast7Days:       342.50,
+		SpendLast30Days:      1240.00,
+		LargestPendingAmount: 189.00,
+		LargestPendingName:   "Netflix Annual Subscription",
+		PulledAt:             time.Now(),
+	}, nil
+}
+
 func (m *mockProvider) RevokeToken(_ context.Context, _ string) error {
 	return nil
 }

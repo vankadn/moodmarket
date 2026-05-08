@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-08 (Phase 8b complete)
+> Last updated: 2026-05-08 (Phase 8ca redesign complete)
 
 ---
 
@@ -140,6 +140,7 @@ See README.md for the full env var reference and provider swap table.
 | `AutoInvestConfig` | First-class domain model (own collection): Enabled, Amount, Risk, EnabledAt, UpdatedAt |
 | `SchedulerRun` | Audit record for one autonomous cycle: RunID, StartedAt, CompletedAt, UsersProcessed, TotalInvested, Errors |
 | `NewsItem` | One market headline: Headline, Summary, Source, PublishedAt |
+| `TransactionSummary` | Aggregated spending signals: SpendLast7Days, SpendLast30Days, LargestPendingAmount, LargestPendingName, PulledAt |
 
 ---
 
@@ -155,6 +156,7 @@ See README.md for the full env var reference and provider swap table.
 - `risk_tolerance` enum
 - `investment_goal` enum
 - `has_emergency_fund` boolean
+- `include_cash_context` boolean — opt-in: share spending/runway data with Claude advisor (default false; no migration needed)
 
 Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its own collection, not on UserProfile.
 
@@ -301,7 +303,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Polls Alpaca every 3s for non-terminal orders; terminal set: filled, canceled, expired, rejected, replaced
 - Shows "polling for fill…" indicator while waiting
 
-### Phase 8 — In Progress
+### Phase 8 — Complete
 
 **Goal:** Make the Claude prompt as strong as possible with maximum real context. Sub-phases ordered by benefit — do 8a before touching news or Plaid.
 
@@ -347,17 +349,47 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 ---
 
-### Phase 8c — Plaid transaction history (highest risk, new Plaid scope)
+### Phase 8c + 8ca — Complete
 
-**What it adds:** Is the user's cash about to drop? Did they have a spending spike? Claude can suggest a smaller investment today if a large bill is due.
+**Plaid transaction history**
 
-**Why last:** New Plaid product scope (`transactions`) may require re-approval on some environments. Transaction data is a different shape than balances — requires more parsing and formatting work. Keep 8a+8b stable before touching this.
+- `domain/models/banking.go` — `TransactionSummary`: SpendLast7Days, SpendLast30Days, LargestPendingAmount, LargestPendingName, PulledAt
+- `domain/ports/financial_data_provider.go` — `GetTransactionSummary(ctx, connections) (TransactionSummary, error)` added to existing interface
+- `infrastructure/banking/plaid.go` — `/transactions/get` with 30-day window; sums positive amounts (debits only, skip credits/refunds); tracks largest pending charge
+- `infrastructure/banking/mock.go` — realistic fixture: $342.50/7d, $1240/30d, $189 Netflix pending
+- `RecommendationService` now 8 steps — transactions (step 4) inserted right after balances (step 3); both Plaid, failures non-fatal
+- Claude prompt: `SPENDING HISTORY` section — 7d spend, 30d spend, largest pending charge, estimated cash runway (TotalCash ÷ daily avg); instruction to consider smaller investment if runway is short
+- Cash runway computed in `buildUserMessage` using `req.BalanceSummary.TotalCash` ÷ `(SpendLast30Days/30)` — requires both sections present
+- `[8c-debug]` temporary log added — grep to remove after testing
+- Prompt tests: 4 new cases (absent, spend figures, pending charge, runway calculation) — total now 19
 
-**Changes:**
-- Add `GetRecentTransactions(ctx, connections) ([]Transaction, error)` to `FinancialDataProvider`
-- New Plaid call: `/transactions/get` with 30-day window
-- Inject into prompt: total spend last 7 days, largest pending transaction, estimated cash runway
-- Mock returns a small set of realistic fake transactions
+**Phase 8ca — Cash context surface (redesign: preference-gated, FYI-only)**
+
+**Why redesigned:** Original implementation sent per-session cash directives to Claude ("Factor this into allocation — consider more conservative positions"). This caused Claude to override the user's stated risk tolerance even when the user had confirmed the amount. Root cause was the conditional directive logic in `buildUserMessage`, not the data itself.
+
+**What was removed:**
+- `CashOverride bool` from `InvestmentRequest` — per-session override gone entirely
+- "Invest anyway" and "Adjust amount" buttons from `CashContextCard`
+- `cashOverride` state and `amountInputRef` from `Home.tsx`
+- The three-way directive conditional from `buildUserMessage` ("Respect this decision" / "Factor into allocation" / silent)
+
+**What was added / kept:**
+- `domain/models/cash_context.go` — `CashContext`: HasData, RunwayDays, RunwayLabel, SpendLast7D, SpendLast30D, LargestPendingAmount, LargestPendingName, Message (kept; UserOverride field is dead code — never set)
+- `domain/models/user_profile.go` — `IncludeCashContext bool` (`json:"include_cash_context"`) — stored opt-in preference, default false; no DB migration needed
+- `application/services/recommendation_service.go` — `GetCashContext(ctx, userID)` method unchanged; `runwayLabelAndMessage`: >30d=healthy, 14-30d=moderate, <14d=tight
+- `infrastructure/advisor/claude.go` — `buildUserMessage` SPENDING HISTORY section replaced with SPENDING CONTEXT; gated on `profile != nil && profile.IncludeCashContext && req.TransactionSummary != nil`; if true: emits 7d spend, 30d spend, cash runway (if BalanceSummary present), and "Use as background context only — do not override the user's stated risk tolerance or investment amount."; if false: section omitted entirely
+- `api/handlers/cash_context_handler.go` — `GET /users/cash-context` unchanged
+- `frontend/src/components/CashContextCard.tsx` — redesigned: FYI-only, no buttons, auto-dismiss after 5s or tap; amber tint only (tight runway only)
+- `frontend/src/pages/Home.tsx` — localStorage daily gate on mount (`cash_card_shown_date` = ISO date string); card only shown when `runway_label === "tight"` AND not already shown today; `handleCashCardDismiss` writes localStorage and clears card; `cash_override` removed from recommendation request
+- `frontend/src/pages/AutoInvestSettings.tsx` — "Include cash balance context" toggle; loads profile on mount alongside auto-invest config; saves both on save button
+- `frontend/src/services/api.ts` — `include_cash_context` added to `UserProfile`; `cash_override` removed from `InvestmentRequest`
+- Prompt tests: replaced 5 old spending/override cases with 5 new opt-in gate cases; total now 20 cases
+  - `no_transactions_omits_section` — mustNotContain SPENDING CONTEXT
+  - `spending_context_omitted_without_opt_in` — TransactionSummary present but IncludeCashContext=false → no section
+  - `spending_context_shown_when_opted_in` — IncludeCashContext=true → SPENDING CONTEXT, "background context only", spend figures
+  - `spending_context_with_runway_when_opted_in` — IncludeCashContext=true + BalanceSummary → Cash runway shown
+  - `spending_context_omitted_no_profile` — nil profile → no section (can't opt in without profile)
+- `[8ca-debug]` temporary log in recommendation_service.go — grep to remove after testing
 
 ### Phase 9 — Planned
 
@@ -474,6 +506,7 @@ Background data access is legitimate when:
 | Polygon over Finnhub for news | Polygon already integrated — no new key, no new dependency. Claude infers sentiment from text. Finnhub backlogged for when individual stocks make per-ticker sentiment worth the extra dependency |
 | Dependency principle: exhaust before adding | Before adding a new API/service, check if an existing one can do the job. New keys = new cost, new failure surface, new rotation burden |
 | Phase 8 ordered 8a → 8b → 8c | 8a: zero risk, wires existing data; 8b: Polygon news, zero new deps; 8c: new Plaid scope, most complex — keep isolated |
+| Cash context as opt-in stored preference (Phase 8ca redesign) | Per-session directives ("Factor this into allocation") caused Claude to override stated risk tolerance regardless of user intent. Fix: gate spending data behind a stored UserProfile preference; when shown, instruction is "background context only — do not override risk tolerance or amount." Removes the cognitive dissonance between user input and AI output. |
 
 ---
 
@@ -488,9 +521,11 @@ Background data access is legitimate when:
 | Market holiday awareness | Add NYSE calendar check before scheduler executes |
 | Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale (Wishlist) |
 | Encrypted Mongo for Plaid tokens | Vault / AWS Secrets Manager — Phase 9 deployment |
-| No transaction history in prompt | Phase 8 — Plaid Transactions scope |
 | One config per user only | Wishlist — multiple schedules with different risk levels |
 | Receipt shows PENDING NEW | Fixed in Phase 7 — polls until terminal status |
 | `[8a-debug]` log lines in `recommendation_service.go` | Remove after Phase 8a testing is verified; grep `[8a-debug]` |
 | `[8b-debug]` log lines in `recommendation_service.go` | Remove after Phase 8b testing is verified; grep `[8b-debug]` |
+| `[8c-debug]` log lines in `recommendation_service.go` | Remove after Phase 8c testing is verified; grep `[8c-debug]` |
+| `[8ca-debug]` log lines in `recommendation_service.go` | Remove after Phase 8ca testing is verified; grep `[8ca-debug]` |
+| `CashContext.UserOverride` field is dead | Field exists in the model but is never set; was part of the original Phase 8ca design before the redesign removed per-session override. Remove when cleaning up. |
 | Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |

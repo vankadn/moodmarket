@@ -72,28 +72,60 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	// Step 3: Plaid bank balances
 	connections, err := s.profileRepo.GetPlaidConnections(ctx, userID)
 	if err != nil {
-		log.Printf("[recommend] step 3/7  plaid connections fetch failed (%v) — skipped", err)
+		log.Printf("[recommend] step 3/8  plaid connections fetch failed (%v) — skipped", err)
 	} else if len(connections) == 0 {
-		log.Printf("[recommend] step 3/7  no bank accounts connected — Claude will use profile estimates only")
+		log.Printf("[recommend] step 3/8  no bank accounts connected — Claude will use profile estimates only")
 	} else {
-		log.Printf("[recommend] step 3/7  %d plaid connection(s) found — fetching live balances", len(connections))
+		log.Printf("[recommend] step 3/8  %d plaid connection(s) found — fetching live balances", len(connections))
 
 		summary, err := s.financialData.GetBalanceSummary(ctx, connections)
 		if err != nil {
-			log.Printf("[recommend] step 3/7  balance fetch failed (%v) — skipped", err)
+			log.Printf("[recommend] step 3/8  balance fetch failed (%v) — skipped", err)
 		} else {
 			req.BalanceSummary = &summary
-			log.Printf("[recommend] step 3/7  balances loaded (%d accounts)", summary.AccountCount)
+			log.Printf("[recommend] step 3/8  balances loaded (%d accounts)", summary.AccountCount)
+		}
+
+		// Step 4: Plaid transaction history — Claude can flag large pending charges
+		txSummary, err := s.financialData.GetTransactionSummary(ctx, connections)
+		if err != nil {
+			log.Printf("[recommend] step 4/8  transaction fetch failed (%v) — skipped", err)
+		} else {
+			req.TransactionSummary = &txSummary
+			log.Printf("[recommend] step 4/8  transactions loaded (7d=$%.0f 30d=$%.0f pending=%s)", txSummary.SpendLast7Days, txSummary.SpendLast30Days, txSummary.LargestPendingName)
+			// TODO: remove after 8c testing
+			log.Printf("[8c-debug] spend 7d=$%.2f 30d=$%.2f largest_pending=%s $%.2f", txSummary.SpendLast7Days, txSummary.SpendLast30Days, txSummary.LargestPendingName, txSummary.LargestPendingAmount)
+			// Spending spike: compare 7-day to a normal week (30d avg / 4)
+			if txSummary.SpendLast30Days > 0 {
+				avgWeekly := txSummary.SpendLast30Days / 4
+				spikePct := (txSummary.SpendLast7Days - avgWeekly) / avgWeekly * 100
+				if spikePct > 20 {
+					log.Printf("[8c-debug] spending spike: this week $%.2f vs avg week $%.2f (+%.0f%%)", txSummary.SpendLast7Days, avgWeekly, spikePct)
+				} else if spikePct < -20 {
+					log.Printf("[8c-debug] spending dip: this week $%.2f vs avg week $%.2f (%.0f%%)", txSummary.SpendLast7Days, avgWeekly, spikePct)
+				} else {
+					log.Printf("[8c-debug] spending normal: this week $%.2f vs avg week $%.2f (%+.0f%%)", txSummary.SpendLast7Days, avgWeekly, spikePct)
+				}
+			}
+			// Cash runway using balance summary if available
+			if req.BalanceSummary != nil && txSummary.SpendLast30Days > 0 {
+				dailySpend := txSummary.SpendLast30Days / 30
+				runway := int(req.BalanceSummary.TotalCash / dailySpend)
+				log.Printf("[8c-debug] cash runway: $%.2f cash ÷ $%.2f/day = ~%d days", req.BalanceSummary.TotalCash, dailySpend, runway)
+			}
+			if txSummary.LargestPendingAmount > 0 {
+				log.Printf("[8c-debug] largest pending: %s $%.2f — flagged to Claude", txSummary.LargestPendingName, txSummary.LargestPendingAmount)
+			}
 		}
 	}
 
-	// Step 4: current brokerage positions — Claude avoids over-concentrating existing holdings
+	// Step 5: current brokerage positions — Claude avoids over-concentrating existing holdings
 	positions, err := s.brokerage.GetPositions(ctx, userID)
 	if err != nil {
-		log.Printf("[recommend] step 4/7  positions fetch failed (%v) — skipped", err)
+		log.Printf("[recommend] step 5/8  positions fetch failed (%v) — skipped", err)
 	} else {
 		req.Positions = positions
-		log.Printf("[recommend] step 4/7  %d position(s) loaded", len(positions))
+		log.Printf("[recommend] step 5/8  %d position(s) loaded", len(positions))
 		// TODO: remove after 8a testing
 		var totalVal float64
 		for _, p := range positions {
@@ -108,13 +140,13 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 		}
 	}
 
-	// Step 5: recent decision history — Claude avoids repeating the same allocation daily
+	// Step 6: recent decision history — Claude avoids repeating the same allocation daily
 	recentDecisions, err := s.decisionRepo.ListByUser(ctx, userID, 10)
 	if err != nil {
-		log.Printf("[recommend] step 5/7  recent decisions fetch failed (%v) — skipped", err)
+		log.Printf("[recommend] step 6/8  recent decisions fetch failed (%v) — skipped", err)
 	} else {
 		req.RecentDecisions = recentDecisions
-		log.Printf("[recommend] step 5/7  %d recent decision(s) loaded", len(recentDecisions))
+		log.Printf("[recommend] step 6/8  %d recent decision(s) loaded", len(recentDecisions))
 		// TODO: remove after 8a testing
 		for i, d := range recentDecisions {
 			if i >= 5 {
@@ -128,13 +160,13 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 		}
 	}
 
-	// Step 6: today's market news — Claude can factor in macro events and breaking news
+	// Step 7: today's market news — Claude can factor in macro events and breaking news
 	newsItems, err := s.news.GetDailyNews(ctx)
 	if err != nil {
-		log.Printf("[recommend] step 6/7  news fetch failed (%v) — skipped", err)
+		log.Printf("[recommend] step 7/8  news fetch failed (%v) — skipped", err)
 	} else {
 		req.NewsItems = newsItems
-		log.Printf("[recommend] step 6/7  %d headline(s) loaded", len(newsItems))
+		log.Printf("[recommend] step 7/8  %d headline(s) loaded", len(newsItems))
 		// TODO: remove after 8b testing
 		for i, n := range newsItems {
 			if i >= 5 {
@@ -144,13 +176,13 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 		}
 	}
 
-	// Step 7: Claude generates allocation
-	log.Printf("[recommend] step 7/7  sending to Claude (profile=%v market=%v plaid=%v positions=%d decisions=%d news=%d)", profile != nil, snapshot != nil, req.BalanceSummary != nil, len(req.Positions), len(req.RecentDecisions), len(req.NewsItems))
+	// Step 8: Claude generates allocation
+	log.Printf("[recommend] step 8/8  sending to Claude (profile=%v market=%v plaid=%v txns=%v positions=%d decisions=%d news=%d)", profile != nil, snapshot != nil, req.BalanceSummary != nil, req.TransactionSummary != nil, len(req.Positions), len(req.RecentDecisions), len(req.NewsItems))
 	rec, err := s.advisor.GetRecommendation(ctx, req, profile, snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("recommendation service: advisor: %w", err)
 	}
-	log.Printf("[recommend] step 7/7  Claude returned %d allocations (risk=%s)", len(rec.Allocations), rec.RiskLevel)
+	log.Printf("[recommend] step 8/8  Claude returned %d allocations (risk=%s)", len(rec.Allocations), rec.RiskLevel)
 
 	// Persist decision
 	decision := &models.InvestmentDecision{
@@ -170,4 +202,65 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 
 	log.Printf("[recommend] ── DONE ─────────────────────────────────────────────────")
 	return rec, nil
+}
+
+// GetCashContext returns a pre-computed spending insight for the given user.
+// Called by the frontend before the user taps invest so the UI can surface a nudge.
+// Returns has_data=false when no Plaid connections exist or data is unavailable —
+// the frontend renders nothing in that case.
+func (s *RecommendationService) GetCashContext(ctx context.Context, userID string) (models.CashContext, error) {
+	connections, err := s.profileRepo.GetPlaidConnections(ctx, userID)
+	if err != nil || len(connections) == 0 {
+		log.Printf("[cash-context] no plaid connections for user %s — returning no data", userID)
+		return models.CashContext{HasData: false}, nil
+	}
+
+	balance, err := s.financialData.GetBalanceSummary(ctx, connections)
+	if err != nil {
+		log.Printf("[cash-context] balance fetch failed: %v — returning no data", err)
+		return models.CashContext{HasData: false}, nil
+	}
+
+	txSummary, err := s.financialData.GetTransactionSummary(ctx, connections)
+	if err != nil {
+		log.Printf("[cash-context] transaction fetch failed: %v — returning no data", err)
+		return models.CashContext{HasData: false}, nil
+	}
+
+	// Need spend data to be meaningful; zero spend means no transactions came through
+	if txSummary.SpendLast30Days == 0 {
+		log.Printf("[cash-context] no spend data available — returning no data")
+		return models.CashContext{HasData: false}, nil
+	}
+
+	dailySpend := txSummary.SpendLast30Days / 30
+	runwayDays := int(balance.TotalCash / dailySpend)
+
+	label, message := runwayLabelAndMessage(runwayDays)
+
+	log.Printf("[cash-context] runway=%d days label=%s", runwayDays, label)
+	// TODO: remove after 8ca testing
+	log.Printf("[8ca-debug] cash-context computed: runway=%d label=%s", runwayDays, label)
+
+	return models.CashContext{
+		HasData:              true,
+		RunwayDays:           runwayDays,
+		RunwayLabel:          label,
+		SpendLast7D:          txSummary.SpendLast7Days,
+		SpendLast30D:         txSummary.SpendLast30Days,
+		LargestPendingAmount: txSummary.LargestPendingAmount,
+		LargestPendingName:   txSummary.LargestPendingName,
+		Message:              message,
+	}, nil
+}
+
+func runwayLabelAndMessage(days int) (string, string) {
+	switch {
+	case days > 30:
+		return "healthy", "Your cash position looks strong."
+	case days >= 14:
+		return "moderate", "Moderate cash runway. Proceed as planned or adjust."
+	default:
+		return "tight", fmt.Sprintf("Your cash covers about %d days of typical spending. You may want to invest a smaller amount today.", days)
+	}
 }

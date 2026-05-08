@@ -147,6 +147,64 @@ func TestBuildUserMessage(t *testing.T) {
 			mustContain:    []string{"100.00"},
 		},
 		{
+			name:           "no_transactions_omits_section",
+			req:            baseReq,
+			mustNotContain: []string{"SPENDING CONTEXT"},
+		},
+		{
+			name: "spending_context_omitted_without_opt_in",
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				TransactionSummary: &models.TransactionSummary{
+					SpendLast7Days:  342.50,
+					SpendLast30Days: 1240.00,
+				},
+			},
+			// IncludeCashContext defaults to false — section must not appear
+			mustNotContain: []string{"SPENDING CONTEXT"},
+		},
+		{
+			name: "spending_context_shown_when_opted_in",
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				TransactionSummary: &models.TransactionSummary{
+					SpendLast7Days:  342.50,
+					SpendLast30Days: 1240.00,
+				},
+			},
+			profile: &models.UserProfile{IncludeCashContext: true},
+			mustContain:    []string{"SPENDING CONTEXT", "background context only", "342.50", "1240.00"},
+			mustNotContain: []string{"SPENDING HISTORY"},
+		},
+		{
+			name: "spending_context_with_runway_when_opted_in",
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				BalanceSummary: &models.BalanceSummary{
+					TotalCash:    4200,
+					AccountCount: 1,
+					PulledAt:     time.Now(),
+				},
+				TransactionSummary: &models.TransactionSummary{
+					SpendLast7Days:  350,
+					SpendLast30Days: 1500, // ~$50/day → runway ~84 days
+				},
+			},
+			profile:     &models.UserProfile{IncludeCashContext: true},
+			mustContain: []string{"SPENDING CONTEXT", "Cash runway", "84"},
+		},
+		{
+			name: "spending_context_omitted_no_profile",
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				TransactionSummary: &models.TransactionSummary{
+					SpendLast7Days: 200, SpendLast30Days: 600,
+				},
+			},
+			// nil profile — can't opt in, section must not appear
+			mustNotContain: []string{"SPENDING CONTEXT"},
+		},
+		{
 			name:           "no_news_omits_section",
 			req:            baseReq,
 			mustNotContain: []string{"TODAY'S MARKET NEWS"},

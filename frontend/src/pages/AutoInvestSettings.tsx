@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AutoInvestConfig, RiskTolerance, getAutoInvestConfig, saveAutoInvestConfig } from "../services/api";
+import { AutoInvestConfig, RiskTolerance, UserProfile, getAutoInvestConfig, saveAutoInvestConfig, getProfile, saveProfile } from "../services/api";
 
 interface Props {
   onBack: () => void;
@@ -13,12 +13,15 @@ const riskOptions: { value: RiskTolerance; label: string }[] = [
 
 export function AutoInvestSettings({ onBack }: Props) {
   const [config, setConfig] = useState<AutoInvestConfig | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [includeCashCtx, setIncludeCashCtx] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     getAutoInvestConfig().then(setConfig).catch(() => setError("Failed to load settings"));
+    getProfile().then(p => { setProfile(p); setIncludeCashCtx(p.include_cash_context); }).catch(() => {});
   }, []);
 
   async function handleSave() {
@@ -27,7 +30,10 @@ export function AutoInvestSettings({ onBack }: Props) {
     setError(null);
     setSaved(false);
     try {
-      const updated = await saveAutoInvestConfig(config);
+      const [updated] = await Promise.all([
+        saveAutoInvestConfig(config),
+        profile ? saveProfile({ ...profile, include_cash_context: includeCashCtx }) : Promise.resolve(null),
+      ]);
       setConfig(updated);
       setSaved(true);
     } catch {
@@ -74,6 +80,29 @@ export function AutoInvestSettings({ onBack }: Props) {
           <span style={{
             position: "absolute", top: "3px",
             left: config.enabled ? "23px" : "3px",
+            width: "18px", height: "18px", borderRadius: "50%",
+            background: "white", transition: "left 0.2s",
+          }} />
+        </button>
+      </div>
+
+      {/* Cash context opt-in */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: "#f8f8f8", borderRadius: "12px", marginBottom: "1.25rem" }}>
+        <div>
+          <div style={{ fontSize: "14px", fontWeight: 500, color: "#222" }}>Include cash balance context</div>
+          <div style={{ fontSize: "12px", color: "#999", marginTop: "2px" }}>Shares spending patterns with the advisor</div>
+        </div>
+        <button
+          onClick={() => setIncludeCashCtx(v => !v)}
+          style={{
+            width: "44px", height: "24px", borderRadius: "12px", border: "none",
+            background: includeCashCtx ? "#1a1a1a" : "#d0d0d0",
+            cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0,
+          }}
+        >
+          <span style={{
+            position: "absolute", top: "3px",
+            left: includeCashCtx ? "23px" : "3px",
             width: "18px", height: "18px", borderRadius: "50%",
             background: "white", transition: "left 0.2s",
           }} />

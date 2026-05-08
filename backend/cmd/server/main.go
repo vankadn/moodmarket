@@ -124,6 +124,7 @@ func main() {
 	mux.Handle("/plaid/exchange", plaidHandler)
 	mux.Handle("/plaid/accounts/", plaidHandler) // trailing slash = prefix match for /{item_id}
 	mux.Handle("/users/auto-invest/config", handlers.NewAutoInvestConfigHandler(autoInvestRepo, idp))
+	mux.Handle("/users/cash-context", handlers.NewCashContextHandler(recommendSvc, idp))
 	activityHandler := handlers.NewActivityHandler(idp, decisionRepo)
 	mux.HandleFunc("/users/activity", activityHandler.GetActivity)
 	orderHandler := handlers.NewOrderHandler(idp, brokerageProvider)

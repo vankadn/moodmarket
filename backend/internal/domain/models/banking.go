@@ -38,3 +38,13 @@ type BalanceSummary struct {
 	AccountCount     int
 	PulledAt         time.Time
 }
+
+// TransactionSummary is a pre-aggregated view of recent spending across all connected
+// institutions. Individual transactions are not stored — only the signals Claude needs.
+type TransactionSummary struct {
+	SpendLast7Days       float64 // sum of debit amounts in the last 7 days
+	SpendLast30Days      float64 // sum of debit amounts in the last 30 days
+	LargestPendingAmount float64 // amount of the largest pending charge (0 if none)
+	LargestPendingName   string  // merchant name of the largest pending charge
+	PulledAt             time.Time
+}

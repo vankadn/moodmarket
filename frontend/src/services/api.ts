@@ -22,6 +22,7 @@ export interface UserProfile {
   risk_tolerance: RiskTolerance;
   investment_goal: InvestmentGoal;
   has_emergency_fund: boolean;
+  include_cash_context: boolean;
   connected_accounts?: PlaidConnectionSummary[];
 }
 
@@ -191,6 +192,26 @@ export async function getActivity(since: Date | null): Promise<ActivitySummary> 
 
 export async function getOrderStatus(orderID: string): Promise<TradeReceipt> {
   const res = await fetch(`${API_BASE}/orders/${orderID}`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export interface CashContext {
+  has_data: boolean;
+  runway_days: number;
+  runway_label: "healthy" | "moderate" | "tight" | "";
+  spend_last_7d: number;
+  spend_last_30d: number;
+  largest_pending_amount: number;
+  largest_pending_name: string;
+  message: string;
+  user_override: boolean;
+}
+
+export async function getCashContext(): Promise<CashContext> {
+  const res = await fetch(`${API_BASE}/users/cash-context`, {
     headers: await authHeaders(),
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ConfirmScreen } from "../components/ConfirmScreen";
 import { ReceiptScreen } from "../components/ReceiptScreen";
-import { getRecommendation, invest, getAutoInvestConfig, AutoInvestConfig, Recommendation, TradeReceipt, UserProfile } from "../services/api";
+import { CashContextCard } from "../components/CashContextCard";
+import { getRecommendation, invest, getAutoInvestConfig, getCashContext, AutoInvestConfig, CashContext, Recommendation, TradeReceipt, UserProfile } from "../services/api";
 
 interface Props {
   profile: UserProfile;
@@ -30,6 +31,7 @@ type HomeState = "idle" | "confirming" | "investing" | "receipt";
 export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onActivity }: Props) {
   const [amount, setAmount] = useState<number>(100);
   const [autoInvestConfig, setAutoInvestConfig] = useState<AutoInvestConfig | null>(null);
+  const [cashCtx, setCashCtx] = useState<CashContext | null>(null);
   const [homeState, setHomeState] = useState<HomeState>("idle");
   const [rec, setRec] = useState<Recommendation | null>(null);
   const [receipts, setReceipts] = useState<TradeReceipt[]>([]);
@@ -39,6 +41,14 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
 
   useEffect(() => {
     getAutoInvestConfig().then(setAutoInvestConfig).catch(() => {});
+    getCashContext().then(ctx => {
+      if (ctx.has_data && ctx.runway_label === "tight") {
+        const today = new Date().toISOString().slice(0, 10);
+        if (localStorage.getItem("cash_card_shown_date") !== today) {
+          setCashCtx(ctx);
+        }
+      }
+    }).catch(() => {});
   }, []);
 
   async function handleGetRecommendation() {
@@ -87,6 +97,12 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
     setDecisionId("");
     setHomeState("idle");
     setError(null);
+  }
+
+  function handleCashCardDismiss() {
+    const today = new Date().toISOString().slice(0, 10);
+    localStorage.setItem("cash_card_shown_date", today);
+    setCashCtx(null);
   }
 
   const profileSummary = [
@@ -169,6 +185,11 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
             </div>
             <span style={{ color: "#bbb", fontSize: "16px" }}>›</span>
           </button>
+
+          {/* Cash context nudge — tight runway only, shown once per day */}
+          {cashCtx && (
+            <CashContextCard ctx={cashCtx} onDismiss={handleCashCardDismiss} />
+          )}
 
           {/* Investment amount + action row */}
           <div style={{ marginBottom: "1.5rem" }}>
