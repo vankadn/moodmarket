@@ -8,6 +8,22 @@ import (
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
+// CORS wraps next and handles preflight + response headers for every route.
+// This is the single source of CORS truth — individual handlers need not call setCORSHeaders.
+func CORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // UserIdentity wraps next, validating the bearer token on every non-OPTIONS request.
 // /auth/* routes are passed through without identity injection — they are the login endpoints.
 func UserIdentity(provider ports.AuthProvider, next http.Handler) http.Handler {

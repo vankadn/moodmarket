@@ -113,5 +113,5 @@ func main() {
 	}
 
 	fmt.Printf("  InvestIQ backend running on :%s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, middleware.UserIdentity(authProvider, mux)))
+	log.Fatal(http.ListenAndServe(":"+port, middleware.CORS(middleware.UserIdentity(authProvider, mux))))
 }
