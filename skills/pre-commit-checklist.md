@@ -19,9 +19,20 @@
 - No personal fields in logs (name, email, immigration status)
 - No full Claude prompts or API payloads logged
 
-### Secrets
-- `.env` not staged — confirm it's in `.gitignore`
-- No API keys or tokens hardcoded anywhere in staged files
+### Secrets — hard stop if any of these are staged
+- `.env` / `.env.local` / `.env.*` not staged — confirm in `.gitignore`
+- No API keys, tokens, or secrets hardcoded in any staged file
+- No Anthropic, Clerk, Plaid, Alpaca, Polygon keys in source
+- No MongoDB connection strings with credentials
+- No encryption keys or salts (e.g. PLAID_TOKEN_ENCRYPTION_KEY values)
+- No private SSH or TLS keys
+- Run: `git diff --staged | grep -iE "(sk-ant|sk_test|access-|apca-|pk[a-z0-9]{20}|mongodb\+srv)" ` — must return empty
+
+### Personal data — hard stop if any of these are staged
+- No real names, emails, or user IDs hardcoded in source (DEV_USER_* belong in .env only)
+- No real account numbers, institution names, or financial data in source
+- No real Plaid access tokens or item IDs
+- No test fixtures containing real PII — use obviously fake data (e.g. "Jane Smith", "test@example.com")
 
 ### Go
 - All errors wrapped: `fmt.Errorf("context: %w", err)` — no bare `return err`
