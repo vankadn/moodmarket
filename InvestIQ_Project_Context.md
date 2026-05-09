@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-09 (Phase 8d — per-user Alpaca brokerage complete)
+> Last updated: 2026-05-09 (Phase 9a — Dockerfile + health endpoint complete)
 
 ---
 
@@ -445,18 +445,30 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 ---
 
-### Phase 9 — Planned
+### Phase 9 — In progress
 
 **Goal:** Deploy the app. Share a real URL with a friend. Real user, real account, real trades.
 
-Full deployment plan covering:
-- Backend: containerize Go server, deploy to cloud (Railway / Fly.io / Render TBD)
-- Frontend: deploy React app (Vercel or same host TBD)
+---
+
+### Phase 9a — Complete
+
+**Backend containerization**
+
+- `Dockerfile` (repo root) — two-stage build: `golang:1.23-alpine` builder → `gcr.io/distroless/static-debian12` runner
+- Builder: copies `go.mod` + `go.sum` first for layer caching, then source; builds with `CGO_ENABLED=0 GOOS=linux` for a fully static binary (required — distroless has no libc)
+- Runner: copies only the binary; no shell, no package manager, minimal attack surface
+- `.dockerignore` (repo root) — excludes `.env`, `.env.*`, `frontend/`, `*.md`, `.git`, `.gitignore`; keeps build context small and prevents secrets from reaching the Docker daemon
+- `GET /health` endpoint added — registered on a top-level mux before the `UserIdentity` middleware so Railway / Docker healthchecks work without a bearer token; all other routes still require auth
+- PORT was already read from `os.Getenv("PORT")` with `"8080"` fallback — no change needed
+
+**Remaining Phase 9 items:**
+- Frontend: deploy React app (Vercel TBD)
 - MongoDB: Atlas (already used in dev, promote to production cluster)
 - Secrets: move Plaid tokens from encrypted Mongo to Vault or AWS Secrets Manager
 - Clerk: switch from dev instance to production instance
 - Alpaca: evaluate paper → live switch for real user
-- Environment config: production `.env` strategy, no secrets in repo
+- Environment config: production env var strategy on Railway
 - Domain + HTTPS
 - Smoke test checklist before sharing URL
 
@@ -564,6 +576,8 @@ Background data access is legitimate when:
 | Per-user Alpaca credentials over env-var keys (Phase 8d) | Single shared env-var key means every user trades the same account — always wrong for financial data or trade execution. Per-user AES-256-GCM encrypted credentials in MongoDB, same pattern as Plaid access tokens. |
 | `BrokerageProviderFactory` interface to avoid arch violation | Spec's approach (services decrypt keys + construct Alpaca client directly) would require application layer importing infrastructure packages. Factory interface in `domain/ports/` inverts the dependency — services never touch encryption or Alpaca constructors. |
 | `ErrBrokerageNotConnected` sentinel error | Allows callers to distinguish "not connected" (user action needed, non-fatal for recommendations) from real errors. RecommendationService skips positions; InvestmentService returns 400; scheduler skips user silently. |
+| distroless runner image | `gcr.io/distroless/static-debian12` has no shell, no libc, no package manager — smaller attack surface and smaller image than alpine. Requires static binary (`CGO_ENABLED=0`). |
+| `/health` on top-level mux, not inside `UserIdentity` | `UserIdentity` blocks all non-`/auth/` routes. A health endpoint inside the mux would require a bearer token, breaking Docker/Railway healthchecks. Top-level mux registers `/health` first; everything else falls through to the protected mux. |
 
 ---
 

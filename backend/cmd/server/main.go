@@ -138,6 +138,14 @@ func main() {
 		port = "8080"
 	}
 
+	// topMux registers /health without auth so Railway / Docker healthchecks work.
+	// Everything else falls through to the full middleware chain.
+	topMux := http.NewServeMux()
+	topMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	topMux.Handle("/", middleware.CORS(middleware.UserIdentity(authProvider, mux)))
+
 	fmt.Printf("  InvestIQ backend running on :%s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, middleware.CORS(middleware.UserIdentity(authProvider, mux))))
+	log.Fatal(http.ListenAndServe(":"+port, topMux))
 }
