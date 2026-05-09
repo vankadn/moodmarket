@@ -14,13 +14,13 @@ import (
 )
 
 type RecommendationService struct {
-	advisor       ports.InvestmentAdvisor
-	profileRepo   ports.ProfileRepository
-	marketData    ports.MarketDataProvider
-	decisionRepo  ports.DecisionRepository
-	financialData ports.FinancialDataProvider
-	brokerage     ports.BrokerageProvider
-	news          ports.NewsProvider
+	advisor          ports.InvestmentAdvisor
+	profileRepo      ports.ProfileRepository
+	marketData       ports.MarketDataProvider
+	decisionRepo     ports.DecisionRepository
+	financialData    ports.FinancialDataProvider
+	brokerageFactory ports.BrokerageProviderFactory
+	news             ports.NewsProvider
 }
 
 func NewRecommendationService(
@@ -29,17 +29,17 @@ func NewRecommendationService(
 	marketData ports.MarketDataProvider,
 	decisionRepo ports.DecisionRepository,
 	financialData ports.FinancialDataProvider,
-	brokerage ports.BrokerageProvider,
+	brokerageFactory ports.BrokerageProviderFactory,
 	news ports.NewsProvider,
 ) *RecommendationService {
 	return &RecommendationService{
-		advisor:       advisor,
-		profileRepo:   profileRepo,
-		marketData:    marketData,
-		decisionRepo:  decisionRepo,
-		financialData: financialData,
-		brokerage:     brokerage,
-		news:          news,
+		advisor:          advisor,
+		profileRepo:      profileRepo,
+		marketData:       marketData,
+		decisionRepo:     decisionRepo,
+		financialData:    financialData,
+		brokerageFactory: brokerageFactory,
+		news:             news,
 	}
 }
 
@@ -120,23 +120,29 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	}
 
 	// Step 5: current brokerage positions — Claude avoids over-concentrating existing holdings
-	positions, err := s.brokerage.GetPositions(ctx, userID)
+	brokerageConn, _ := s.profileRepo.GetBrokerageConnection(ctx, userID)
+	brokerageProvider, err := s.brokerageFactory.ForUser(brokerageConn)
 	if err != nil {
-		log.Printf("[recommend] step 5/8  positions fetch failed (%v) — skipped", err)
+		log.Printf("[recommend] step 5/8  brokerage not connected — skipping positions")
 	} else {
-		req.Positions = positions
-		log.Printf("[recommend] step 5/8  %d position(s) loaded", len(positions))
-		// TODO: remove after 8a testing
-		var totalVal float64
-		for _, p := range positions {
-			totalVal += p.MarketValue
-		}
-		for _, p := range positions {
-			pct := 0.0
-			if totalVal > 0 {
-				pct = p.MarketValue / totalVal * 100
+		positions, err := brokerageProvider.GetPositions(ctx, userID)
+		if err != nil {
+			log.Printf("[recommend] step 5/8  positions fetch failed (%v) — skipped", err)
+		} else {
+			req.Positions = positions
+			log.Printf("[recommend] step 5/8  %d position(s) loaded", len(positions))
+			// TODO: remove after 8a testing
+			var totalVal float64
+			for _, p := range positions {
+				totalVal += p.MarketValue
 			}
-			log.Printf("[8a-debug] position: %s $%.2f (%.0f%%)", p.Ticker, p.MarketValue, pct)
+			for _, p := range positions {
+				pct := 0.0
+				if totalVal > 0 {
+					pct = p.MarketValue / totalVal * 100
+				}
+				log.Printf("[8a-debug] position: %s $%.2f (%.0f%%)", p.Ticker, p.MarketValue, pct)
+			}
 		}
 	}
 

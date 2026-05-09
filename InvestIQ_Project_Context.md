@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-08 (Phase 8ca redesign complete)
+> Last updated: 2026-05-09 (Phase 8d — per-user Alpaca brokerage complete)
 
 ---
 
@@ -75,6 +75,7 @@ Key interfaces:
 - `NewsProvider` — market headlines (Polygon or mock)
 - `DecisionRepository` — investment decision persistence
 - `BrokerageProvider` — trade execution (Alpaca or mock)
+- `BrokerageProviderFactory` — constructs a `BrokerageProvider` from a per-user `BrokerageConnection`; decouples application layer from credential decryption and Alpaca constructor details
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
 - `NotificationProvider` — push notifications (log provider now, push later)
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
@@ -137,6 +138,8 @@ See README.md for the full env var reference and provider swap table.
 | `BankAccount` | Plaid-sourced account: institution, type, balance |
 | `BalanceSummary` | Aggregated view: total cash, total investments, net worth signal |
 | `PlaidConnection` | Per-institution token record: institution name, access_token, item_id |
+| `BrokerageConnection` | Internal per-user Alpaca credential record: APIKey, SecretKey, BaseURL, Connected, ConnectedAt — encrypted at rest, never exposed to frontend |
+| `BrokerageStatus` | JSON-safe API subset of BrokerageConnection: connected bool, base_url, connected_at — returned in UserProfile response |
 | `AutoInvestConfig` | First-class domain model (own collection): Enabled, Amount, Risk, EnabledAt, UpdatedAt |
 | `SchedulerRun` | Audit record for one autonomous cycle: RunID, StartedAt, CompletedAt, UsersProcessed, TotalInvested, Errors |
 | `NewsItem` | One market headline: Headline, Summary, Source, PublishedAt |
@@ -157,6 +160,7 @@ See README.md for the full env var reference and provider swap table.
 - `investment_goal` enum
 - `has_emergency_fund` boolean
 - `include_cash_context` boolean — opt-in: share spending/runway data with Claude advisor (default false; no migration needed)
+- `brokerage_connection` embedded doc (in `users` collection) — encrypted APIKey, SecretKey, BaseURL, ConnectedAt; never serialized to JSON; exposed only as `BrokerageStatus` in profile response
 
 Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its own collection, not on UserProfile.
 
@@ -391,6 +395,56 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
   - `spending_context_omitted_no_profile` — nil profile → no section (can't opt in without profile)
 - `[8ca-debug]` temporary log in recommendation_service.go — grep to remove after testing
 
+### Phase 8d — Complete
+
+**Per-user Alpaca brokerage credentials**
+
+**Why:** Every user was sharing a single Alpaca account via env-var keys. Each user must trade their own account. Credential storage follows the same AES-256-GCM pattern established for Plaid access tokens.
+
+**New domain models (`domain/models/user_profile.go`):**
+- `BrokerageConnection` — internal encrypted record (APIKey, SecretKey, BaseURL, Connected, ConnectedAt `time.Time`); no JSON tags; never leaves the backend
+- `BrokerageStatus` — JSON-safe projection (connected, base_url, connected_at); embedded as `Brokerage *BrokerageStatus` in `UserProfile`
+
+**New port (`domain/ports/brokerage_factory.go`):**
+- `BrokerageProviderFactory` interface — `ForUser(conn *models.BrokerageConnection) (BrokerageProvider, error)`
+- `ErrBrokerageNotConnected` sentinel — fatal in InvestmentService (400), non-fatal in RecommendationService (skip positions), clean skip in scheduler
+
+**Profile repository (`domain/ports/profile_repository.go` + `infrastructure/db/mongo_profile_repository.go`):**
+- 3 new repo methods: `GetBrokerageConnection`, `SaveBrokerageConnection`, `ClearBrokerageConnection`
+- `GetBrokerageConnection` decrypts both keys; `SaveBrokerageConnection` encrypts both keys using existing `EncryptToken`/`DecryptToken` from `encryption.go`
+- `ClearBrokerageConnection` uses MongoDB `$unset` to remove the field entirely — mirrors Plaid pattern
+- Bug fix: `include_cash_context` was missing from `profileDocument`, `fromProfile`, and `toProfile` — silently dropped on every profile save; fixed in the same pass
+
+**Factory rewrite (`infrastructure/brokerage/factory.go`):**
+- Replaced `NewBrokerageProvider()` (global, env-var keys) with `NewBrokerageFactory()` returning `BrokerageProviderFactory`
+- Mock implementation: `ForUser` ignores conn, always returns mock provider
+- Alpaca implementation: `ForUser` returns `ErrBrokerageNotConnected` if conn nil or not connected; otherwise constructs `AlpacaProvider` from decrypted per-user keys
+
+**Service changes:**
+- `RecommendationService` — `brokerageFactory` replaces `brokerageProvider`; loads connection from repo per request; missing brokerage = skip positions (non-fatal, logs)
+- `InvestmentService` — `profileRepo` added; loads connection per request; missing brokerage = fatal 400
+- `auto_invest_runner.go` — `errors.Is(err, ErrBrokerageNotConnected)` check added; clean skip with log instead of error
+
+**New endpoints:**
+- `POST /brokerage/connect` — validates non-empty keys, defaults base_url to paper, calls `SaveBrokerageConnection`; never logs credentials
+- `DELETE /brokerage/connect` — calls `ClearBrokerageConnection`
+
+**Handler update (`api/handlers/order_handler.go`):**
+- Changed from injected `BrokerageProvider` to `profileRepo + brokerageFactory`; per-request credential load; returns 400 for `ErrBrokerageNotConnected`
+
+**Frontend (`BrokerageConnect.tsx` new, `Home.tsx`, `App.tsx`, `api.ts`):**
+- `BrokerageConnect.tsx` — full-page component; connected state: green card + disconnect; not-connected: API key input, secret key (password type), account type pill selector (Paper / Live)
+- `Home.tsx` — "Brokerage" nav button (red when not connected); invest button disabled when not connected; red nudge banner with "Set up now →" link
+- `App.tsx` — `"brokerage"` state added to `DevAppState`; routing to `BrokerageConnect` component
+- `api.ts` — `BrokerageStatus` interface; `brokerage?: BrokerageStatus` on `UserProfile`; `connectBrokerage()` and `disconnectBrokerage()`
+
+**Credential storage skill (`skills/credential-storage-rules.md`):**
+- Per-user vs per-app credential table with enforcement rule
+- Anti-pattern callout: "That Alpaca key is in `.env` — every user trades against the same account."
+- Wired into `CLAUDE.md` under Skills — loads when integrating any third-party service
+
+---
+
 ### Phase 9 — Planned
 
 **Goal:** Deploy the app. Share a real URL with a friend. Real user, real account, real trades.
@@ -507,6 +561,9 @@ Background data access is legitimate when:
 | Dependency principle: exhaust before adding | Before adding a new API/service, check if an existing one can do the job. New keys = new cost, new failure surface, new rotation burden |
 | Phase 8 ordered 8a → 8b → 8c | 8a: zero risk, wires existing data; 8b: Polygon news, zero new deps; 8c: new Plaid scope, most complex — keep isolated |
 | Cash context as opt-in stored preference (Phase 8ca redesign) | Per-session directives ("Factor this into allocation") caused Claude to override stated risk tolerance regardless of user intent. Fix: gate spending data behind a stored UserProfile preference; when shown, instruction is "background context only — do not override risk tolerance or amount." Removes the cognitive dissonance between user input and AI output. |
+| Per-user Alpaca credentials over env-var keys (Phase 8d) | Single shared env-var key means every user trades the same account — always wrong for financial data or trade execution. Per-user AES-256-GCM encrypted credentials in MongoDB, same pattern as Plaid access tokens. |
+| `BrokerageProviderFactory` interface to avoid arch violation | Spec's approach (services decrypt keys + construct Alpaca client directly) would require application layer importing infrastructure packages. Factory interface in `domain/ports/` inverts the dependency — services never touch encryption or Alpaca constructors. |
+| `ErrBrokerageNotConnected` sentinel error | Allows callers to distinguish "not connected" (user action needed, non-fatal for recommendations) from real errors. RecommendationService skips positions; InvestmentService returns 400; scheduler skips user silently. |
 
 ---
 
@@ -529,3 +586,4 @@ Background data access is legitimate when:
 | `[8ca-debug]` log lines in `recommendation_service.go` | Remove after Phase 8ca testing is verified; grep `[8ca-debug]` |
 | `CashContext.UserOverride` field is dead | Field exists in the model but is never set; was part of the original Phase 8ca design before the redesign removed per-session override. Remove when cleaning up. |
 | Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |
+| Alpaca still paper trading only | Per-user credentials are wired — switching to live is a UI change (user selects "Live trading" account type) + using real Alpaca keys. No code change needed. |

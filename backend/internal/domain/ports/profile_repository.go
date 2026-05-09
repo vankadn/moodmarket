@@ -26,4 +26,15 @@ type ProfileRepository interface {
 
 	// RemovePlaidConnection removes the connection matching itemID from the user's document.
 	RemovePlaidConnection(ctx context.Context, userID string, itemID string) error
+
+	// GetBrokerageConnection returns the decrypted brokerage credentials for the user.
+	// Returns nil, nil when no connection exists.
+	GetBrokerageConnection(ctx context.Context, userID string) (*models.BrokerageConnection, error)
+
+	// SaveBrokerageConnection stores encrypted Alpaca credentials on the user's document.
+	// A second call overwrites the previous connection.
+	SaveBrokerageConnection(ctx context.Context, userID string, conn models.BrokerageConnection) error
+
+	// ClearBrokerageConnection removes brokerage credentials from the user's document.
+	ClearBrokerageConnection(ctx context.Context, userID string) error
 }

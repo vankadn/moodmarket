@@ -5,31 +5,43 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/krishnarajivvns/investiq/internal/domain/models"
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
-// NewBrokerageProvider reads BROKERAGE_PROVIDER and returns the matching implementation.
-// Defaults to mock so the invest flow works out of the box without any credentials.
-func NewBrokerageProvider() (ports.BrokerageProvider, error) {
+// NewBrokerageFactory reads BROKERAGE_PROVIDER and returns the matching factory.
+// mock → always returns the mock provider regardless of user credentials (safe for dev/test).
+// alpaca → constructs a per-user AlpacaProvider from stored credentials on each call.
+func NewBrokerageFactory() (ports.BrokerageProviderFactory, error) {
 	provider := os.Getenv("BROKERAGE_PROVIDER")
 	if provider == "" {
 		provider = "mock"
 	}
 	switch provider {
 	case "mock":
-		return NewMockBrokerageProvider(), nil
+		return &mockProviderFactory{mock: NewMockBrokerageProvider()}, nil
 	case "alpaca":
-		apiKey := os.Getenv("ALPACA_API_KEY")
-		apiSecret := os.Getenv("ALPACA_API_SECRET")
-		if apiKey == "" || apiSecret == "" {
-			return nil, fmt.Errorf("brokerage factory: ALPACA_API_KEY and ALPACA_API_SECRET are required for provider %q — add them to .env", provider)
-		}
-		baseURL := os.Getenv("ALPACA_BASE_URL")
-		if baseURL == "" {
-			baseURL = "https://paper-api.alpaca.markets"
-		}
-		return NewAlpacaProvider(apiKey, apiSecret, baseURL), nil
+		return &alpacaProviderFactory{}, nil
 	default:
 		return nil, fmt.Errorf("brokerage factory: unknown provider %q (set BROKERAGE_PROVIDER=mock or alpaca)", provider)
 	}
+}
+
+// mockProviderFactory always returns the single mock instance — user credentials are ignored.
+type mockProviderFactory struct {
+	mock ports.BrokerageProvider
+}
+
+func (f *mockProviderFactory) ForUser(_ *models.BrokerageConnection) (ports.BrokerageProvider, error) {
+	return f.mock, nil
+}
+
+// alpacaProviderFactory constructs a fresh AlpacaProvider from the user's stored credentials.
+type alpacaProviderFactory struct{}
+
+func (f *alpacaProviderFactory) ForUser(conn *models.BrokerageConnection) (ports.BrokerageProvider, error) {
+	if conn == nil || !conn.Connected {
+		return nil, ports.ErrBrokerageNotConnected
+	}
+	return NewAlpacaProvider(conn.APIKey, conn.SecretKey, conn.BaseURL), nil
 }

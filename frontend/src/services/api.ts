@@ -10,6 +10,12 @@ export interface PlaidConnectionSummary {
   item_id: string;
 }
 
+export interface BrokerageStatus {
+  connected: boolean;
+  base_url?: string;
+  connected_at?: string;
+}
+
 export interface UserProfile {
   user_id?: string;
   full_name: string;
@@ -23,6 +29,7 @@ export interface UserProfile {
   investment_goal: InvestmentGoal;
   has_emergency_fund: boolean;
   include_cash_context: boolean;
+  brokerage?: BrokerageStatus;
   connected_accounts?: PlaidConnectionSummary[];
 }
 
@@ -216,6 +223,24 @@ export async function getCashContext(): Promise<CashContext> {
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
+}
+
+export async function connectBrokerage(apiKey: string, secretKey: string, baseURL: string): Promise<BrokerageStatus> {
+  const res = await fetch(`${API_BASE}/brokerage/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify({ api_key: apiKey, secret_key: secretKey, base_url: baseURL }),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function disconnectBrokerage(): Promise<void> {
+  const res = await fetch(`${API_BASE}/brokerage/connect`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
 
 export async function saveProfile(profile: UserProfile): Promise<UserProfile> {

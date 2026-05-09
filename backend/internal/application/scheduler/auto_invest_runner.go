@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
@@ -32,6 +33,10 @@ func runForUser(
 
 	receipts, _, err := investSvc.Execute(ctx, config.UserID, rec.Allocations, rec.TotalBudget, rec.RiskLevel, rec.Summary)
 	if err != nil {
+		if errors.Is(err, ports.ErrBrokerageNotConnected) {
+			log.Printf("[scheduler] user=%s skipping — no brokerage connected", config.UserID)
+			return 0, nil
+		}
 		_ = notifications.SendInvestmentFailure(ctx, config.UserID, fmt.Sprintf("execution failed: %v", err))
 		return 0, fmt.Errorf("execution: %w", err)
 	}

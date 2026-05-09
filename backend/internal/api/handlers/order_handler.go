@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -12,16 +13,22 @@ import (
 
 type OrderHandler struct {
 	identityProvider ports.IdentityProvider
-	brokerage        ports.BrokerageProvider
+	profileRepo      ports.ProfileRepository
+	brokerageFactory ports.BrokerageProviderFactory
 }
 
-func NewOrderHandler(identityProvider ports.IdentityProvider, brokerage ports.BrokerageProvider) *OrderHandler {
-	return &OrderHandler{identityProvider: identityProvider, brokerage: brokerage}
+func NewOrderHandler(identityProvider ports.IdentityProvider, profileRepo ports.ProfileRepository, brokerageFactory ports.BrokerageProviderFactory) *OrderHandler {
+	return &OrderHandler{
+		identityProvider: identityProvider,
+		profileRepo:      profileRepo,
+		brokerageFactory: brokerageFactory,
+	}
 }
 
 // GetOrder handles GET /orders/{orderID} — returns the current status of a brokerage order.
 func (h *OrderHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.identityProvider.GetCurrentUser(r.Context()); err != nil {
+	userID, err := h.identityProvider.GetCurrentUser(r.Context())
+	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -32,7 +39,18 @@ func (h *OrderHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	receipt, err := h.brokerage.GetOrder(r.Context(), orderID)
+	conn, _ := h.profileRepo.GetBrokerageConnection(r.Context(), userID)
+	brokerage, err := h.brokerageFactory.ForUser(conn)
+	if err != nil {
+		if errors.Is(err, ports.ErrBrokerageNotConnected) {
+			http.Error(w, "no brokerage account connected", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	receipt, err := brokerage.GetOrder(r.Context(), orderID)
 	if err != nil {
 		log.Printf("[order] get order %s: %v", orderID, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

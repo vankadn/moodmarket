@@ -4,6 +4,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -64,6 +65,10 @@ func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	receipts, decisionID, err := h.service.Execute(ctx, userID, body.Allocations, body.TotalAmount, body.RiskLevel, body.Summary)
 	if err != nil {
+		if errors.Is(err, ports.ErrBrokerageNotConnected) {
+			http.Error(w, "no brokerage account connected", http.StatusBadRequest)
+			return
+		}
 		log.Printf("invest handler: %v", err)
 		http.Error(w, "failed to execute investment", http.StatusInternalServerError)
 		return

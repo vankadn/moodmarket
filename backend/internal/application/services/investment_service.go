@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -11,29 +12,33 @@ import (
 )
 
 // InvestmentService orchestrates the full invest loop:
-// place orders via brokerage → build full decision record → persist → return receipts.
+// load user's brokerage credentials → place orders → build decision record → persist → return receipts.
 // It does not generate recommendations — that is RecommendationService's job.
 type InvestmentService struct {
-	brokerage    ports.BrokerageProvider
-	decisionRepo ports.DecisionRepository
-	marketData   ports.MarketDataProvider
+	brokerageFactory ports.BrokerageProviderFactory
+	profileRepo      ports.ProfileRepository
+	decisionRepo     ports.DecisionRepository
+	marketData       ports.MarketDataProvider
 }
 
 func NewInvestmentService(
-	brokerage ports.BrokerageProvider,
+	brokerageFactory ports.BrokerageProviderFactory,
+	profileRepo ports.ProfileRepository,
 	decisionRepo ports.DecisionRepository,
 	marketData ports.MarketDataProvider,
 ) *InvestmentService {
 	return &InvestmentService{
-		brokerage:    brokerage,
-		decisionRepo: decisionRepo,
-		marketData:   marketData,
+		brokerageFactory: brokerageFactory,
+		profileRepo:      profileRepo,
+		decisionRepo:     decisionRepo,
+		marketData:       marketData,
 	}
 }
 
 // Execute places one market order per allocation, saves the full decision record,
 // and returns all receipts that succeeded. If individual orders fail, execution
 // continues for remaining tickers — partial receipts are returned, never a hard error.
+// Returns ErrBrokerageNotConnected (wrapped) when the user has no brokerage account.
 func (s *InvestmentService) Execute(
 	ctx context.Context,
 	userID string,
@@ -41,6 +46,12 @@ func (s *InvestmentService) Execute(
 	totalAmount float64,
 	riskLevel, summary string,
 ) ([]models.TradeReceipt, string, error) {
+
+	conn, _ := s.profileRepo.GetBrokerageConnection(ctx, userID)
+	brokerage, err := s.brokerageFactory.ForUser(conn)
+	if err != nil {
+		return nil, "", fmt.Errorf("invest: %w", err) // wraps ErrBrokerageNotConnected
+	}
 
 	// Fetch market snapshot for the decision record (daily cache hit after first call).
 	snapshot, err := s.marketData.GetDailySnapshot(ctx)
@@ -56,7 +67,7 @@ func (s *InvestmentService) Execute(
 			Ticker: alloc.Ticker,
 			Amount: alloc.Amount,
 		}
-		receipt, err := s.brokerage.PlaceMarketOrder(ctx, order)
+		receipt, err := brokerage.PlaceMarketOrder(ctx, order)
 		if err != nil {
 			log.Printf("investment service: order %s failed (skipped): %v", alloc.Ticker, err)
 			continue

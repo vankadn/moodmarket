@@ -82,9 +82,9 @@ func main() {
 		log.Fatalf("market data provider init failed: %v", err)
 	}
 
-	brokerageProvider, err := inflabrokerage.NewBrokerageProvider()
+	brokerageFactory, err := inflabrokerage.NewBrokerageFactory()
 	if err != nil {
-		log.Fatalf("brokerage provider init failed: %v", err)
+		log.Fatalf("brokerage factory init failed: %v", err)
 	}
 
 	financialDataProvider, err := infrabanking.NewFinancialDataProvider()
@@ -106,8 +106,8 @@ func main() {
 	autoInvestRepo := infradb.NewMongoAutoInvestRepository(database)
 	notificationProvider := infranotifications.NewNotificationProvider()
 
-	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageProvider, newsProvider)
-	investSvc := services.NewInvestmentService(brokerageProvider, decisionRepo, marketProvider)
+	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory, newsProvider)
+	investSvc := services.NewInvestmentService(brokerageFactory, profileRepo, decisionRepo, marketProvider)
 	idp := middleware.ContextIdentityProvider{}
 
 	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider)
@@ -127,7 +127,10 @@ func main() {
 	mux.Handle("/users/cash-context", handlers.NewCashContextHandler(recommendSvc, idp))
 	activityHandler := handlers.NewActivityHandler(idp, decisionRepo)
 	mux.HandleFunc("/users/activity", activityHandler.GetActivity)
-	orderHandler := handlers.NewOrderHandler(idp, brokerageProvider)
+	brokerageHandler := handlers.NewBrokerageHandler(profileRepo, idp)
+	mux.Handle("/brokerage/connect", brokerageHandler)
+
+	orderHandler := handlers.NewOrderHandler(idp, profileRepo, brokerageFactory)
 	mux.HandleFunc("/orders/", orderHandler.GetOrder)
 
 	port := os.Getenv("PORT")

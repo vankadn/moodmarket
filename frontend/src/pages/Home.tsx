@@ -10,6 +10,7 @@ interface Props {
   onManageAccounts?: () => void;
   onAutoInvestSettings?: () => void;
   onActivity?: () => void;
+  onBrokerage?: () => void;
 }
 
 const goalLabel: Record<string, string> = {
@@ -28,7 +29,7 @@ const horizonLabel: Record<string, string> = {
 
 type HomeState = "idle" | "confirming" | "investing" | "receipt";
 
-export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onActivity }: Props) {
+export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onActivity, onBrokerage }: Props) {
   const [amount, setAmount] = useState<number>(100);
   const [autoInvestConfig, setAutoInvestConfig] = useState<AutoInvestConfig | null>(null);
   const [cashCtx, setCashCtx] = useState<CashContext | null>(null);
@@ -132,6 +133,14 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
               Activity
             </button>
           )}
+          {onBrokerage && (
+            <button
+              onClick={onBrokerage}
+              style={{ background: "none", border: "none", color: profile.brokerage?.connected ? "#999" : "#c0392b", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
+            >
+              Brokerage
+            </button>
+          )}
           {onManageAccounts && (
             <button
               onClick={onManageAccounts}
@@ -196,6 +205,16 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
             <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
               Today's investment
             </label>
+            {!profile.brokerage?.connected && (
+              <div style={{ marginTop: "8px", padding: "10px 12px", background: "#fdf0ee", border: "1px solid #f5c6cb", borderRadius: "8px", fontSize: "13px", color: "#c0392b" }}>
+                Connect a brokerage account to invest.{" "}
+                {onBrokerage && (
+                  <button onClick={onBrokerage} style={{ background: "none", border: "none", color: "#c0392b", textDecoration: "underline", cursor: "pointer", fontSize: "13px", padding: 0 }}>
+                    Set up now →
+                  </button>
+                )}
+              </div>
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
               <div style={{ display: "flex", alignItems: "center", border: "1px solid #e0e0e0", borderRadius: "8px", overflow: "hidden", flexShrink: 0 }}>
                 <span style={{ padding: "8px 10px", fontSize: "14px", color: "#888", background: "#f8f8f8", borderRight: "1px solid #e0e0e0" }}>$</span>
@@ -208,13 +227,13 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
               </div>
               <button
                 onClick={handleGetRecommendation}
-                disabled={loading}
+                disabled={loading || !profile.brokerage?.connected}
                 style={{
                   flex: 1, padding: "8px 16px",
-                  background: loading ? "#ccc" : "#1a1a1a",
+                  background: (loading || !profile.brokerage?.connected) ? "#ccc" : "#1a1a1a",
                   color: "white", border: "none", borderRadius: "8px",
                   fontSize: "14px", fontWeight: 500,
-                  cursor: loading ? "not-allowed" : "pointer",
+                  cursor: (loading || !profile.brokerage?.connected) ? "not-allowed" : "pointer",
                 }}
               >
                 {loading ? "Generating…" : "Get recommendation"}

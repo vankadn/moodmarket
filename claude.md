@@ -59,3 +59,4 @@ Update when:
 - Starting a new feature implementation → read `skills/new-feature-checklist.md`
 - Committing or pushing → read `skills/pre-commit-checklist.md`
 - Adding or changing business logic → read `skills/testing-rules.md`
+- Integrating any third-party service or credential → read `skills/credential-storage-rules.md`
