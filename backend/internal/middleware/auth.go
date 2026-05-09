@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
@@ -12,7 +13,7 @@ import (
 // This is the single source of CORS truth — individual handlers need not call setCORSHeaders.
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		w.Header().Set("Access-Control-Allow-Origin", os.Getenv("ALLOWED_ORIGIN"))
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
