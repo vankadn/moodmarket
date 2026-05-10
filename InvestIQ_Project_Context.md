@@ -305,7 +305,12 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 **Receipt screen:**
 - Polls Alpaca every 3s for non-terminal orders; terminal set: filled, canceled, expired, rejected, replaced
-- Shows "polling for fill…" indicator while waiting
+- Per-order polling with two stop conditions (independent per order):
+  - After-hours: 5 consecutive `accepted` polls → stop, show "Orders accepted. Will fill when market opens (Mon–Fri 9:30am–4pm ET)."
+  - Max attempts: 20 polls (~60 s) → stop, show "Market may be closed — check back when market opens."
+- Stop state tracked via refs (readable in closure) + `stopNotes` state (drives UI and `allSettled`)
+- Next poll scheduled inside `.then()` — prevents request pile-up on slow connections
+- "polling for fill…" indicator only visible while at least one order is still actively polling
 
 ### Phase 8 — Complete
 
@@ -490,6 +495,7 @@ Features defined but not yet scheduled. Reviewed after each phase — promoted w
 | Multiple auto-invest configs per user | Phase 9 first |
 | Redis for Plaid balance cache | In-memory is fine until scale demands it |
 | Finnhub news + sentiment scores | Revisit when individual stock recommendations make per-ticker sentiment worth a new dependency; structured sentiment ("2 bearish") is stronger signal than Claude inferring from text, but not worth the extra key at current ETF-only scope |
+| Refactor: single app shell | DevApp.tsx and ClerkApp.tsx duplicate the entire app structure — auth provider is the only thing that should differ. Any new feature added to one must be manually added to the other, which is error-prone (brokerage connect was missing in production for this reason). Refactor to a single AppShell component that receives the auth provider as a prop or reads from config. Auth strategy selected via VITE_AUTH_PROVIDER env var. Phase 10. |
 
 ---
 
@@ -593,7 +599,7 @@ Background data access is legitimate when:
 | Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale (Wishlist) |
 | Encrypted Mongo for Plaid tokens | Vault / AWS Secrets Manager — Phase 9 deployment |
 | One config per user only | Wishlist — multiple schedules with different risk levels |
-| Receipt shows PENDING NEW | Fixed in Phase 7 — polls until terminal status |
+| Receipt shows PENDING NEW | Fixed in Phase 7 — polls until terminal status; per-order max-attempts and after-hours stop added later |
 | `[8a-debug]` log lines in `recommendation_service.go` | Remove after Phase 8a testing is verified; grep `[8a-debug]` |
 | `[8b-debug]` log lines in `recommendation_service.go` | Remove after Phase 8b testing is verified; grep `[8b-debug]` |
 | `[8c-debug]` log lines in `recommendation_service.go` | Remove after Phase 8c testing is verified; grep `[8c-debug]` |
