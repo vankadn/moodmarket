@@ -42,7 +42,7 @@ func loadEnv(path string) {
 			continue
 		}
 		if os.Getenv(key) == "" {
-			os.Setenv(key, value)
+			os.Setenv(key, strings.Trim(value, `"'`))
 		}
 	}
 }
