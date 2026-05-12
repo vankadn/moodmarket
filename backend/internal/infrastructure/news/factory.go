@@ -9,14 +9,16 @@ import (
 )
 
 // NewNewsProvider reads NEWS_PROVIDER and returns the matching implementation.
-// Defaults to mock so no extra env var is needed for local dev with MOCK_ALL=false.
 func NewNewsProvider() (ports.NewsProvider, error) {
 	provider := os.Getenv("NEWS_PROVIDER")
 	if provider == "" {
-		provider = "mock"
+		return nil, fmt.Errorf("news factory: NEWS_PROVIDER is required; set to 'polygon', or use MOCK_ALL=true for local dev")
 	}
 	switch provider {
 	case "mock":
+		if os.Getenv("DEV_MODE") != "true" {
+			return nil, fmt.Errorf("news factory: NEWS_PROVIDER=mock is not allowed in production (DEV_MODE != true)")
+		}
 		return newMockNewsProvider(), nil
 	case "polygon":
 		apiKey := os.Getenv("POLYGON_API_KEY")
@@ -25,6 +27,6 @@ func NewNewsProvider() (ports.NewsProvider, error) {
 		}
 		return newPolygonNewsProvider(apiKey), nil
 	default:
-		return nil, fmt.Errorf("news factory: unknown provider %q (set NEWS_PROVIDER=mock or polygon)", provider)
+		return nil, fmt.Errorf("news factory: unknown provider %q (set NEWS_PROVIDER=polygon or use MOCK_ALL=true for local dev)", provider)
 	}
 }

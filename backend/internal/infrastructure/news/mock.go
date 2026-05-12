@@ -16,7 +16,7 @@ func (m *mockNewsProvider) GetDailyNews(_ context.Context) ([]models.NewsItem, e
 	now := time.Now()
 	return []models.NewsItem{
 		{
-			Headline:    "Fed holds rates steady, signals two cuts possible in 2026",
+			Headline:    "Loud holds rates steady, signals two cuts possible in 2026",
 			Source:      "Reuters",
 			PublishedAt: now,
 		},

@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-09 (Phase 9a — Dockerfile + health endpoint complete)
+> Last updated: 2026-05-11 (Phase 10 — Complete)
 
 ---
 
@@ -450,9 +450,19 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 ---
 
-### Phase 9 — In progress
+### Phase 9 — Complete
 
-**Goal:** Deploy the app. Share a real URL with a friend. Real user, real account, real trades.
+- Railway backend deployed: moodmarket-production.up.railway.app
+- Vercel frontend deployed: moodmarket-mu.vercel.app
+- MongoDB Atlas free tier connected
+- Per-user Alpaca credentials (encrypted, per-user in Mongo)
+- CORS fixed via ALLOWED_ORIGIN env var
+- BrokerageConnect reachable in production (ClerkApp.tsx fix)
+- Real trades placing on Alpaca live account
+- Atlas IP allowlist: 0.0.0.0/0 (temporary — tighten when Railway Pro)
+- Favicon added (SVG + PNG)
+- Polling fix: stop after 20 attempts or 5 consecutive ACCEPTED (after-hours)
+- Alpaca live account funding pending — support ticket filed
 
 ---
 
@@ -467,19 +477,47 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - `GET /health` endpoint added — registered on a top-level mux before the `UserIdentity` middleware so Railway / Docker healthchecks work without a bearer token; all other routes still require auth
 - PORT was already read from `os.Getenv("PORT")` with `"8080"` fallback — no change needed
 
-**Remaining Phase 9 items:**
-- Frontend: deploy React app (Vercel TBD)
-- MongoDB: Atlas (already used in dev, promote to production cluster)
-- Secrets: move Plaid tokens from encrypted Mongo to Vault or AWS Secrets Manager
-- Clerk: switch from dev instance to production instance
-- Alpaca: evaluate paper → live switch for real user
-- Environment config: production env var strategy on Railway
-- Domain + HTTPS
-- Smoke test checklist before sharing URL
+### Phase 10 — Complete
 
-### Phase 10 — TBD
+**Goal:** Claude fetches market news itself via tool use instead of Go pre-fetching and injecting it into the prompt.
 
-Pick one item from Known Debt or Wishlist based on what matters most after Phase 9 real-user feedback.
+- `get_market_news` tool defined in `infrastructure/advisor/claude.go` with Polygon as the backing provider
+- `claudeAdvisor` receives `NewsProvider` via constructor injection — infrastructure imports domain port (correct direction)
+- Tool-use loop in `callClaudeWithTools`: TURN N → Claude API → if `stop_reason=tool_use`, execute tool locally, append result, loop; if `end_turn`, parse JSON
+- Each tool removed from `remainingTools` after first call — prevents Claude requesting the same tool twice (nil-slice-in-interface → JSON null bug fixed)
+- `doAPICall` uses `context.WithTimeout(context.Background(), 45s)` per call with goroutine propagating parent cancellation — decouples individual Claude calls from short HTTP request deadlines
+- `RecommendationService` drops `news ports.NewsProvider` — 7 steps now (was 8); news owned by advisor
+- Mock guard added to all provider factories: if provider=mock and `DEV_MODE != "true"`, startup fails — production can never silently use mock data
+- Mock defaults removed from all factories — missing env var now fails fast with a helpful message instead of silently using fake data
+- `NEWS_PROVIDER=polygon` added to `.env` (shares existing `POLYGON_API_KEY`)
+- Structured logs tell the agentic story: `TURN N →` / `TURN N ←` / `TOOL name →` / `TOOL name ←` with consistent indentation
+- Prompt tests: 3 old news-in-prompt cases replaced with 1 `news_absent_from_prompt_claude_fetches_via_tool` — 18 cases total, all passing
+
+### Phase 11 — RAG (Document Intelligence)
+
+- User uploads W2 + 1099 forms only (scoped, not any document)
+- Claude reads, extracts key facts, asks clarifying questions to verify
+- Store verified summary in Mongo
+- Future recommendations use verified income data alongside profile form
+- Single user first, household (multi-W2) in later phase
+
+### Phase 12 — Multi-Brokerage Support
+
+- Target: Fidelity + Robinhood production APIs
+- Requires LLC formation first (Krishna to action)
+- Apply for production API access with LLC entity
+- Sandbox first while awaiting approval
+- Eliminates Alpaca-only limitation — users connect existing accounts
+- No copy-paste API keys — OAuth flow like Plaid
+
+---
+
+## Business Notes
+
+- InvestIQ is free access for friends/users — not paid product initially
+- LLC needed before broker production API applications
+- Claude making recommendations vs executing trades = compliance distinction
+- One LLC can cover InvestIQ + other business ventures
 
 ---
 
@@ -491,11 +529,17 @@ Features defined but not yet scheduled. Reviewed after each phase — promoted w
 |------|-------|
 | Macro indicators (Fed rate, inflation) | News context covers this for now |
 | Earnings calendar | Adds complexity, marginal value at current scale |
-| Per-user scheduler interval | Get one real user working first (Phase 9) |
-| Multiple auto-invest configs per user | Phase 9 first |
+| Per-user scheduler interval | Deferred post Phase 9 |
+| Multiple auto-invest configs per user | Deferred |
 | Redis for Plaid balance cache | In-memory is fine until scale demands it |
 | Finnhub news + sentiment scores | Revisit when individual stock recommendations make per-ticker sentiment worth a new dependency; structured sentiment ("2 bearish") is stronger signal than Claude inferring from text, but not worth the extra key at current ETF-only scope |
-| Refactor: single app shell | DevApp.tsx and ClerkApp.tsx duplicate the entire app structure — auth provider is the only thing that should differ. Any new feature added to one must be manually added to the other, which is error-prone (brokerage connect was missing in production for this reason). Refactor to a single AppShell component that receives the auth provider as a prop or reads from config. Auth strategy selected via VITE_AUTH_PROVIDER env var. Phase 10. |
+| Refactor: single app shell | DevApp.tsx and ClerkApp.tsx duplicate the entire app structure — auth provider is the only thing that should differ. Any new feature added to one must be manually added to the other, which is error-prone (brokerage connect was missing in production for this reason). Refactor to a single AppShell component that receives the auth provider as a prop or reads from config. Auth strategy selected via VITE_AUTH_PROVIDER env var. |
+| Household/family accounts | Phase 13+ |
+| Portfolio P&L dashboard | Gains per stock, total return — Phase 11 |
+| Tax optimization | Tax-loss harvesting, asset location strategy |
+| Rebalancing alerts | — |
+| Atlas IP allowlist | Replace 0.0.0.0/0 with Railway static IP when on Pro plan |
+| LLC formation | Required before Fidelity/Robinhood production API access |
 
 ---
 

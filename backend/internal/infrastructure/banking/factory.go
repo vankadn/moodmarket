@@ -10,16 +10,18 @@ import (
 )
 
 // NewFinancialDataProvider reads FINANCIAL_DATA_PROVIDER and returns the matching implementation.
-// Defaults to mock so the flow works out of the box without Plaid credentials.
 func NewFinancialDataProvider() (ports.FinancialDataProvider, error) {
 	provider := os.Getenv("FINANCIAL_DATA_PROVIDER")
 	if provider == "" {
-		log.Println("[banking] FINANCIAL_DATA_PROVIDER not set — defaulting to mock")
-		return NewMockProvider(), nil
+		return nil, fmt.Errorf("banking factory: FINANCIAL_DATA_PROVIDER is required; set to 'plaid', or use MOCK_ALL=true for local dev")
 	}
 
 	switch provider {
 	case "mock":
+		if os.Getenv("DEV_MODE") != "true" {
+			return nil, fmt.Errorf("banking factory: FINANCIAL_DATA_PROVIDER=mock is not allowed in production (DEV_MODE != true)")
+		}
+		log.Println("[banking] using mock financial data provider")
 		return NewMockProvider(), nil
 	case "plaid":
 		clientID := os.Getenv("PLAID_CLIENT_ID")
@@ -34,6 +36,6 @@ func NewFinancialDataProvider() (ports.FinancialDataProvider, error) {
 		cacheTTL := os.Getenv("PLAID_CACHE_TTL")
 		return NewPlaidProvider(clientID, secret, env, cacheTTL), nil
 	default:
-		return nil, fmt.Errorf("banking factory: unknown provider %q (set FINANCIAL_DATA_PROVIDER=mock or plaid)", provider)
+		return nil, fmt.Errorf("banking factory: unknown provider %q (set FINANCIAL_DATA_PROVIDER=plaid or use MOCK_ALL=true for local dev)", provider)
 	}
 }

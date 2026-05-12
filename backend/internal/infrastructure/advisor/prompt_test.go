@@ -205,36 +205,16 @@ func TestBuildUserMessage(t *testing.T) {
 			mustNotContain: []string{"SPENDING CONTEXT"},
 		},
 		{
-			name:           "no_news_omits_section",
-			req:            baseReq,
-			mustNotContain: []string{"TODAY'S MARKET NEWS"},
-		},
-		{
-			name: "news_present_shows_section_and_macro_instruction",
+			// Phase 10: news is no longer pre-fetched into the prompt.
+			// Claude calls get_market_news via tool use during the conversation.
+			name: "news_absent_from_prompt_claude_fetches_via_tool",
 			req: models.InvestmentRequest{
 				BaseBudget: 100,
 				NewsItems: []models.NewsItem{
 					{Headline: "Fed holds rates steady", Source: "Reuters"},
-					{Headline: "Tech stocks rally on earnings", Source: "Bloomberg"},
 				},
 			},
-			mustContain: []string{"TODAY'S MARKET NEWS", "Reuters", "Fed holds rates steady", "Bloomberg", "Factor in any macro events"},
-		},
-		{
-			name: "news_capped_at_five_headlines",
-			req: models.InvestmentRequest{
-				BaseBudget: 100,
-				NewsItems: []models.NewsItem{
-					{Headline: "Headline one", Source: "S1"},
-					{Headline: "Headline two", Source: "S2"},
-					{Headline: "Headline three", Source: "S3"},
-					{Headline: "Headline four", Source: "S4"},
-					{Headline: "Headline five", Source: "S5"},
-					{Headline: "Headline six should not appear", Source: "S6"},
-				},
-			},
-			mustContain:    []string{"Headline five"},
-			mustNotContain: []string{"Headline six should not appear"},
+			mustNotContain: []string{"TODAY'S MARKET NEWS"},
 		},
 	}
 

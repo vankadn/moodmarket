@@ -72,7 +72,12 @@ func main() {
 	profileRepo := infradb.NewMongoProfileRepository(database)
 	decisionRepo := infradb.NewMongoDecisionRepository(database)
 
-	advisor, err := infraadvisor.NewAdvisor()
+	newsProvider, err := infranews.NewNewsProvider()
+	if err != nil {
+		log.Fatalf("news provider init failed: %v", err)
+	}
+
+	advisor, err := infraadvisor.NewAdvisor(newsProvider)
 	if err != nil {
 		log.Fatalf("advisor init failed: %v", err)
 	}
@@ -92,11 +97,6 @@ func main() {
 		log.Fatalf("financial data provider init failed: %v", err)
 	}
 
-	newsProvider, err := infranews.NewNewsProvider()
-	if err != nil {
-		log.Fatalf("news provider init failed: %v", err)
-	}
-
 	authProvider, err := infraauth.NewAuthProvider()
 	if err != nil {
 		log.Fatalf("auth provider init failed: %v", err)
@@ -106,7 +106,7 @@ func main() {
 	autoInvestRepo := infradb.NewMongoAutoInvestRepository(database)
 	notificationProvider := infranotifications.NewNotificationProvider()
 
-	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory, newsProvider)
+	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory)
 	investSvc := services.NewInvestmentService(brokerageFactory, profileRepo, decisionRepo, marketProvider)
 	idp := middleware.ContextIdentityProvider{}
 

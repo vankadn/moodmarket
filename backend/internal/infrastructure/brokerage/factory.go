@@ -10,20 +10,23 @@ import (
 )
 
 // NewBrokerageFactory reads BROKERAGE_PROVIDER and returns the matching factory.
-// mock → always returns the mock provider regardless of user credentials (safe for dev/test).
+// mock → always returns the mock provider regardless of user credentials (dev/test only).
 // alpaca → constructs a per-user AlpacaProvider from stored credentials on each call.
 func NewBrokerageFactory() (ports.BrokerageProviderFactory, error) {
 	provider := os.Getenv("BROKERAGE_PROVIDER")
 	if provider == "" {
-		provider = "mock"
+		return nil, fmt.Errorf("brokerage factory: BROKERAGE_PROVIDER is required; set to 'alpaca', or use MOCK_ALL=true for local dev")
 	}
 	switch provider {
 	case "mock":
+		if os.Getenv("DEV_MODE") != "true" {
+			return nil, fmt.Errorf("brokerage factory: BROKERAGE_PROVIDER=mock is not allowed in production (DEV_MODE != true)")
+		}
 		return &mockProviderFactory{mock: NewMockBrokerageProvider()}, nil
 	case "alpaca":
 		return &alpacaProviderFactory{}, nil
 	default:
-		return nil, fmt.Errorf("brokerage factory: unknown provider %q (set BROKERAGE_PROVIDER=mock or alpaca)", provider)
+		return nil, fmt.Errorf("brokerage factory: unknown provider %q (set BROKERAGE_PROVIDER=alpaca or use MOCK_ALL=true for local dev)", provider)
 	}
 }
 
