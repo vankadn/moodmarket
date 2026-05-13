@@ -516,6 +516,38 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 		msg += "Vary today's allocation — do not repeat the exact same split as yesterday.\n"
 	}
 
+	if len(req.TaxDocuments) > 0 {
+		msg += "\nTAX DOCUMENTS ON FILE:\n"
+		for _, doc := range req.TaxDocuments {
+			switch doc.DocumentType {
+			case models.DocumentTypeW2:
+				msg += fmt.Sprintf("- W2 %d: Gross wages $%s | Federal withheld $%s | State withheld $%s | Employer: %s\n",
+					doc.TaxYear,
+					doc.Fields["gross_wages"],
+					doc.Fields["federal_withheld"],
+					doc.Fields["state_withheld"],
+					doc.Fields["employer_name"],
+				)
+			case models.DocumentType1099:
+				msg += fmt.Sprintf("- 1099-%s %d: Income $%s | Federal withheld $%s | Payer: %s\n",
+					strings.ToUpper(doc.Fields["income_type"]),
+					doc.TaxYear,
+					doc.Fields["gross_income"],
+					doc.Fields["federal_withheld"],
+					doc.Fields["payer_name"],
+				)
+			case models.DocumentType1098:
+				msg += fmt.Sprintf("- 1098 %d: Mortgage interest paid $%s | Outstanding principal $%s | Lender: %s\n",
+					doc.TaxYear,
+					doc.Fields["mortgage_interest_paid"],
+					doc.Fields["outstanding_principal"],
+					doc.Fields["lender_name"],
+				)
+			}
+		}
+		msg += "Use tax data as additional context for income-adjusted allocation decisions.\n"
+	}
+
 	msg += "\nGive me today's investment allocation."
 	return msg
 }

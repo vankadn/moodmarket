@@ -19,6 +19,7 @@ type RecommendationService struct {
 	decisionRepo     ports.DecisionRepository
 	financialData    ports.FinancialDataProvider
 	brokerageFactory ports.BrokerageProviderFactory
+	documentRepo     ports.DocumentRepository
 }
 
 func NewRecommendationService(
@@ -28,6 +29,7 @@ func NewRecommendationService(
 	decisionRepo ports.DecisionRepository,
 	financialData ports.FinancialDataProvider,
 	brokerageFactory ports.BrokerageProviderFactory,
+	documentRepo ports.DocumentRepository,
 ) *RecommendationService {
 	return &RecommendationService{
 		advisor:          advisor,
@@ -36,6 +38,7 @@ func NewRecommendationService(
 		decisionRepo:     decisionRepo,
 		financialData:    financialData,
 		brokerageFactory: brokerageFactory,
+		documentRepo:     documentRepo,
 	}
 }
 
@@ -51,44 +54,44 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 		return nil, fmt.Errorf("recommendation service: fetch profile: %w", err)
 	}
 	if profile != nil {
-		log.Printf("[recommend] step 1/7  profile loaded")
+		log.Printf("[recommend] step 1/8  profile loaded")
 	} else {
-		log.Printf("[recommend] step 1/7  no profile found — using balanced defaults")
+		log.Printf("[recommend] step 1/8  no profile found — using balanced defaults")
 	}
 
 	// Step 2: market snapshot
 	snapshot, err := s.marketData.GetDailySnapshot(ctx)
 	if err != nil {
-		log.Printf("[recommend] step 2/7  market data unavailable (%v) — skipped", err)
+		log.Printf("[recommend] step 2/8  market data unavailable (%v) — skipped", err)
 		snapshot = nil
 	} else if snapshot != nil {
-		log.Printf("[recommend] step 2/7  market snapshot loaded (SPY %+.2f%% QQQ %+.2f%% sentiment=%s)", snapshot.SPYChangePercent, snapshot.QQQChangePercent, snapshot.MarketSentiment)
+		log.Printf("[recommend] step 2/8  market snapshot loaded (SPY %+.2f%% QQQ %+.2f%% sentiment=%s)", snapshot.SPYChangePercent, snapshot.QQQChangePercent, snapshot.MarketSentiment)
 	}
 
 	// Step 3: Plaid bank balances
 	connections, err := s.profileRepo.GetPlaidConnections(ctx, userID)
 	if err != nil {
-		log.Printf("[recommend] step 3/7  plaid connections fetch failed (%v) — skipped", err)
+		log.Printf("[recommend] step 3/8  plaid connections fetch failed (%v) — skipped", err)
 	} else if len(connections) == 0 {
-		log.Printf("[recommend] step 3/7  no bank accounts connected — Claude will use profile estimates only")
+		log.Printf("[recommend] step 3/8  no bank accounts connected — Claude will use profile estimates only")
 	} else {
-		log.Printf("[recommend] step 3/7  %d plaid connection(s) found — fetching live balances", len(connections))
+		log.Printf("[recommend] step 3/8  %d plaid connection(s) found — fetching live balances", len(connections))
 
 		summary, err := s.financialData.GetBalanceSummary(ctx, connections)
 		if err != nil {
-			log.Printf("[recommend] step 3/7  balance fetch failed (%v) — skipped", err)
+			log.Printf("[recommend] step 3/8  balance fetch failed (%v) — skipped", err)
 		} else {
 			req.BalanceSummary = &summary
-			log.Printf("[recommend] step 3/7  balances loaded (%d accounts)", summary.AccountCount)
+			log.Printf("[recommend] step 3/8  balances loaded (%d accounts)", summary.AccountCount)
 		}
 
 		// Step 4: Plaid transaction history — Claude can flag large pending charges
 		txSummary, err := s.financialData.GetTransactionSummary(ctx, connections)
 		if err != nil {
-			log.Printf("[recommend] step 4/7  transaction fetch failed (%v) — skipped", err)
+			log.Printf("[recommend] step 4/8  transaction fetch failed (%v) — skipped", err)
 		} else {
 			req.TransactionSummary = &txSummary
-			log.Printf("[recommend] step 4/7  transactions loaded (7d=$%.0f 30d=$%.0f pending=%s)", txSummary.SpendLast7Days, txSummary.SpendLast30Days, txSummary.LargestPendingName)
+			log.Printf("[recommend] step 4/8  transactions loaded (7d=$%.0f 30d=$%.0f pending=%s)", txSummary.SpendLast7Days, txSummary.SpendLast30Days, txSummary.LargestPendingName)
 		}
 	}
 
@@ -96,28 +99,37 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	brokerageConn, _ := s.profileRepo.GetBrokerageConnection(ctx, userID)
 	brokerageProvider, err := s.brokerageFactory.ForUser(brokerageConn)
 	if err != nil {
-		log.Printf("[recommend] step 5/7  brokerage not connected — skipping positions")
+		log.Printf("[recommend] step 5/8  brokerage not connected — skipping positions")
 	} else {
 		positions, err := brokerageProvider.GetPositions(ctx, userID)
 		if err != nil {
-			log.Printf("[recommend] step 5/7  positions fetch failed (%v) — skipped", err)
+			log.Printf("[recommend] step 5/8  positions fetch failed (%v) — skipped", err)
 		} else {
 			req.Positions = positions
-			log.Printf("[recommend] step 5/7  %d position(s) loaded", len(positions))
+			log.Printf("[recommend] step 5/8  %d position(s) loaded", len(positions))
 		}
 	}
 
 	// Step 6: recent decision history — Claude avoids repeating the same allocation daily
 	recentDecisions, err := s.decisionRepo.ListByUser(ctx, userID, 10)
 	if err != nil {
-		log.Printf("[recommend] step 6/7  recent decisions fetch failed (%v) — skipped", err)
+		log.Printf("[recommend] step 6/8  recent decisions fetch failed (%v) — skipped", err)
 	} else {
 		req.RecentDecisions = recentDecisions
-		log.Printf("[recommend] step 6/7  %d recent decision(s) loaded", len(recentDecisions))
+		log.Printf("[recommend] step 6/8  %d recent decision(s) loaded", len(recentDecisions))
 	}
 
-	// Step 7: Claude generates allocation (fetches market news itself via get_market_news tool)
-	log.Printf("[recommend] step 7/7  sending to Claude (profile=%v market=%v plaid=%v txns=%v positions=%d decisions=%d)", profile != nil, snapshot != nil, req.BalanceSummary != nil, req.TransactionSummary != nil, len(req.Positions), len(req.RecentDecisions))
+	// Step 7: tax documents — gives Claude income, withholding, and housing context
+	taxDocs, err := s.documentRepo.GetByUserID(ctx, userID)
+	if err != nil {
+		log.Printf("[recommend] step 7/8  tax documents fetch failed (%v) — skipped", err)
+	} else {
+		req.TaxDocuments = taxDocs
+		log.Printf("[recommend] step 7/8  %d tax document(s) loaded", len(taxDocs))
+	}
+
+	// Step 8: Claude generates allocation (fetches market news itself via get_market_news tool)
+	log.Printf("[recommend] step 8/8  sending to Claude (profile=%v market=%v plaid=%v txns=%v positions=%d decisions=%d taxdocs=%d)", profile != nil, snapshot != nil, req.BalanceSummary != nil, req.TransactionSummary != nil, len(req.Positions), len(req.RecentDecisions), len(req.TaxDocuments))
 	rec, err := s.advisor.GetRecommendation(ctx, req, profile, snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("recommendation service: advisor: %w", err)

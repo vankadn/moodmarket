@@ -9,6 +9,7 @@ type InvestmentRequest struct {
 	Positions          []Position           `json:"-"` // current brokerage holdings; injected by recommendation service
 	RecentDecisions    []InvestmentDecision `json:"-"` // last N decisions; injected by recommendation service
 	NewsItems          []NewsItem           `json:"-"` // today's market headlines; injected by recommendation service
+	TaxDocuments       []*TaxDocument       `json:"-"` // verified tax docs (W2/1099/1098); injected by recommendation service
 }
 
 type Allocation struct {

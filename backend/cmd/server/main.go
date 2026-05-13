@@ -17,6 +17,7 @@ import (
 	infrabanking "github.com/krishnarajivvns/investiq/internal/infrastructure/banking"
 	inflabrokerage "github.com/krishnarajivvns/investiq/internal/infrastructure/brokerage"
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
+	infraextractor "github.com/krishnarajivvns/investiq/internal/infrastructure/extractor"
 	inframarket "github.com/krishnarajivvns/investiq/internal/infrastructure/market"
 	infranews "github.com/krishnarajivvns/investiq/internal/infrastructure/news"
 	infranotifications "github.com/krishnarajivvns/investiq/internal/infrastructure/notifications"
@@ -57,6 +58,7 @@ func main() {
 		os.Setenv("FINANCIAL_DATA_PROVIDER", "mock")
 		os.Setenv("BROKERAGE_PROVIDER", "mock")
 		os.Setenv("NEWS_PROVIDER", "mock")
+		os.Setenv("DOCUMENT_EXTRACTOR", "mock")
 		os.Setenv("DEV_MODE", "true")
 	}
 
@@ -106,8 +108,15 @@ func main() {
 	autoInvestRepo := infradb.NewMongoAutoInvestRepository(database)
 	notificationProvider := infranotifications.NewNotificationProvider()
 
-	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory)
+	documentExtractor, err := infraextractor.NewDocumentExtractor()
+	if err != nil {
+		log.Fatalf("document extractor init failed: %v", err)
+	}
+	documentRepo := infradb.NewMongoDocumentRepository(database)
+
+	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory, documentRepo)
 	investSvc := services.NewInvestmentService(brokerageFactory, profileRepo, decisionRepo, marketProvider)
+	documentSvc := services.NewDocumentService(documentExtractor, documentRepo)
 	idp := middleware.ContextIdentityProvider{}
 
 	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider)
@@ -132,6 +141,11 @@ func main() {
 
 	orderHandler := handlers.NewOrderHandler(idp, profileRepo, brokerageFactory)
 	mux.HandleFunc("/orders/", orderHandler.GetOrder)
+
+	documentHandler := handlers.NewDocumentHandler(documentSvc, idp)
+	mux.Handle("/documents/upload", documentHandler)
+	mux.Handle("/documents", documentHandler)
+	mux.Handle("/documents/", documentHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
