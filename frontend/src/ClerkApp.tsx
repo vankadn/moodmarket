@@ -9,8 +9,9 @@ import { AutoInvestSettings } from "./pages/AutoInvestSettings";
 import { Activity } from "./pages/Activity";
 import { getProfile, UserProfile, setTokenFetcher } from "./services/api";
 import { BrokerageConnect } from "./components/BrokerageConnect";
+import { Documents } from "./pages/Documents";
 
-type AppState = "loading" | "onboarding" | "home" | "profile" | "auto-invest-settings" | "activity" | "brokerage";
+type AppState = "loading" | "onboarding" | "home" | "profile" | "auto-invest-settings" | "activity" | "brokerage" | "documents";
 
 function Spinner() {
   return (
@@ -98,6 +99,10 @@ export function ClerkApp() {
     );
   }
 
+  if (state === "documents") {
+    return <Documents onBack={() => setState("home")} />;
+  }
+
   return (
     <Home
       profile={profile!}
@@ -106,6 +111,7 @@ export function ClerkApp() {
       onAutoInvestSettings={() => setState("auto-invest-settings")}
       onActivity={() => setState("activity")}
       onBrokerage={() => setState("brokerage")}
+      onDocuments={() => setState("documents")}
     />
   );
 }

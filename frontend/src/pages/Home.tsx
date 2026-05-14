@@ -11,6 +11,7 @@ interface Props {
   onAutoInvestSettings?: () => void;
   onActivity?: () => void;
   onBrokerage?: () => void;
+  onDocuments?: () => void;
 }
 
 const goalLabel: Record<string, string> = {
@@ -29,7 +30,7 @@ const horizonLabel: Record<string, string> = {
 
 type HomeState = "idle" | "confirming" | "investing" | "receipt";
 
-export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onActivity, onBrokerage }: Props) {
+export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onActivity, onBrokerage, onDocuments }: Props) {
   const [amount, setAmount] = useState<number>(100);
   const [autoInvestConfig, setAutoInvestConfig] = useState<AutoInvestConfig | null>(null);
   const [cashCtx, setCashCtx] = useState<CashContext | null>(null);
@@ -139,6 +140,14 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
               style={{ background: "none", border: "none", color: profile.brokerage?.connected ? "#999" : "#c0392b", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
             >
               Brokerage
+            </button>
+          )}
+          {onDocuments && (
+            <button
+              onClick={onDocuments}
+              style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
+            >
+              Tax docs
             </button>
           )}
           {onManageAccounts && (

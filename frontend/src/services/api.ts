@@ -243,6 +243,53 @@ export async function disconnectBrokerage(): Promise<void> {
   if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
 
+export type DocumentType = "w2" | "1099" | "1098";
+
+export interface TaxDocument {
+  ID: string;
+  UserID: string;
+  DocumentType: DocumentType;
+  TaxYear: number;
+  Fields: Record<string, string>;
+  Verified: boolean;
+  UploadedAt: string;
+  VerifiedAt: string | null;
+}
+
+export async function listDocuments(): Promise<TaxDocument[]> {
+  const res = await fetch(`${API_BASE}/documents`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  const data = await res.json();
+  return data || [];
+}
+
+export async function uploadDocument(file: File, docType: DocumentType): Promise<TaxDocument> {
+  const form = new FormData();
+  form.append("type", docType);
+  form.append("document", file);
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE}/documents/upload`, {
+    method: "POST",
+    headers,
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `API error: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteDocument(docID: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/documents/${docID}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+}
+
 export async function saveProfile(profile: UserProfile): Promise<UserProfile> {
   const res = await fetch(`${API_BASE}/users/profile`, {
     method: "POST",

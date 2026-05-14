@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-11 (Phase 10 — Complete)
+> Last updated: 2026-05-14 (Phase 11 — Complete)
 
 ---
 
@@ -493,13 +493,28 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Structured logs tell the agentic story: `TURN N →` / `TURN N ←` / `TOOL name →` / `TOOL name ←` with consistent indentation
 - Prompt tests: 3 old news-in-prompt cases replaced with 1 `news_absent_from_prompt_claude_fetches_via_tool` — 18 cases total, all passing
 
-### Phase 11 — RAG (Document Intelligence)
+### Phase 11 — Complete
 
-- User uploads W2 + 1099 forms only (scoped, not any document)
-- Claude reads, extracts key facts, asks clarifying questions to verify
-- Store verified summary in Mongo
-- Future recommendations use verified income data alongside profile form
-- Single user first, household (multi-W2) in later phase
+**Goal:** RAG document intelligence — users upload tax PDFs; Claude extracts structured fields; extracted data is injected into every recommendation prompt.
+
+**Backend:**
+- `domain/models/tax_document.go` — `TaxDocument`: ID, UserID, DocumentType (w2/1099/1098), TaxYear, Fields (map[string]string), Verified, UploadedAt, VerifiedAt
+- `domain/ports/document_extractor.go` — `DocumentExtractor.ExtractTaxDocument(ctx, bytes, type)` interface
+- `domain/ports/document_repository.go` — `DocumentRepository`: Save, GetByUserID, GetByID, DeleteByID
+- `infrastructure/extractor/claude_extractor.go` — Claude document API (base64 PDF); type-specific prompts per form; 3-attempt retry; 60s timeout; no PDF library needed
+- `infrastructure/extractor/mock_extractor.go` — realistic fixtures for W2, 1099, 1098
+- `infrastructure/extractor/factory.go` — `DOCUMENT_EXTRACTOR=claude|mock`
+- `infrastructure/db/mongo_document_repository.go` — `tax_documents` collection; form-specific upsert keys (W2: user+type+year+employer, 1099: user+type+year+payer, 1098: user+type only)
+- `application/services/document_service.go` — orchestrates extract → persist; PDF bytes never stored
+- `api/handlers/document_handler.go` — `POST /documents/upload` (multipart, PDF only, 10MB max), `GET /documents`, `DELETE /documents/:id`
+- `infrastructure/advisor/claude.go` — `buildUserMessage` extended: TAX DOCUMENTS section injected if docs exist; per-type field display (employer+wages+withholding, payer+income+type, lender+interest+principal)
+- `RecommendationService` extended: `ListDocuments` called before Claude; non-fatal on failure
+
+**Frontend:**
+- `services/api.ts` — `TaxDocument` interface, `DocumentType` type, `listDocuments()`, `uploadDocument(file, type)`, `deleteDocument(id)`
+- `pages/Documents.tsx` — type selector (W2/1099/1098 pills), PDF file picker, upload + extract button with "Claude is reading…" indicator; document list with per-type key field grid; two-step delete confirmation; empty state with explanation
+- `App.tsx` + `ClerkApp.tsx` — `"documents"` state added to both app shells; routed to `<Documents onBack />` component
+- `pages/Home.tsx` — "Tax docs" nav button added; `onDocuments` prop wired through both shells
 
 ### Phase 12 — Multi-Brokerage Support
 

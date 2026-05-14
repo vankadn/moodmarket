@@ -7,12 +7,13 @@ import { Profile } from "./pages/Profile";
 import { AutoInvestSettings } from "./pages/AutoInvestSettings";
 import { Activity } from "./pages/Activity";
 import { BrokerageConnect } from "./components/BrokerageConnect";
+import { Documents } from "./pages/Documents";
 import { getProfile, UserProfile } from "./services/api";
 import { ClerkApp } from "./ClerkApp";
 
 const DEV_MODE = import.meta.env.VITE_DEV_MODE === "true";
 
-type DevAppState = "auth" | "loading" | "onboarding" | "home" | "profile" | "auto-invest-settings" | "activity" | "brokerage";
+type DevAppState = "auth" | "loading" | "onboarding" | "home" | "profile" | "auto-invest-settings" | "activity" | "brokerage" | "documents";
 
 function DevApp() {
   const [state, setState] = useState<DevAppState>(() =>
@@ -73,6 +74,10 @@ function DevApp() {
     );
   }
 
+  if (state === "documents") {
+    return <Documents onBack={() => setState("home")} />;
+  }
+
   return (
     <Home
       profile={profile!}
@@ -80,6 +85,7 @@ function DevApp() {
       onAutoInvestSettings={() => setState("auto-invest-settings")}
       onActivity={() => setState("activity")}
       onBrokerage={() => setState("brokerage")}
+      onDocuments={() => setState("documents")}
     />
   );
 }
