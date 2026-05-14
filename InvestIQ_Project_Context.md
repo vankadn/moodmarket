@@ -516,6 +516,27 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - `App.tsx` + `ClerkApp.tsx` — `"documents"` state added to both app shells; routed to `<Documents onBack />` component
 - `pages/Home.tsx` — "Tax docs" nav button added; `onDocuments` prop wired through both shells
 
+### Phase 12a — KTLO (Complete)
+
+**Goal:** Make the backend easier to test and maintain before adding new brokerages.
+
+**Router refactor:**
+- `internal/api/router/routes.go` — 17 URI constants (`HealthURI`, `ProfileURI`, `DocumentsUploadURI`, etc.); single source of truth for all paths
+- `internal/api/router/router.go` — `Build(Handlers, AuthProvider) http.Handler`; all `mux.Handle()` calls live here using the URI constants; two-tier mux (health + docs without auth, everything else behind CORS + UserIdentity)
+- `cmd/server/main.go` — now only constructs handlers and calls `router.Build()`; no path strings
+
+**Swagger UI:**
+- `internal/api/handlers/openapi.yaml` — full OpenAPI 3.0.3 spec: all 19 endpoints with schemas, enums, request/response bodies, auth scheme (bearerAuth)
+- `internal/api/handlers/docs_handler.go` — serves Swagger UI (CDN-loaded) at `/docs/` and raw spec at `/docs/openapi.yaml`; spec embedded at compile time via `//go:embed`; no auth required, registered on top-level mux
+
+**Postman collection:**
+- `postman/InvestIQ.postman_collection.json` — v2.1 collection; 20 requests in 7 folders (System, Auth, Users, Investment, Plaid, Brokerage, Documents); Dev Login test script auto-sets `authToken` collection variable
+- `postman/InvestIQ_Local.postman_environment.json` — local dev environment; all variables pre-declared
+- `postman/InvestIQ_Production.postman_environment.json` — production environment pointing at Railway URL
+
+**Skills:**
+- `skills/postman-update-rules.md` — rules for keeping Postman + OpenAPI in sync after any endpoint change; wired into `CLAUDE.md`
+
 ### Phase 12 — Multi-Brokerage Support
 
 - Target: Fidelity + Robinhood production APIs

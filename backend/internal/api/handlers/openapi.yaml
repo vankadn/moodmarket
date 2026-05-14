@@ -1,0 +1,632 @@
+openapi: 3.0.3
+info:
+  title: InvestIQ API
+  description: |
+    Personal financial operating system backend.
+    All endpoints except `/health` and `/docs/*` require a Bearer token.
+    **Dev mode**: call `GET /auth/dev-login` to get a token; paste it into the Authorize dialog.
+    **Clerk mode**: get a session JWT from the Clerk dashboard or frontend.
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev
+  - url: https://moodmarket-production.up.railway.app
+    description: Production
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    UserProfile:
+      type: object
+      properties:
+        user_id:
+          type: string
+        full_name:
+          type: string
+          example: Jane Smith
+        salary:
+          type: number
+          example: 120000
+        monthly_savings:
+          type: number
+          example: 2000
+        retirement_contribution_percent:
+          type: number
+          example: 10
+        existing_portfolio_value:
+          type: number
+          example: 45000
+        time_horizon:
+          type: string
+          enum: [under_1_year, one_to_five, five_to_ten, ten_plus]
+        immigration_status:
+          type: string
+          enum: [us_citizen, permanent_resident, work_visa, other]
+        risk_tolerance:
+          type: string
+          enum: [conservative, moderate, aggressive]
+        investment_goal:
+          type: string
+          enum: [wealth_building, retirement, emergency_fund, short_term_savings]
+        has_emergency_fund:
+          type: boolean
+        include_cash_context:
+          type: boolean
+          description: Opt-in — share Plaid spending signals with Claude advisor
+        brokerage:
+          $ref: '#/components/schemas/BrokerageStatus'
+        connected_accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaidConnectionSummary'
+
+    BrokerageStatus:
+      type: object
+      properties:
+        connected:
+          type: boolean
+        base_url:
+          type: string
+          example: https://paper-api.alpaca.markets
+        connected_at:
+          type: string
+          format: date-time
+
+    PlaidConnectionSummary:
+      type: object
+      properties:
+        institution:
+          type: string
+          example: Chase
+        item_id:
+          type: string
+
+    Allocation:
+      type: object
+      properties:
+        ticker:
+          type: string
+          example: VTI
+        name:
+          type: string
+          example: Vanguard Total Stock Market ETF
+        type:
+          type: string
+          example: ETF
+        amount:
+          type: number
+          example: 60
+        percentage:
+          type: number
+          example: 60
+        rationale:
+          type: string
+          example: Broad US market exposure
+
+    Recommendation:
+      type: object
+      properties:
+        total_budget:
+          type: number
+          example: 100
+        allocations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Allocation'
+        summary:
+          type: string
+        risk_level:
+          type: string
+          enum: [low, medium, high]
+
+    TradeReceipt:
+      type: object
+      properties:
+        order_id:
+          type: string
+        ticker:
+          type: string
+        filled_amount:
+          type: number
+        filled_price:
+          type: number
+        status:
+          type: string
+          example: filled
+        timestamp:
+          type: string
+          format: date-time
+
+    AutoInvestConfig:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        enabled:
+          type: boolean
+        amount:
+          type: number
+          example: 100
+        risk:
+          type: string
+          enum: [conservative, moderate, aggressive]
+        enabled_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CashContext:
+      type: object
+      properties:
+        has_data:
+          type: boolean
+        runway_days:
+          type: number
+        runway_label:
+          type: string
+          enum: [healthy, moderate, tight, ""]
+        spend_last_7d:
+          type: number
+        spend_last_30d:
+          type: number
+        largest_pending_amount:
+          type: number
+        largest_pending_name:
+          type: string
+        message:
+          type: string
+
+    ActivityDecision:
+      type: object
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        total_amount:
+          type: number
+        risk_level:
+          type: string
+
+    ActivitySummary:
+      type: object
+      properties:
+        total_decisions:
+          type: integer
+        total_invested:
+          type: number
+        decisions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityDecision'
+
+    TaxDocument:
+      type: object
+      description: Extracted fields from a W-2, 1099, or 1098 PDF. PDF bytes are never stored — only the fields map.
+      properties:
+        ID:
+          type: string
+        UserID:
+          type: string
+        DocumentType:
+          type: string
+          enum: [w2, "1099", "1098"]
+        TaxYear:
+          type: integer
+          example: 2024
+        Fields:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            W-2 keys: employer_name, gross_wages, federal_withheld, state_withheld, social_security_wages
+            1099 keys: payer_name, gross_income, federal_withheld, income_type
+            1098 keys: lender_name, mortgage_interest_paid, points_paid, outstanding_principal
+        Verified:
+          type: boolean
+        UploadedAt:
+          type: string
+          format: date-time
+        VerifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns 200 with no body. Used by Railway and Docker healthchecks. No auth required.
+      security: []
+      tags: [System]
+      responses:
+        '200':
+          description: OK
+
+  /auth/dev-login:
+    get:
+      summary: Dev login
+      description: Returns a short-lived bearer token for the hardcoded dev user. Only works when DEV_MODE=true.
+      security: []
+      tags: [Auth]
+      responses:
+        '200':
+          description: Dev token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+
+  /users/profile:
+    get:
+      summary: Get user profile
+      tags: [Users]
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '404':
+          description: Profile not found (onboarding not complete)
+    post:
+      summary: Save user profile
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserProfile'
+            example:
+              full_name: Jane Smith
+              salary: 120000
+              monthly_savings: 2000
+              retirement_contribution_percent: 10
+              existing_portfolio_value: 45000
+              time_horizon: ten_plus
+              immigration_status: us_citizen
+              risk_tolerance: moderate
+              investment_goal: wealth_building
+              has_emergency_fund: true
+              include_cash_context: false
+      responses:
+        '200':
+          description: Saved profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+
+  /users/auto-invest/config:
+    get:
+      summary: Get auto-invest config
+      description: Returns safe defaults (disabled, $100, moderate) if no config exists yet.
+      tags: [Users]
+      responses:
+        '200':
+          description: Auto-invest config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoInvestConfig'
+    put:
+      summary: Save auto-invest config
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoInvestConfig'
+            example:
+              enabled: true
+              amount: 50
+              risk: moderate
+      responses:
+        '200':
+          description: Updated config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoInvestConfig'
+
+  /users/cash-context:
+    get:
+      summary: Get cash context
+      description: Returns aggregated spending signals derived from connected Plaid accounts.
+      tags: [Users]
+      responses:
+        '200':
+          description: Cash context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CashContext'
+
+  /users/activity:
+    get:
+      summary: Get investment activity
+      tags: [Users]
+      parameters:
+        - name: since
+          in: query
+          description: RFC3339 timestamp — return decisions after this time
+          schema:
+            type: string
+            format: date-time
+          example: '2026-01-01T00:00:00Z'
+      responses:
+        '200':
+          description: Activity summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivitySummary'
+
+  /recommend:
+    post:
+      summary: Get daily investment recommendation
+      description: |
+        Calls Claude with full context (profile, market snapshot, Plaid balances, positions, recent decisions, tax docs).
+        Claude may call `get_market_news` tool before responding — allow up to 45s.
+      tags: [Investment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                base_budget:
+                  type: number
+                  example: 100
+                extra_money:
+                  type: number
+                  example: 0
+      responses:
+        '200':
+          description: Recommendation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recommendation'
+
+  /invest:
+    post:
+      summary: Execute investment
+      description: Places notional market orders for each allocation via the user's connected brokerage. Returns order receipts.
+      tags: [Investment]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                allocations:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Allocation'
+                total_amount:
+                  type: number
+                risk_level:
+                  type: string
+                summary:
+                  type: string
+      responses:
+        '200':
+          description: Trade receipts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  receipts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TradeReceipt'
+                  decision_id:
+                    type: string
+        '400':
+          description: No brokerage connected
+
+  /orders/{order_id}:
+    get:
+      summary: Get order status
+      description: Polls the user's brokerage for the current status of a specific order. Used by receipt screen polling.
+      tags: [Investment]
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order receipt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradeReceipt'
+
+  /plaid/link-token:
+    post:
+      summary: Create Plaid Link token
+      description: Generates a short-lived token to initialize the Plaid Link popup on the frontend.
+      tags: [Plaid]
+      responses:
+        '200':
+          description: Link token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  link_token:
+                    type: string
+
+  /plaid/exchange:
+    post:
+      summary: Exchange Plaid public token
+      description: Exchanges the public_token returned by Plaid Link for a permanent access_token, encrypted and stored in MongoDB.
+      tags: [Plaid]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                public_token:
+                  type: string
+      responses:
+        '200':
+          description: Connection result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  institution:
+                    type: string
+                  connected_accounts:
+                    type: integer
+
+  /plaid/accounts/{item_id}:
+    delete:
+      summary: Disconnect Plaid account
+      description: Revokes the Plaid item at Plaid's API, then removes the encrypted token from MongoDB.
+      tags: [Plaid]
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Disconnected
+
+  /brokerage/connect:
+    post:
+      summary: Connect Alpaca brokerage
+      description: Encrypts and stores per-user Alpaca API credentials in MongoDB.
+      tags: [Brokerage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key, secret_key]
+              properties:
+                api_key:
+                  type: string
+                secret_key:
+                  type: string
+                base_url:
+                  type: string
+                  default: https://paper-api.alpaca.markets
+      responses:
+        '200':
+          description: Connection status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerageStatus'
+    delete:
+      summary: Disconnect brokerage
+      tags: [Brokerage]
+      responses:
+        '200':
+          description: Disconnected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connected:
+                    type: boolean
+                    example: false
+
+  /documents/upload:
+    post:
+      summary: Upload tax document
+      description: |
+        Sends the PDF to Claude via the document API. Claude extracts structured fields; only the fields map is stored — PDF bytes are discarded.
+        Timeout: 90s (Claude document extraction can take 30–60s).
+      tags: [Documents]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [type, document]
+              properties:
+                type:
+                  type: string
+                  enum: [w2, "1099", "1098"]
+                document:
+                  type: string
+                  format: binary
+                  description: PDF file only, max 10MB
+      responses:
+        '200':
+          description: Extracted document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaxDocument'
+
+  /documents:
+    get:
+      summary: List tax documents
+      tags: [Documents]
+      responses:
+        '200':
+          description: List of extracted documents, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaxDocument'
+
+  /documents/{id}:
+    delete:
+      summary: Delete tax document
+      tags: [Documents]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted

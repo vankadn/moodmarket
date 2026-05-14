@@ -1,0 +1,306 @@
+{
+  "info": {
+    "name": "InvestIQ API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "InvestIQ backend API. Set {{baseUrl}} and {{authToken}} in your active environment.\nDev mode: GET /auth/dev-login → copy token → paste into Authorization tab as Bearer."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "authToken", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{authToken}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "Swagger UI",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/docs/", "host": ["{{baseUrl}}"], "path": ["docs", ""] }
+          }
+        },
+        {
+          "name": "OpenAPI spec",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/docs/openapi.yaml", "host": ["{{baseUrl}}"], "path": ["docs", "openapi.yaml"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Dev login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.token) { pm.collectionVariables.set('authToken', json.token); pm.environment.set('authToken', json.token); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/auth/dev-login", "host": ["{{baseUrl}}"], "path": ["auth", "dev-login"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Get profile",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/users/profile", "host": ["{{baseUrl}}"], "path": ["users", "profile"] }
+          }
+        },
+        {
+          "name": "Save profile",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/users/profile", "host": ["{{baseUrl}}"], "path": ["users", "profile"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"Jane Smith\",\n  \"salary\": 120000,\n  \"monthly_savings\": 2000,\n  \"retirement_contribution_percent\": 10,\n  \"existing_portfolio_value\": 45000,\n  \"time_horizon\": \"ten_plus\",\n  \"immigration_status\": \"us_citizen\",\n  \"risk_tolerance\": \"moderate\",\n  \"investment_goal\": \"wealth_building\",\n  \"has_emergency_fund\": true,\n  \"include_cash_context\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Get auto-invest config",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/users/auto-invest/config", "host": ["{{baseUrl}}"], "path": ["users", "auto-invest", "config"] }
+          }
+        },
+        {
+          "name": "Save auto-invest config",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/users/auto-invest/config", "host": ["{{baseUrl}}"], "path": ["users", "auto-invest", "config"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"amount\": 50,\n  \"risk\": \"moderate\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Get cash context",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/users/cash-context", "host": ["{{baseUrl}}"], "path": ["users", "cash-context"] }
+          }
+        },
+        {
+          "name": "Get activity (last 30 days)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users/activity?since={{since30d}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "activity"],
+              "query": [{ "key": "since", "value": "{{since30d}}", "description": "RFC3339 — set in environment or remove param for all-time" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Investment",
+      "item": [
+        {
+          "name": "Get recommendation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/recommend", "host": ["{{baseUrl}}"], "path": ["recommend"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"base_budget\": 100,\n  \"extra_money\": 0\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Claude may use the get_market_news tool before responding. Allow up to 45s."
+          }
+        },
+        {
+          "name": "Execute investment",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/invest", "host": ["{{baseUrl}}"], "path": ["invest"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"allocations\": [\n    {\n      \"ticker\": \"VTI\",\n      \"name\": \"Vanguard Total Stock Market ETF\",\n      \"type\": \"ETF\",\n      \"amount\": 60,\n      \"percentage\": 60,\n      \"rationale\": \"Broad US market exposure\"\n    },\n    {\n      \"ticker\": \"VXUS\",\n      \"name\": \"Vanguard Total International Stock ETF\",\n      \"type\": \"ETF\",\n      \"amount\": 30,\n      \"percentage\": 30,\n      \"rationale\": \"International diversification\"\n    },\n    {\n      \"ticker\": \"BND\",\n      \"name\": \"Vanguard Total Bond Market ETF\",\n      \"type\": \"Bond ETF\",\n      \"amount\": 10,\n      \"percentage\": 10,\n      \"rationale\": \"Stability\"\n    }\n  ],\n  \"total_amount\": 100,\n  \"risk_level\": \"medium\",\n  \"summary\": \"Balanced three-fund portfolio\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Get order status",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "{{orderId}}"]
+            },
+            "description": "Replace {{orderId}} with an order_id from an invest response"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Plaid",
+      "item": [
+        {
+          "name": "Create link token",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/plaid/link-token", "host": ["{{baseUrl}}"], "path": ["plaid", "link-token"] }
+          }
+        },
+        {
+          "name": "Exchange public token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/plaid/exchange", "host": ["{{baseUrl}}"], "path": ["plaid", "exchange"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"public_token\": \"public-sandbox-...\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Disconnect Plaid account",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/plaid/accounts/{{itemId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["plaid", "accounts", "{{itemId}}"]
+            },
+            "description": "Replace {{itemId}} with an item_id from the profile's connected_accounts array"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Brokerage",
+      "item": [
+        {
+          "name": "Connect Alpaca (paper)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/brokerage/connect", "host": ["{{baseUrl}}"], "path": ["brokerage", "connect"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"api_key\": \"YOUR_ALPACA_API_KEY\",\n  \"secret_key\": \"YOUR_ALPACA_SECRET_KEY\",\n  \"base_url\": \"https://paper-api.alpaca.markets\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Disconnect brokerage",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/brokerage/connect", "host": ["{{baseUrl}}"], "path": ["brokerage", "connect"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documents",
+      "item": [
+        {
+          "name": "List tax documents",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/documents", "host": ["{{baseUrl}}"], "path": ["documents"] }
+          }
+        },
+        {
+          "name": "Upload W-2",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/documents/upload", "host": ["{{baseUrl}}"], "path": ["documents", "upload"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "type", "value": "w2", "type": "text" },
+                { "key": "document", "type": "file", "src": "", "description": "Select your W-2 PDF" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Upload 1099",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/documents/upload", "host": ["{{baseUrl}}"], "path": ["documents", "upload"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "type", "value": "1099", "type": "text" },
+                { "key": "document", "type": "file", "src": "", "description": "Select your 1099 PDF" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Upload 1098",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/documents/upload", "host": ["{{baseUrl}}"], "path": ["documents", "upload"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "type", "value": "1098", "type": "text" },
+                { "key": "document", "type": "file", "src": "", "description": "Select your 1098 PDF" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete document",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/documents/{{docId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["documents", "{{docId}}"]
+            },
+            "description": "Replace {{docId}} with an ID from the list documents response"
+          }
+        }
+      ]
+    }
+  ]
+}

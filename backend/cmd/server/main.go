@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/krishnarajivvns/investiq/internal/api/handlers"
+	"github.com/krishnarajivvns/investiq/internal/api/router"
 	"github.com/krishnarajivvns/investiq/internal/application/scheduler"
 	"github.com/krishnarajivvns/investiq/internal/application/services"
 	infraadvisor "github.com/krishnarajivvns/investiq/internal/infrastructure/advisor"
@@ -123,43 +124,30 @@ func main() {
 	go autoInvestScheduler.Start(ctx)
 
 	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)
-
-	mux := http.NewServeMux()
-	mux.Handle("/auth/dev-login", handlers.NewDevLoginHandler())
-	mux.Handle("/recommend", handlers.NewRecommendHandler(recommendSvc, idp))
-	mux.Handle("/invest", handlers.NewInvestHandler(investSvc, idp))
-	mux.Handle("/users/profile", handlers.NewProfileHandler(profileRepo, idp))
-	mux.Handle("/plaid/link-token", plaidHandler)
-	mux.Handle("/plaid/exchange", plaidHandler)
-	mux.Handle("/plaid/accounts/", plaidHandler) // trailing slash = prefix match for /{item_id}
-	mux.Handle("/users/auto-invest/config", handlers.NewAutoInvestConfigHandler(autoInvestRepo, idp))
-	mux.Handle("/users/cash-context", handlers.NewCashContextHandler(recommendSvc, idp))
 	activityHandler := handlers.NewActivityHandler(idp, decisionRepo)
-	mux.HandleFunc("/users/activity", activityHandler.GetActivity)
-	brokerageHandler := handlers.NewBrokerageHandler(profileRepo, idp)
-	mux.Handle("/brokerage/connect", brokerageHandler)
-
 	orderHandler := handlers.NewOrderHandler(idp, profileRepo, brokerageFactory)
-	mux.HandleFunc("/orders/", orderHandler.GetOrder)
-
 	documentHandler := handlers.NewDocumentHandler(documentSvc, idp)
-	mux.Handle("/documents/upload", documentHandler)
-	mux.Handle("/documents", documentHandler)
-	mux.Handle("/documents/", documentHandler)
+
+	h := router.Handlers{
+		DevLogin:    handlers.NewDevLoginHandler(),
+		Recommend:   handlers.NewRecommendHandler(recommendSvc, idp),
+		Invest:      handlers.NewInvestHandler(investSvc, idp),
+		Profile:     handlers.NewProfileHandler(profileRepo, idp),
+		Plaid:       plaidHandler,
+		AutoInvest:  handlers.NewAutoInvestConfigHandler(autoInvestRepo, idp),
+		CashContext: handlers.NewCashContextHandler(recommendSvc, idp),
+		Activity:    http.HandlerFunc(activityHandler.GetActivity),
+		Brokerage:   handlers.NewBrokerageHandler(profileRepo, idp),
+		Order:       http.HandlerFunc(orderHandler.GetOrder),
+		Document:    documentHandler,
+		Docs:        handlers.NewDocsHandler(),
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	// topMux registers /health without auth so Railway / Docker healthchecks work.
-	// Everything else falls through to the full middleware chain.
-	topMux := http.NewServeMux()
-	topMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	topMux.Handle("/", middleware.CORS(middleware.UserIdentity(authProvider, mux)))
-
 	fmt.Printf("  InvestIQ backend running on :%s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, topMux))
+	log.Fatal(http.ListenAndServe(":"+port, router.Build(h, authProvider)))
 }
