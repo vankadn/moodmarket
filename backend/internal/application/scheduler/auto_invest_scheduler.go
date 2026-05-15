@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"sync"
 	"time"
 
@@ -14,15 +13,14 @@ import (
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
-// AutoInvestScheduler ticks on a configurable interval and runs the full
-// investment pipeline for every user who has opted into autonomous investing.
+// AutoInvestScheduler ticks hourly and runs the full investment pipeline for
+// every user whose per-user interval has elapsed since their last run.
 type AutoInvestScheduler struct {
 	autoInvestRepo ports.AutoInvestRepository
 	recommendSvc   *services.RecommendationService
 	investSvc      *services.InvestmentService
 	schedulerRepo  ports.SchedulerRepository
 	notifications  ports.NotificationProvider
-	interval       time.Duration
 }
 
 func NewAutoInvestScheduler(
@@ -32,23 +30,21 @@ func NewAutoInvestScheduler(
 	schedulerRepo ports.SchedulerRepository,
 	notifications ports.NotificationProvider,
 ) *AutoInvestScheduler {
-	interval := parseInterval()
-	log.Printf("[scheduler] auto-invest interval: %s", interval)
 	return &AutoInvestScheduler{
 		autoInvestRepo: autoInvestRepo,
 		recommendSvc:   recommendSvc,
 		investSvc:      investSvc,
 		schedulerRepo:  schedulerRepo,
 		notifications:  notifications,
-		interval:       interval,
 	}
 }
 
 // Start runs the ticker loop in the calling goroutine. Call via go scheduler.Start(ctx).
+// Ticks every hour; per-user interval_days controls actual run frequency.
 func (s *AutoInvestScheduler) Start(ctx context.Context) {
-	ticker := time.NewTicker(s.interval)
+	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
-	log.Printf("[scheduler] started — first tick in %s", s.interval)
+	log.Printf("[scheduler] started — hourly check, per-user interval applies")
 
 	for {
 		select {
@@ -59,6 +55,19 @@ func (s *AutoInvestScheduler) Start(ctx context.Context) {
 			s.runCycle(ctx)
 		}
 	}
+}
+
+// isDue returns true when a user's run interval has elapsed.
+// IntervalDays == 0 is treated as 1 (daily). LastRunAt == nil means never run.
+func isDue(cfg models.AutoInvestConfig) bool {
+	days := cfg.IntervalDays
+	if days <= 0 {
+		days = 1
+	}
+	if cfg.LastRunAt == nil {
+		return true
+	}
+	return time.Since(*cfg.LastRunAt) >= time.Duration(days)*24*time.Hour
 }
 
 func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
@@ -75,7 +84,19 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 		log.Printf("[scheduler] cycle %s — no users with auto-invest enabled", runID)
 		return
 	}
-	log.Printf("[scheduler] cycle %s — running for %d user(s)", runID, len(configs))
+
+	// Filter to users whose interval has elapsed.
+	var due []models.AutoInvestConfig
+	for _, c := range configs {
+		if isDue(c) {
+			due = append(due, c)
+		}
+	}
+	if len(due) == 0 {
+		log.Printf("[scheduler] cycle %s — no users due yet (%d enabled)", runID, len(configs))
+		return
+	}
+	log.Printf("[scheduler] cycle %s — running for %d/%d user(s)", runID, len(due), len(configs))
 
 	var (
 		mu            sync.Mutex
@@ -84,7 +105,7 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 		wg            sync.WaitGroup
 	)
 
-	for _, cfg := range configs {
+	for _, cfg := range due {
 		wg.Add(1)
 		go func(c models.AutoInvestConfig) {
 			defer wg.Done()
@@ -95,6 +116,9 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 				errs = append(errs, fmt.Sprintf("user=%s: %v", c.UserID, err))
 			} else {
 				totalInvested += invested
+				if stampErr := s.autoInvestRepo.StampLastRunAt(ctx, c.UserID, startedAt); stampErr != nil {
+					log.Printf("[scheduler] cycle %s — failed to stamp last_run_at for user=%s: %v", runID, c.UserID, stampErr)
+				}
 			}
 		}(cfg)
 	}
@@ -104,7 +128,7 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 		RunID:          runID,
 		StartedAt:      startedAt,
 		CompletedAt:    time.Now(),
-		UsersProcessed: len(configs),
+		UsersProcessed: len(due),
 		TotalInvested:  totalInvested,
 		Errors:         errs,
 	}
@@ -112,18 +136,6 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 		log.Printf("[scheduler] cycle %s — failed to save audit record: %v", runID, err)
 	}
 
-	log.Printf("[scheduler] cycle %s done — %d users, %d errors", runID, len(configs), len(errs))
+	log.Printf("[scheduler] cycle %s done — %d users, %d errors", runID, len(due), len(errs))
 }
 
-func parseInterval() time.Duration {
-	raw := os.Getenv("AUTO_INVEST_INTERVAL")
-	if raw == "" {
-		return 24 * time.Hour
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		log.Printf("[scheduler] invalid AUTO_INVEST_INTERVAL=%q, defaulting to 24h: %v", raw, err)
-		return 24 * time.Hour
-	}
-	return d
-}

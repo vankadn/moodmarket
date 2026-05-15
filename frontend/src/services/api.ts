@@ -44,8 +44,10 @@ export interface AutoInvestConfig {
   enabled: boolean;
   amount: number;
   risk: RiskTolerance;
+  interval_days?: number;
   enabled_at?: string;
   updated_at?: string;
+  last_run_at?: string;
 }
 
 export interface InvestmentRequest {

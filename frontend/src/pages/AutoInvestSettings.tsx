@@ -11,6 +11,12 @@ const riskOptions: { value: RiskTolerance; label: string }[] = [
   { value: "aggressive",   label: "Aggressive" },
 ];
 
+const frequencyOptions: { days: number; label: string }[] = [
+  { days: 1, label: "Daily" },
+  { days: 2, label: "Every 2 days" },
+  { days: 7, label: "Weekly" },
+];
+
 export function AutoInvestSettings({ onBack }: Props) {
   const [config, setConfig] = useState<AutoInvestConfig | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -109,10 +115,37 @@ export function AutoInvestSettings({ onBack }: Props) {
         </button>
       </div>
 
+      {/* Frequency */}
+      <div style={{ marginBottom: "1.25rem" }}>
+        <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+          Frequency
+        </label>
+        <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+          {frequencyOptions.map(({ days, label }) => {
+            const active = (config.interval_days ?? 1) === days;
+            return (
+              <button
+                key={days}
+                onClick={() => setConfig({ ...config, interval_days: days })}
+                style={{
+                  padding: "8px 16px", borderRadius: "20px", border: "1.5px solid",
+                  borderColor: active ? "#1a1a1a" : "#e0e0e0",
+                  background: active ? "#1a1a1a" : "white",
+                  color: active ? "white" : "#555",
+                  fontSize: "13px", fontWeight: 500, cursor: "pointer",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Amount */}
       <div style={{ marginBottom: "1.25rem" }}>
         <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
-          Daily investment amount
+          Investment amount
         </label>
         <div style={{ display: "flex", alignItems: "center", border: "1px solid #e0e0e0", borderRadius: "8px", overflow: "hidden", marginTop: "8px", width: "160px" }}>
           <span style={{ padding: "8px 10px", fontSize: "14px", color: "#888", background: "#f8f8f8", borderRight: "1px solid #e0e0e0" }}>$</span>

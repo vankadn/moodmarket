@@ -16,13 +16,15 @@ import (
 )
 
 type autoInvestConfigDoc struct {
-	ID        primitive.ObjectID `bson:"_id"`
-	UserID    string             `bson:"user_id"`
-	Enabled   bool               `bson:"enabled"`
-	Amount    float64            `bson:"amount"`
-	Risk      string             `bson:"risk"`
-	EnabledAt time.Time          `bson:"enabled_at,omitempty"`
-	UpdatedAt time.Time          `bson:"updated_at"`
+	ID           primitive.ObjectID `bson:"_id"`
+	UserID       string             `bson:"user_id"`
+	Enabled      bool               `bson:"enabled"`
+	Amount       float64            `bson:"amount"`
+	Risk         string             `bson:"risk"`
+	IntervalDays int                `bson:"interval_days,omitempty"`
+	EnabledAt    time.Time          `bson:"enabled_at,omitempty"`
+	UpdatedAt    time.Time          `bson:"updated_at"`
+	LastRunAt    *time.Time         `bson:"last_run_at,omitempty"`
 }
 
 type MongoAutoInvestRepository struct {
@@ -61,11 +63,12 @@ func (r *MongoAutoInvestRepository) Upsert(ctx context.Context, config *models.A
 	config.UpdatedAt = time.Now()
 
 	doc := bson.M{
-		"user_id":    config.UserID,
-		"enabled":    config.Enabled,
-		"amount":     config.Amount,
-		"risk":       string(config.Risk),
-		"updated_at": config.UpdatedAt,
+		"user_id":      config.UserID,
+		"enabled":      config.Enabled,
+		"amount":       config.Amount,
+		"risk":         string(config.Risk),
+		"interval_days": config.IntervalDays,
+		"updated_at":   config.UpdatedAt,
 	}
 	if config.Enabled && !config.EnabledAt.IsZero() {
 		doc["enabled_at"] = config.EnabledAt
@@ -108,12 +111,27 @@ func (r *MongoAutoInvestRepository) GetAllEnabled(ctx context.Context) ([]models
 
 func toAutoInvestConfig(doc *autoInvestConfigDoc) *models.AutoInvestConfig {
 	return &models.AutoInvestConfig{
-		ID:        doc.ID.Hex(),
-		UserID:    doc.UserID,
-		Enabled:   doc.Enabled,
-		Amount:    doc.Amount,
-		Risk:      models.RiskTolerance(doc.Risk),
-		EnabledAt: doc.EnabledAt,
-		UpdatedAt: doc.UpdatedAt,
+		ID:           doc.ID.Hex(),
+		UserID:       doc.UserID,
+		Enabled:      doc.Enabled,
+		Amount:       doc.Amount,
+		Risk:         models.RiskTolerance(doc.Risk),
+		IntervalDays: doc.IntervalDays,
+		EnabledAt:    doc.EnabledAt,
+		UpdatedAt:    doc.UpdatedAt,
+		LastRunAt:    doc.LastRunAt,
 	}
+}
+
+func (r *MongoAutoInvestRepository) StampLastRunAt(ctx context.Context, userID string, t time.Time) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	filter := bson.M{"user_id": userID}
+	update := bson.M{"$set": bson.M{"last_run_at": t}}
+	_, err := r.collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return fmt.Errorf("mongo auto-invest repo: stamp last run: %w", err)
+	}
+	return nil
 }

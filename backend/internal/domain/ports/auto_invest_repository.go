@@ -3,6 +3,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
 )
@@ -18,4 +19,7 @@ type AutoInvestRepository interface {
 
 	// GetAllEnabled returns configs for all users with enabled: true.
 	GetAllEnabled(ctx context.Context) ([]models.AutoInvestConfig, error)
+
+	// StampLastRunAt records the time a scheduled run was executed for a user.
+	StampLastRunAt(ctx context.Context, userID string, t time.Time) error
 }

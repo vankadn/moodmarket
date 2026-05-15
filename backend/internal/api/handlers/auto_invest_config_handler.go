@@ -48,9 +48,10 @@ func (h *autoInvestConfigHandler) getConfig(w http.ResponseWriter, r *http.Reque
 }
 
 type saveConfigRequest struct {
-	Enabled bool                  `json:"enabled"`
-	Amount  float64               `json:"amount"`
-	Risk    models.RiskTolerance  `json:"risk"`
+	Enabled      bool                 `json:"enabled"`
+	Amount       float64              `json:"amount"`
+	Risk         models.RiskTolerance `json:"risk"`
+	IntervalDays int                  `json:"interval_days,omitempty"`
 }
 
 func (h *autoInvestConfigHandler) saveConfig(w http.ResponseWriter, r *http.Request, userID string) {
@@ -69,6 +70,7 @@ func (h *autoInvestConfigHandler) saveConfig(w http.ResponseWriter, r *http.Requ
 	existing.Enabled = req.Enabled
 	existing.Amount = req.Amount
 	existing.Risk = req.Risk
+	existing.IntervalDays = req.IntervalDays
 	existing.UserID = userID
 
 	// Record consent timestamp on first enable or re-enable.
