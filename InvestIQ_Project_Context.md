@@ -88,6 +88,27 @@ Key interfaces:
 
 ---
 
+## Brokerage strategy
+
+Three providers, three distinct roles — never conflated:
+
+| Provider | Role | Auth | Status |
+|----------|------|------|--------|
+| **Alpaca** | Trade execution — stocks, options, crypto subset | Per-user API key + secret (AES-256-GCM encrypted in Mongo) | Active (paper → live is a config change) |
+| **SnapTrade** | Portfolio aggregation — read positions, balances, holdings from Robinhood and Fidelity | OAuth, per-user token | Planned (Phase 16) |
+| **Coinbase Advanced Trade** | Crypto execution | API key auth (per-user, encrypted at rest) | Planned (Phase 17) |
+
+**SnapTrade trade execution via Robinhood:** Do not build this path until SnapTrade's Robinhood integration explicitly confirms write/order access. Read-only aggregation first — execution only after verified.
+
+**Banned providers:**
+- `robin_stocks` or any library that reverse-engineers Robinhood's private API
+- Any unofficial Fidelity client
+- Any scraping-based or undocumented endpoint from any broker
+
+Every brokerage provider implements `BrokerageProvider` in `domain/ports/`. No broker SDK is imported into domain, application, or handler layers.
+
+---
+
 ## Tech stack
 
 | Layer | Technology | Notes |
@@ -130,7 +151,6 @@ See README.md for the full env var reference and provider swap table.
 | `RiskTolerance` | conservative / moderate / aggressive |
 | `TimeHorizon` | under_1_year / one_to_five / five_to_ten / ten_plus |
 | `InvestmentGoal` | wealth_building / retirement / emergency_fund / short_term_savings |
-| `ImmigrationStatus` | us_citizen / permanent_resident / work_visa / other |
 | `UserIdentity` | Authenticated user: UserID, Email, Name |
 | `TradeOrder` | Value object: UserID, Ticker, Amount (dollar-based notional) |
 | `TradeReceipt` | Value object: OrderID, Ticker, FilledAmount, FilledPrice, Status, Timestamp, BrokerageID (optional), BrokerageName (optional) |
@@ -157,7 +177,6 @@ See README.md for the full env var reference and provider swap table.
 - `retirement_contribution_percent` number (0–100)
 - `existing_portfolio_value` number
 - `time_horizon` enum
-- `immigration_status` enum
 - `risk_tolerance` enum
 - `investment_goal` enum
 - `has_emergency_fund` boolean
@@ -656,23 +675,36 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - `ClerkApp.tsx` reduced to ~25 lines: Clerk auth gate + token fetcher wiring → `<AppShell signOut keepPageOnRefresh />`
 - Adding any new page now requires editing only `AppShell.tsx`
 
-### Phase 12 — Real Broker API Integration (Future)
+### Phase 16 — Alpaca Real Trading (Planned)
 
-- Target: Fidelity + Robinhood production APIs
-- Requires LLC formation first (Krishna to action)
-- Apply for production API access with LLC entity
-- Sandbox first while awaiting approval
-- Eliminates Alpaca-only limitation — users connect existing accounts
-- No copy-paste API keys — OAuth flow like Plaid
+Switch from paper to live Alpaca trading. Per-user credentials already wired (Phase 8d) — this is a UI change (account type selector) + user supplying live keys. No backend code change required. Requires LLC entity before signing Alpaca Broker API agreement.
+
+### Phase 17 — SnapTrade Portfolio Read (Planned)
+
+Connect existing Robinhood and Fidelity accounts read-only via SnapTrade. Goals:
+- Aggregate positions, balances, and holdings from both accounts into a unified portfolio view
+- Inject aggregated holdings context into Claude recommendation prompt
+- OAuth-based connection flow (no copy-paste API keys)
+
+Do not implement SnapTrade trade execution until SnapTrade confirms Robinhood write/order access is supported.
+
+### Phase 18 — Coinbase Advanced Trade (Planned)
+
+Crypto execution via Coinbase Advanced Trade API (official, API key auth). Same per-user encrypted-credential pattern as Alpaca. Implements `BrokerageProvider` interface — zero application layer changes.
+
+### Phase 19 — SnapTrade Trade Execution via Robinhood (Conditional)
+
+Only if Phase 17 SnapTrade integration confirms Robinhood write access. Route crypto/equity allocations to Robinhood via SnapTrade when user has it connected. Falls back to Alpaca if not available.
 
 ---
 
 ## Business Notes
 
 - InvestIQ is free access for friends/users — not paid product initially
-- LLC needed before broker production API applications
+- LLC needed before signing Alpaca Broker API or SnapTrade commercial agreements
 - Claude making recommendations vs executing trades = compliance distinction
 - One LLC can cover InvestIQ + other business ventures
+- See PERSONAL.md (not committed) for LLC formation and account migration details
 
 ---
 
@@ -694,7 +726,7 @@ Features defined but not yet scheduled. Reviewed after each phase — promoted w
 | Tax optimization | Tax-loss harvesting, asset location strategy |
 | Rebalancing alerts | — |
 | Atlas IP allowlist | Replace 0.0.0.0/0 with Railway static IP when on Pro plan |
-| LLC formation | Required before Fidelity/Robinhood production API access |
+| LLC formation | Required before signing Alpaca Broker API or SnapTrade commercial agreements |
 
 ---
 
@@ -707,7 +739,7 @@ A unified financial operating system. The app knows:
 - Daily spending patterns
 
 When the user taps "Invest today", Claude receives a prompt like:
-> "User has $4,200 in checking, $180,000 in 401k (60/40 allocation), $12,000 in brokerage mostly QQQ and AAPL, a $1,200 credit card bill due in 8 days, H1B visa, 10-year horizon, moderate risk. Invest $100 today."
+> "User has $4,200 in checking, $180,000 in 401k (60/40 allocation), $12,000 in brokerage mostly QQQ and AAPL, a $1,200 credit card bill due in 8 days, 10-year horizon, moderate risk. Invest $100 today."
 
 Eventually: fully autonomous. App runs at 9am, invests, sends a notification. User never opens it unless they want to review.
 
@@ -753,14 +785,13 @@ Background data access is legitimate when:
 | CLAUDE.md in repo root | Claude Code reads it automatically — consistent engineering rules every session |
 | Skills files for rarely-needed rules | CLAUDE.md loads every session; skills load on demand — saves tokens |
 | Full profile collected upfront | App never asks the same question twice |
-| Immigration status in profile | Visa status materially affects investment strategy |
 | App fetches market data, not Claude | App owns the audit trail — decisions collection records what Claude saw |
 | Polygon.io over Alpha Vantage | Alpha Vantage: 25 req/day cap. Polygon free tier: unlimited previous-day data |
 | Daily cache on market provider | One Polygon call per day regardless of recommendation volume |
 | Plaid product: transactions not auth | Auth requires separate Plaid approval; transactions covers balance reads |
 | PLAID_CACHE_TTL (default 5m) | Sandbox rate limits are real during dev; production usage won't hit them at scale |
 | Clerk for auth | 50k free MAU, dev instance unlocks Pro features, clean React SDK |
-| Alpaca for brokerage | Visa-friendly, paper trading, paper → live is a config change not a code change |
+| Alpaca for brokerage | Paper trading, paper → live is a config change not a code change |
 | Notional (dollar-based) orders | Users think in dollars not shares |
 | BROKERAGE_PROVIDER mock | Test full invest loop without touching Alpaca during dev |
 | Partial order failure tolerance | One bad ticker shouldn't block the whole investment |
