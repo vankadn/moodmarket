@@ -10,6 +10,9 @@ import (
 // ErrBrokerageNotConnected is returned when a user has no connected brokerage account.
 var ErrBrokerageNotConnected = errors.New("no brokerage account connected")
 
+// ErrNoBrokerageForAllocation is returned when no connection matches an allocation's asset category.
+var ErrNoBrokerageForAllocation = errors.New("no brokerage connection matched for allocation")
+
 // BrokerageProviderFactory creates a per-user BrokerageProvider from stored credentials.
 // Implementations live in infrastructure/brokerage — never imported by application directly.
 // Providers are not cached; construct fresh per request.

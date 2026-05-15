@@ -60,3 +60,4 @@ Update when:
 - Committing or pushing → read `skills/pre-commit-checklist.md`
 - Adding or changing business logic → read `skills/testing-rules.md`
 - Integrating any third-party service or credential → read `skills/credential-storage-rules.md`
+- Adding, changing, or removing any API endpoint → read `skills/postman-update-rules.md`

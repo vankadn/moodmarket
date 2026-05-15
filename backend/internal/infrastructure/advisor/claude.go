@@ -351,6 +351,9 @@ func (c *claudeAdvisor) doAPICall(parentCtx context.Context, messages []claudeMe
 	}
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("[advisor]           HTTP %d error: %s", resp.StatusCode, rawBody)
+		if resp.StatusCode == 529 {
+			return nil, fmt.Errorf("%w: API 529: %s", ports.ErrAdvisorOverloaded, rawBody)
+		}
 		return nil, fmt.Errorf("API %d: %s", resp.StatusCode, rawBody)
 	}
 

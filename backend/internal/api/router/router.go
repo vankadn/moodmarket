@@ -11,18 +11,19 @@ import (
 // main.go builds each handler and populates this struct; router.Build wires them to paths.
 // Wrapping a method-style handler: http.HandlerFunc(h.Method).
 type Handlers struct {
-	DevLogin    http.Handler
-	Recommend   http.Handler
-	Invest      http.Handler
-	Profile     http.Handler
-	Plaid       http.Handler
-	AutoInvest  http.Handler
-	CashContext http.Handler
-	Activity    http.Handler // wrap with http.HandlerFunc if needed
-	Brokerage   http.Handler
-	Order       http.Handler // wrap with http.HandlerFunc if needed
-	Document    http.Handler
-	Docs        http.Handler
+	DevLogin              http.Handler
+	Recommend             http.Handler
+	Invest                http.Handler
+	Profile               http.Handler
+	Plaid                 http.Handler
+	AutoInvest            http.Handler
+	CashContext           http.Handler
+	Activity              http.Handler // wrap with http.HandlerFunc if needed
+	Brokerage             http.Handler
+	BrokerageConnections  http.Handler
+	Order                 http.Handler // wrap with http.HandlerFunc if needed
+	Document              http.Handler
+	Docs                  http.Handler
 }
 
 // Build returns the top-level http.Handler for the server.
@@ -43,6 +44,8 @@ func Build(h Handlers, authProvider ports.AuthProvider) http.Handler {
 	protected.Handle(CashContextURI, h.CashContext)
 	protected.Handle(ActivityURI, h.Activity)
 	protected.Handle(BrokerageConnectURI, h.Brokerage)
+	protected.Handle(BrokerageConnectionsURI, h.BrokerageConnections)
+	protected.Handle(BrokerageConnectionByIDURI, h.BrokerageConnections)
 	protected.Handle(OrdersURI, h.Order)
 	protected.Handle(DocumentsUploadURI, h.Document) // must be registered before DocumentsByIDURI
 	protected.Handle(DocumentsURI, h.Document)

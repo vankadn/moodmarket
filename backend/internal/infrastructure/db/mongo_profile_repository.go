@@ -26,31 +26,35 @@ type plaidConnectionDoc struct {
 // brokerageConnectionDoc mirrors the MongoDB subdocument for an Alpaca connection.
 // APIKey and SecretKey are stored encrypted; decrypted by the repository before returning to callers.
 type brokerageConnectionDoc struct {
-	APIKey      string    `bson:"api_key"`      // AES-256-GCM encrypted
-	SecretKey   string    `bson:"secret_key"`   // AES-256-GCM encrypted
-	BaseURL     string    `bson:"base_url"`
-	Connected   bool      `bson:"connected"`
-	ConnectedAt time.Time `bson:"connected_at"`
+	ID              string    `bson:"id,omitempty"`
+	Name            string    `bson:"name,omitempty"`
+	AssetCategories []string  `bson:"asset_categories,omitempty"`
+	APIKey          string    `bson:"api_key"`    // AES-256-GCM encrypted
+	SecretKey       string    `bson:"secret_key"` // AES-256-GCM encrypted
+	BaseURL         string    `bson:"base_url"`
+	Connected       bool      `bson:"connected"`
+	ConnectedAt     time.Time `bson:"connected_at"`
 }
 
 // profileDocument is the MongoDB-specific representation.
 // bson tags are intentionally isolated here and never appear in domain models.
-// PlaidConnections and BrokerageConn use omitempty so fromProfile ($set) never touches them.
+// PlaidConnections, BrokerageConn, and BrokerageConns use omitempty so fromProfile ($set) never touches them.
 type profileDocument struct {
-	UserID                    string                  `bson:"user_id"`
-	FullName                  string                  `bson:"full_name"`
-	Salary                    float64                 `bson:"salary"`
-	MonthlySavings            float64                 `bson:"monthly_savings"`
-	RetirementContributionPct float64                 `bson:"retirement_contribution_percent"`
-	ExistingPortfolioValue    float64                 `bson:"existing_portfolio_value"`
-	TimeHorizon               string                  `bson:"time_horizon"`
-	ImmigrationStatus         string                  `bson:"immigration_status"`
-	RiskTolerance             string                  `bson:"risk_tolerance"`
-	InvestmentGoal            string                  `bson:"investment_goal"`
-	HasEmergencyFund          bool                    `bson:"has_emergency_fund"`
-	IncludeCashContext        bool                    `bson:"include_cash_context"`
-	PlaidConnections          []plaidConnectionDoc    `bson:"plaid_connections,omitempty"`
-	BrokerageConn             *brokerageConnectionDoc `bson:"brokerage_connection,omitempty"`
+	UserID                    string                   `bson:"user_id"`
+	FullName                  string                   `bson:"full_name"`
+	Salary                    float64                  `bson:"salary"`
+	MonthlySavings            float64                  `bson:"monthly_savings"`
+	RetirementContributionPct float64                  `bson:"retirement_contribution_percent"`
+	ExistingPortfolioValue    float64                  `bson:"existing_portfolio_value"`
+	TimeHorizon               string                   `bson:"time_horizon"`
+	ImmigrationStatus         string                   `bson:"immigration_status"`
+	RiskTolerance             string                   `bson:"risk_tolerance"`
+	InvestmentGoal            string                   `bson:"investment_goal"`
+	HasEmergencyFund          bool                     `bson:"has_emergency_fund"`
+	IncludeCashContext        bool                     `bson:"include_cash_context"`
+	PlaidConnections          []plaidConnectionDoc     `bson:"plaid_connections,omitempty"`
+	BrokerageConn             *brokerageConnectionDoc  `bson:"brokerage_connection,omitempty"`  // legacy single-connection field
+	BrokerageConns            []brokerageConnectionDoc `bson:"brokerage_connections,omitempty"` // multi-connection array
 }
 
 type MongoProfileRepository struct {
@@ -146,9 +150,10 @@ func (r *MongoProfileRepository) GetPlaidConnections(ctx context.Context, userID
 	return connections, nil
 }
 
-// GetBrokerageConnection returns the decrypted brokerage credentials for the user.
-// Returns nil, nil when no connection exists.
-func (r *MongoProfileRepository) GetBrokerageConnection(ctx context.Context, userID string) (*models.BrokerageConnection, error) {
+// GetBrokerageConnections returns all brokerage connections with decrypted credentials.
+// If brokerage_connections array is empty, falls back to legacy brokerage_connection field
+// and synthesizes a single entry with ID="default" — identical routing behavior to before.
+func (r *MongoProfileRepository) GetBrokerageConnections(ctx context.Context, userID string) ([]models.BrokerageConnection, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -158,33 +163,133 @@ func (r *MongoProfileRepository) GetBrokerageConnection(ctx context.Context, use
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("mongo profile repo: get brokerage connection: %w", err)
-	}
-	if doc.BrokerageConn == nil || !doc.BrokerageConn.Connected {
-		return nil, nil
+		return nil, fmt.Errorf("mongo profile repo: get brokerage connections: %w", err)
 	}
 
-	apiKey, err := DecryptToken(doc.BrokerageConn.APIKey)
-	if err != nil {
-		return nil, fmt.Errorf("mongo profile repo: decrypt brokerage api key: %w", err)
-	}
-	secretKey, err := DecryptToken(doc.BrokerageConn.SecretKey)
-	if err != nil {
-		return nil, fmt.Errorf("mongo profile repo: decrypt brokerage secret key: %w", err)
+	// Use new multi-connection array if populated.
+	if len(doc.BrokerageConns) > 0 {
+		return r.decryptBrokerageConns(doc.BrokerageConns)
 	}
 
-	return &models.BrokerageConnection{
-		APIKey:      apiKey,
-		SecretKey:   secretKey,
-		BaseURL:     doc.BrokerageConn.BaseURL,
-		Connected:   doc.BrokerageConn.Connected,
-		ConnectedAt: doc.BrokerageConn.ConnectedAt,
-	}, nil
+	// Backward-compat: synthesize from legacy single-connection field on read (no auto-save).
+	if doc.BrokerageConn != nil && doc.BrokerageConn.Connected {
+		apiKey, err := DecryptToken(doc.BrokerageConn.APIKey)
+		if err != nil {
+			return nil, fmt.Errorf("mongo profile repo: decrypt legacy brokerage api key: %w", err)
+		}
+		secretKey, err := DecryptToken(doc.BrokerageConn.SecretKey)
+		if err != nil {
+			return nil, fmt.Errorf("mongo profile repo: decrypt legacy brokerage secret key: %w", err)
+		}
+		return []models.BrokerageConnection{{
+			ID:              "default",
+			AssetCategories: []models.AssetCategory{models.AssetCategoryDefault},
+			APIKey:          apiKey,
+			SecretKey:       secretKey,
+			BaseURL:         doc.BrokerageConn.BaseURL,
+			Connected:       true,
+			ConnectedAt:     doc.BrokerageConn.ConnectedAt,
+		}}, nil
+	}
+	return nil, nil
 }
 
-// SaveBrokerageConnection stores encrypted Alpaca credentials on the user's document.
-// A second call overwrites the previous connection.
-func (r *MongoProfileRepository) SaveBrokerageConnection(ctx context.Context, userID string, conn models.BrokerageConnection) error {
+func (r *MongoProfileRepository) decryptBrokerageConns(docs []brokerageConnectionDoc) ([]models.BrokerageConnection, error) {
+	conns := make([]models.BrokerageConnection, 0, len(docs))
+	for _, d := range docs {
+		apiKey, err := DecryptToken(d.APIKey)
+		if err != nil {
+			return nil, fmt.Errorf("mongo profile repo: decrypt brokerage api key for %s: %w", d.ID, err)
+		}
+		secretKey, err := DecryptToken(d.SecretKey)
+		if err != nil {
+			return nil, fmt.Errorf("mongo profile repo: decrypt brokerage secret key for %s: %w", d.ID, err)
+		}
+		cats := make([]models.AssetCategory, len(d.AssetCategories))
+		for i, c := range d.AssetCategories {
+			cats[i] = models.AssetCategory(c)
+		}
+		conns = append(conns, models.BrokerageConnection{
+			ID:              d.ID,
+			Name:            d.Name,
+			AssetCategories: cats,
+			APIKey:          apiKey,
+			SecretKey:       secretKey,
+			BaseURL:         d.BaseURL,
+			Connected:       d.Connected,
+			ConnectedAt:     d.ConnectedAt,
+		})
+	}
+	return conns, nil
+}
+
+// UpsertBrokerageConnection adds or updates a connection in brokerage_connections by conn.ID.
+// Uses arrayFilters to update in-place; falls back to $push when no match exists.
+func (r *MongoProfileRepository) UpsertBrokerageConnection(ctx context.Context, userID string, conn models.BrokerageConnection) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	encAPIKey, err := EncryptToken(conn.APIKey)
+	if err != nil {
+		return fmt.Errorf("mongo profile repo: encrypt brokerage api key: %w", err)
+	}
+	encSecretKey, err := EncryptToken(conn.SecretKey)
+	if err != nil {
+		return fmt.Errorf("mongo profile repo: encrypt brokerage secret key: %w", err)
+	}
+
+	cats := make([]string, len(conn.AssetCategories))
+	for i, c := range conn.AssetCategories {
+		cats[i] = string(c)
+	}
+
+	doc := brokerageConnectionDoc{
+		ID:              conn.ID,
+		Name:            conn.Name,
+		AssetCategories: cats,
+		APIKey:          encAPIKey,
+		SecretKey:       encSecretKey,
+		BaseURL:         conn.BaseURL,
+		Connected:       true,
+		ConnectedAt:     conn.ConnectedAt,
+	}
+
+	filter := bson.M{"user_id": userID, "brokerage_connections.id": conn.ID}
+	update := bson.M{"$set": bson.M{"brokerage_connections.$": doc}}
+	res, err := r.collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return fmt.Errorf("mongo profile repo: upsert brokerage connection (update): %w", err)
+	}
+	if res.ModifiedCount > 0 {
+		return nil
+	}
+
+	// No existing entry matched — append.
+	filter2 := bson.M{"user_id": userID}
+	push := bson.M{"$push": bson.M{"brokerage_connections": doc}}
+	opts := options.Update().SetUpsert(true)
+	if _, err := r.collection.UpdateOne(ctx, filter2, push, opts); err != nil {
+		return fmt.Errorf("mongo profile repo: upsert brokerage connection (push): %w", err)
+	}
+	return nil
+}
+
+// RemoveBrokerageConnection removes the entry matching connectionID from brokerage_connections.
+func (r *MongoProfileRepository) RemoveBrokerageConnection(ctx context.Context, userID string, connectionID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	filter := bson.M{"user_id": userID}
+	update := bson.M{"$pull": bson.M{"brokerage_connections": bson.M{"id": connectionID}}}
+	if _, err := r.collection.UpdateOne(ctx, filter, update); err != nil {
+		return fmt.Errorf("mongo profile repo: remove brokerage connection: %w", err)
+	}
+	return nil
+}
+
+// SaveLegacySingleBrokerageConnection stores encrypted Alpaca credentials using the old
+// single-connection field. Used only by the legacy POST /brokerage/connect endpoint.
+func (r *MongoProfileRepository) SaveLegacySingleBrokerageConnection(ctx context.Context, userID string, conn models.BrokerageConnection) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -209,20 +314,21 @@ func (r *MongoProfileRepository) SaveBrokerageConnection(ctx context.Context, us
 	update := bson.M{"$set": bson.M{"brokerage_connection": doc}}
 	opts := options.Update().SetUpsert(true)
 	if _, err := r.collection.UpdateOne(ctx, filter, update, opts); err != nil {
-		return fmt.Errorf("mongo profile repo: save brokerage connection: %w", err)
+		return fmt.Errorf("mongo profile repo: save legacy brokerage connection: %w", err)
 	}
 	return nil
 }
 
-// ClearBrokerageConnection removes brokerage credentials from the user's document.
-func (r *MongoProfileRepository) ClearBrokerageConnection(ctx context.Context, userID string) error {
+// ClearLegacySingleBrokerageConnection removes the legacy brokerage_connection field.
+// Used only by the legacy DELETE /brokerage/connect endpoint.
+func (r *MongoProfileRepository) ClearLegacySingleBrokerageConnection(ctx context.Context, userID string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	filter := bson.M{"user_id": userID}
 	update := bson.M{"$unset": bson.M{"brokerage_connection": ""}}
 	if _, err := r.collection.UpdateOne(ctx, filter, update); err != nil {
-		return fmt.Errorf("mongo profile repo: clear brokerage connection: %w", err)
+		return fmt.Errorf("mongo profile repo: clear legacy brokerage connection: %w", err)
 	}
 	return nil
 }
@@ -267,13 +373,32 @@ func toProfile(doc *profileDocument) *models.UserProfile {
 		}
 	}
 
-	// Populate BrokerageStatus — credentials are never included in the public profile.
-	if doc.BrokerageConn != nil {
-		profile.Brokerage = &models.BrokerageStatus{
-			Connected:   doc.BrokerageConn.Connected,
-			BaseURL:     doc.BrokerageConn.BaseURL,
-			ConnectedAt: doc.BrokerageConn.ConnectedAt.Format(time.RFC3339),
+	// Populate Brokerages — credentials are never included in the public profile.
+	if len(doc.BrokerageConns) > 0 {
+		profile.Brokerages = make([]models.BrokerageStatus, len(doc.BrokerageConns))
+		for i, c := range doc.BrokerageConns {
+			cats := make([]models.AssetCategory, len(c.AssetCategories))
+			for j, cat := range c.AssetCategories {
+				cats[j] = models.AssetCategory(cat)
+			}
+			profile.Brokerages[i] = models.BrokerageStatus{
+				ID:              c.ID,
+				Name:            c.Name,
+				AssetCategories: cats,
+				Connected:       c.Connected,
+				BaseURL:         c.BaseURL,
+				ConnectedAt:     c.ConnectedAt.Format(time.RFC3339),
+			}
 		}
+	} else if doc.BrokerageConn != nil && doc.BrokerageConn.Connected {
+		// Backward-compat: synthesize single-element slice from legacy field.
+		profile.Brokerages = []models.BrokerageStatus{{
+			ID:              "default",
+			AssetCategories: []models.AssetCategory{models.AssetCategoryDefault},
+			Connected:       doc.BrokerageConn.Connected,
+			BaseURL:         doc.BrokerageConn.BaseURL,
+			ConnectedAt:     doc.BrokerageConn.ConnectedAt.Format(time.RFC3339),
+		}}
 	}
 	return profile
 }

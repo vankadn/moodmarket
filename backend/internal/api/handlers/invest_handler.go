@@ -16,7 +16,7 @@ import (
 // investUseCase is the local interface the handler depends on.
 // Defined here so the handler never imports the services package directly.
 type investUseCase interface {
-	Execute(ctx context.Context, userID string, allocations []models.Allocation, totalAmount float64, riskLevel, summary string) ([]models.TradeReceipt, string, error)
+	Execute(ctx context.Context, userID string, allocations []models.Allocation, totalAmount float64, riskLevel, summary string, perAllocBrokerage map[string]string) ([]models.TradeReceipt, string, error)
 }
 
 type InvestHandler struct {
@@ -46,10 +46,11 @@ func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Allocations []models.Allocation `json:"allocations"`
-		TotalAmount float64             `json:"total_amount"`
-		RiskLevel   string              `json:"risk_level"`
-		Summary     string              `json:"summary"`
+		Allocations       []models.Allocation `json:"allocations"`
+		TotalAmount       float64             `json:"total_amount"`
+		RiskLevel         string              `json:"risk_level"`
+		Summary           string              `json:"summary"`
+		PerAllocBrokerage map[string]string   `json:"per_allocation_brokerage,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -63,7 +64,7 @@ func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	receipts, decisionID, err := h.service.Execute(ctx, userID, body.Allocations, body.TotalAmount, body.RiskLevel, body.Summary)
+	receipts, decisionID, err := h.service.Execute(ctx, userID, body.Allocations, body.TotalAmount, body.RiskLevel, body.Summary, body.PerAllocBrokerage)
 	if err != nil {
 		if errors.Is(err, ports.ErrBrokerageNotConnected) {
 			http.Error(w, "no brokerage account connected", http.StatusBadRequest)

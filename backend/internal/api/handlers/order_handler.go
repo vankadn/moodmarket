@@ -39,8 +39,13 @@ func (h *OrderHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, _ := h.profileRepo.GetBrokerageConnection(r.Context(), userID)
-	brokerage, err := h.brokerageFactory.ForUser(conn)
+	connections, _ := h.profileRepo.GetBrokerageConnections(r.Context(), userID)
+	if len(connections) == 0 {
+		http.Error(w, "no brokerage account connected", http.StatusBadRequest)
+		return
+	}
+	// Use the first connected connection — order lookup doesn't need routing.
+	brokerage, err := h.brokerageFactory.ForUser(&connections[0])
 	if err != nil {
 		if errors.Is(err, ports.ErrBrokerageNotConnected) {
 			http.Error(w, "no brokerage account connected", http.StatusBadRequest)

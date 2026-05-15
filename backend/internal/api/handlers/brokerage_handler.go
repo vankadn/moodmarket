@@ -62,7 +62,7 @@ func (h *BrokerageHandler) connect(w http.ResponseWriter, r *http.Request) {
 		Connected:   true,
 		ConnectedAt: time.Now(),
 	}
-	if err := h.profileRepo.SaveBrokerageConnection(r.Context(), userID, conn); err != nil {
+	if err := h.profileRepo.SaveLegacySingleBrokerageConnection(r.Context(), userID, conn); err != nil {
 		log.Printf("[brokerage] connect: save failed for user %s: %v", userID, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -80,7 +80,7 @@ func (h *BrokerageHandler) disconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.profileRepo.ClearBrokerageConnection(r.Context(), userID); err != nil {
+	if err := h.profileRepo.ClearLegacySingleBrokerageConnection(r.Context(), userID); err != nil {
 		log.Printf("[brokerage] disconnect: clear failed for user %s: %v", userID, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

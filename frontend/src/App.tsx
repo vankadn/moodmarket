@@ -67,7 +67,7 @@ function DevApp() {
   if (state === "brokerage") {
     return (
       <BrokerageConnect
-        status={profile?.brokerage}
+        connections={profile?.brokerages ?? []}
         onBack={() => setState("home")}
         onChanged={() => setState("loading")}
       />

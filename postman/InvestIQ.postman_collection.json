@@ -6,7 +6,8 @@
   },
   "variable": [
     { "key": "baseUrl", "value": "http://localhost:8080" },
-    { "key": "authToken", "value": "" }
+    { "key": "authToken", "value": "" },
+    { "key": "connectionId", "value": "" }
   ],
   "auth": {
     "type": "bearer",
@@ -215,7 +216,42 @@
       "name": "Brokerage",
       "item": [
         {
-          "name": "Connect Alpaca (paper)",
+          "name": "Add brokerage connection",
+          "description": "Adds a named brokerage connection with asset-category routing. Omit 'id' to auto-generate.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["var j = pm.response.json(); if (j.id) pm.collectionVariables.set('connectionId', j.id);"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/brokerage/connections", "host": ["{{baseUrl}}"], "path": ["brokerage", "connections"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Bonds Account\",\n  \"asset_categories\": [\"bond\"],\n  \"api_key\": \"YOUR_ALPACA_API_KEY\",\n  \"secret_key\": \"YOUR_ALPACA_SECRET_KEY\",\n  \"base_url\": \"https://paper-api.alpaca.markets\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Remove brokerage connection",
+          "description": "Removes the connection with the given ID. Set {{connectionId}} from 'Add brokerage connection' test script or GET /users/profile.",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/brokerage/connections/{{connectionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["brokerage", "connections", "{{connectionId}}"]
+            }
+          }
+        },
+        {
+          "name": "Connect Alpaca (legacy)",
+          "description": "Legacy single-connection endpoint — use 'Add brokerage connection' for new setups.",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
@@ -228,7 +264,8 @@
           }
         },
         {
-          "name": "Disconnect brokerage",
+          "name": "Disconnect brokerage (legacy)",
+          "description": "Legacy disconnect — clears the single brokerage_connection field only.",
           "request": {
             "method": "DELETE",
             "url": { "raw": "{{baseUrl}}/brokerage/connect", "host": ["{{baseUrl}}"], "path": ["brokerage", "connect"] }

@@ -20,7 +20,9 @@ const (
 	PlaidExchangeURI  = "/plaid/exchange"
 	PlaidAccountsURI  = "/plaid/accounts/" // subtree — item_id is path suffix
 
-	BrokerageConnectURI = "/brokerage/connect"
+	BrokerageConnectURI       = "/brokerage/connect"
+	BrokerageConnectionsURI   = "/brokerage/connections"
+	BrokerageConnectionByIDURI = "/brokerage/connections/" // subtree — connection_id is path suffix
 
 	OrdersURI = "/orders/" // subtree — order_id is path suffix
 

@@ -1,4 +1,4 @@
-import { Recommendation } from "../services/api";
+import { BrokerageStatus, Recommendation } from "../services/api";
 
 const riskColor: Record<string, string> = {
   low: "#E6F1FB", medium: "#FAEEDA", high: "#FAECE7",
@@ -6,14 +6,27 @@ const riskColor: Record<string, string> = {
 
 interface Props {
   rec: Recommendation;
+  brokerages: BrokerageStatus[];
+  perAllocBrokerage: Record<string, string>;
+  onPerAllocChange: (ticker: string, connID: string) => void;
   onConfirm: () => void;
   onCancel: () => void;
   loading: boolean;
 }
 
-export function ConfirmScreen({ rec, onConfirm, onCancel, loading }: Props) {
+export function ConfirmScreen({ rec, brokerages, perAllocBrokerage, onPerAllocChange, onConfirm, onCancel, loading }: Props) {
+  const showVia = brokerages.length > 0;
+  const multiConn = brokerages.length > 1;
+  const colSpanTotal = showVia ? 3 : 2;
+
   return (
     <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: "12px", padding: "1.25rem 1.5rem" }}>
+      {rec.from_cache && (
+        <div style={{ marginBottom: "1rem", padding: "8px 12px", background: "#fffbea", border: "1px solid #f0d060", borderRadius: "8px", fontSize: "12px", color: "#7a6000" }}>
+          AI advisor is temporarily unavailable. Showing your last recommendation — amounts scaled to today's budget.
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: "15px", color: "#111" }}>Confirm investment</div>
@@ -29,6 +42,7 @@ export function ConfirmScreen({ rec, onConfirm, onCancel, loading }: Props) {
           <tr style={{ borderBottom: "1px solid #f0f0f0", color: "#999", textAlign: "left" }}>
             <th style={{ padding: "6px 0", fontWeight: 500 }}>Ticker</th>
             <th style={{ padding: "6px 0", fontWeight: 500 }}>Name</th>
+            {showVia && <th style={{ padding: "6px 8px", fontWeight: 500 }}>Via</th>}
             <th style={{ padding: "6px 0", fontWeight: 500, textAlign: "right" }}>Amount</th>
             <th style={{ padding: "6px 0", fontWeight: 500, textAlign: "right" }}>%</th>
           </tr>
@@ -42,6 +56,27 @@ export function ConfirmScreen({ rec, onConfirm, onCancel, loading }: Props) {
                 </span>
               </td>
               <td style={{ padding: "10px 8px", color: "#444" }}>{a.name}</td>
+              {showVia && (
+                <td style={{ padding: "10px 8px" }}>
+                  <select
+                    value={perAllocBrokerage[a.ticker] ?? (multiConn ? "" : brokerages[0].id)}
+                    onChange={(e) => onPerAllocChange(a.ticker, e.target.value)}
+                    disabled={loading || !multiConn}
+                    style={{
+                      fontSize: "12px", border: "1px solid #e0e0e0", borderRadius: "6px",
+                      padding: "3px 6px", background: "white", outline: "none",
+                      cursor: (loading || !multiConn) ? "default" : "pointer", maxWidth: "130px",
+                    }}
+                  >
+                    {multiConn && <option value="">Auto</option>}
+                    {brokerages.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name || "Alpaca"}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+              )}
               <td style={{ padding: "10px 0", textAlign: "right", fontWeight: 500 }}>${a.amount.toFixed(2)}</td>
               <td style={{ padding: "10px 0", textAlign: "right", color: "#888" }}>{a.percentage.toFixed(0)}%</td>
             </tr>
@@ -49,7 +84,7 @@ export function ConfirmScreen({ rec, onConfirm, onCancel, loading }: Props) {
         </tbody>
         <tfoot>
           <tr>
-            <td colSpan={2} style={{ padding: "10px 0", fontWeight: 600 }}>Total</td>
+            <td colSpan={colSpanTotal} style={{ padding: "10px 0", fontWeight: 600 }}>Total</td>
             <td style={{ padding: "10px 0", textAlign: "right", fontWeight: 600 }}>${rec.total_budget.toFixed(2)}</td>
             <td />
           </tr>

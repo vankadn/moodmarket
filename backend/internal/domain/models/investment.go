@@ -26,4 +26,5 @@ type Recommendation struct {
 	Allocations []Allocation `json:"allocations"`
 	Summary     string       `json:"summary"`
 	RiskLevel   string       `json:"risk_level"`
+	FromCache   bool         `json:"from_cache,omitempty"`
 }

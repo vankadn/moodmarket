@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-14 (Phase 11 — Complete)
+> Last updated: 2026-05-14 (Phase 12b + 12c — Complete)
 
 ---
 
@@ -124,7 +124,7 @@ See README.md for the full env var reference and provider swap table.
 | `UserProfile` | Complete financial picture of the user |
 | `InvestmentRequest` | Request to generate a daily allocation |
 | `Allocation` | Single position recommendation (ticker, amount, %) |
-| `Recommendation` | Full AI response: allocations + summary + risk level |
+| `Recommendation` | Full AI response: allocations + summary + risk level + `FromCache bool` (true when returned from MongoDB fallback due to advisor overload) |
 | `InvestmentDecision` | Persisted record: userId, timestamp, market snapshot, allocations, trade receipts |
 | `MarketSnapshot` | Point-in-time market context: SPY/QQQ trend, sector ETF performance, sentiment |
 | `RiskTolerance` | conservative / moderate / aggressive |
@@ -133,13 +133,14 @@ See README.md for the full env var reference and provider swap table.
 | `ImmigrationStatus` | us_citizen / permanent_resident / work_visa / other |
 | `UserIdentity` | Authenticated user: UserID, Email, Name |
 | `TradeOrder` | Value object: UserID, Ticker, Amount (dollar-based notional) |
-| `TradeReceipt` | Value object: OrderID, Ticker, FilledAmount, FilledPrice, Status, Timestamp |
+| `TradeReceipt` | Value object: OrderID, Ticker, FilledAmount, FilledPrice, Status, Timestamp, BrokerageID (optional), BrokerageName (optional) |
 | `Position` | Brokerage holding: Ticker, Quantity, MarketValue |
 | `BankAccount` | Plaid-sourced account: institution, type, balance |
 | `BalanceSummary` | Aggregated view: total cash, total investments, net worth signal |
 | `PlaidConnection` | Per-institution token record: institution name, access_token, item_id |
-| `BrokerageConnection` | Internal per-user Alpaca credential record: APIKey, SecretKey, BaseURL, Connected, ConnectedAt — encrypted at rest, never exposed to frontend |
-| `BrokerageStatus` | JSON-safe API subset of BrokerageConnection: connected bool, base_url, connected_at — returned in UserProfile response |
+| `BrokerageConnection` | Internal per-user Alpaca credential record: ID, Name, AssetCategories, APIKey, SecretKey, BaseURL, Connected, ConnectedAt — encrypted at rest, never exposed to frontend |
+| `BrokerageStatus` | JSON-safe API subset: ID, Name, AssetCategories, connected, base_url, connected_at — returned in `UserProfile.Brokerages` array |
+| `AssetCategory` | `equity` / `bond` / `default` — controls which connection an allocation is routed to |
 | `AutoInvestConfig` | First-class domain model (own collection): Enabled, Amount, Risk, EnabledAt, UpdatedAt |
 | `SchedulerRun` | Audit record for one autonomous cycle: RunID, StartedAt, CompletedAt, UsersProcessed, TotalInvested, Errors |
 | `NewsItem` | One market headline: Headline, Summary, Source, PublishedAt |
@@ -537,7 +538,54 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 **Skills:**
 - `skills/postman-update-rules.md` — rules for keeping Postman + OpenAPI in sync after any endpoint change; wired into `CLAUDE.md`
 
-### Phase 12 — Multi-Brokerage Support
+### Phase 12b — Multi-Brokerage Routing (Complete)
+
+**Goal:** Connect multiple brokerage accounts and route allocations by asset type (e.g. bonds → one account, stocks → another).
+
+**Domain changes:**
+- `AssetCategory` type + constants (`equity`, `bond`, `default`) in `models/user_profile.go`
+- `BrokerageConnection` gains `ID`, `Name`, `AssetCategories`; `BrokerageStatus` same
+- `UserProfile.Brokerage *BrokerageStatus` → `Brokerages []BrokerageStatus` (breaking — frontend updated simultaneously)
+
+**Application layer:**
+- `services/brokerage_router.go` (new) — `NormalizeAssetCategory()` maps Claude's free-form type strings; `RouteAllocation()` selects connection by asset category with default fallback
+- `services/investment_service.go` — groups allocations by routed connection; per-group provider construction; accepts `perAllocBrokerage map[string]string` (ticker → connectionID) — non-nil map overrides auto-routing per allocation; stamps `BrokerageID` and `BrokerageName` on each `TradeReceipt` after order placement
+- `services/recommendation_service.go` — loops all connections for positions fetch; deduplicates by ticker (first-seen wins)
+
+**Repository:**
+- `ports/profile_repository.go` — replaced `GetBrokerageConnection` with `GetBrokerageConnections`; old save/clear renamed to `SaveLegacySingleBrokerageConnection` / `ClearLegacySingleBrokerageConnection`; added `UpsertBrokerageConnection` (upsert by ID), `RemoveBrokerageConnection`
+- `infrastructure/db/mongo_profile_repository.go` — `brokerage_connections` array field; backward-compat read synthesizes `ID="default"` from legacy `brokerage_connection` field on first read without auto-save
+
+**API:**
+- `POST /brokerage/connections` — add named connection with asset categories; ID auto-generated if omitted
+- `DELETE /brokerage/connections/{id}` — remove by ID; returns 204
+- `POST /invest` body gains optional `per_allocation_brokerage: map[ticker → connectionID]`; nil = full auto-route
+- `TradeReceipt` gains `brokerage_id` and `brokerage_name` (omitempty) — stored in MongoDB `decisions.receipts`
+
+**Frontend:**
+- `BrokerageConnect.tsx` — redesigned: broker dropdown (Alpaca available, Fidelity/Robinhood/Schwab/E*TRADE "(not ready)"), connection list with category pills + two-step remove + credential form
+- `ConfirmScreen.tsx` — gains `brokerages`, `perAllocBrokerage`, `onPerAllocChange` props; always shows "Via" column when `brokerages.length > 0`; single connection: `<select>` pre-selected and disabled; multiple connections: `<select>` with "Auto" + all options, user can change per row
+- `Home.tsx` — `perAllocBrokerage` state (ticker → connID); `handlePerAllocChange`; reset on cancel/done; passes map to `invest()` as `per_allocation_brokerage`; removed global brokerage switcher dropdown (superseded)
+- `api.ts` — `AssetCategory` type, updated `BrokerageStatus` / `UserProfile`, `addBrokerageConnection()`, `removeBrokerageConnection()`, `InvestRequest.per_allocation_brokerage`, `TradeReceipt.brokerage_id` + `brokerage_name`
+
+**Backward compatibility:**
+- Legacy `/brokerage/connect` endpoint still works; writes to old `brokerage_connection` field
+- Users with existing single connection see identical behavior — synthesized `ID="default"` routes all allocations; "Via" column shows the account name pre-selected (non-interactive)
+
+### Phase 12c — Advisor Overload Fallback (Complete)
+
+**Goal:** When Anthropic's API returns HTTP 529 (overloaded), return the user's last recommendation scaled to today's budget instead of surfacing a hard error.
+
+- `domain/ports/advisor.go` — `ErrAdvisorOverloaded` sentinel error
+- `infrastructure/advisor/claude.go` — HTTP 529 response wraps `ErrAdvisorOverloaded` via `fmt.Errorf("%w: ...")` so `errors.Is` works up the call chain
+- `domain/models/investment.go` — `FromCache bool` added to `Recommendation` (json: `from_cache,omitempty`; absent on normal responses)
+- `application/services/recommendation_service.go` — on `ErrAdvisorOverloaded`, calls `decisionRepo.ListByUser(ctx, userID, 1)`; rescales allocation amounts proportionally to today's budget (`amount = pct * budget`); returns `Recommendation{FromCache: true}`; if no prior decision exists, the original error propagates unchanged
+- `frontend/src/services/api.ts` — `from_cache?: boolean` on `Recommendation`
+- `frontend/src/components/ConfirmScreen.tsx` — amber banner when `rec.from_cache` is true: "AI advisor is temporarily unavailable. Showing your last recommendation — amounts scaled to today's budget."
+
+---
+
+### Phase 12 — Real Broker API Integration (Future)
 
 - Target: Fidelity + Robinhood production APIs
 - Requires LLC formation first (Krishna to action)
@@ -664,6 +712,8 @@ Background data access is legitimate when:
 | `ErrBrokerageNotConnected` sentinel error | Allows callers to distinguish "not connected" (user action needed, non-fatal for recommendations) from real errors. RecommendationService skips positions; InvestmentService returns 400; scheduler skips user silently. |
 | distroless runner image | `gcr.io/distroless/static-debian12` has no shell, no libc, no package manager — smaller attack surface and smaller image than alpine. Requires static binary (`CGO_ENABLED=0`). |
 | `/health` on top-level mux, not inside `UserIdentity` | `UserIdentity` blocks all non-`/auth/` routes. A health endpoint inside the mux would require a bearer token, breaking Docker/Railway healthchecks. Top-level mux registers `/health` first; everything else falls through to the protected mux. |
+| Per-allocation brokerage override over global override | Global `brokerage_override_id` was the initial Phase 12b design. Per-allocation `per_allocation_brokerage map[ticker→connID]` is strictly more expressive — you can still route everything to one account (just set all tickers to the same ID) but you can also split individual allocations. Stamped on each `TradeReceipt` so MongoDB has a full audit trail of which account executed each trade. |
+| 529 fallback to cached recommendation | Anthropic occasionally returns HTTP 529 (overloaded). Hard-failing the recommendation with a 500 is a bad UX for a daily-use app. The `decisions` collection already has everything needed — pull the last decision, rescale amounts to today's budget, set `FromCache: true`. If no prior decision exists the original error still propagates. No new storage, no cache layer needed. |
 
 ---
 

@@ -95,19 +95,36 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 		}
 	}
 
-	// Step 5: current brokerage positions — Claude avoids over-concentrating existing holdings
-	brokerageConn, _ := s.profileRepo.GetBrokerageConnection(ctx, userID)
-	brokerageProvider, err := s.brokerageFactory.ForUser(brokerageConn)
-	if err != nil {
+	// Step 5: current brokerage positions — Claude avoids over-concentrating existing holdings.
+	// Fetches from all connections; deduplicates by ticker (first-seen wins).
+	brokerageConns, _ := s.profileRepo.GetBrokerageConnections(ctx, userID)
+	if len(brokerageConns) == 0 {
 		log.Printf("[recommend] step 5/8  brokerage not connected — skipping positions")
 	} else {
-		positions, err := brokerageProvider.GetPositions(ctx, userID)
-		if err != nil {
-			log.Printf("[recommend] step 5/8  positions fetch failed (%v) — skipped", err)
-		} else {
-			req.Positions = positions
-			log.Printf("[recommend] step 5/8  %d position(s) loaded", len(positions))
+		seen := make(map[string]bool)
+		var allPositions []models.Position
+		for i := range brokerageConns {
+			provider, err := s.brokerageFactory.ForUser(&brokerageConns[i])
+			if err != nil {
+				log.Printf("[recommend] step 5/8  build provider for %s failed (%v) — skipped", brokerageConns[i].ID, err)
+				continue
+			}
+			positions, err := provider.GetPositions(ctx, userID)
+			if err != nil {
+				log.Printf("[recommend] step 5/8  positions fetch from %s failed (%v) — skipped", brokerageConns[i].ID, err)
+				continue
+			}
+			for _, p := range positions {
+				if seen[p.Ticker] {
+					log.Printf("[recommend] step 5/8  duplicate ticker %s from %s — skipped", p.Ticker, brokerageConns[i].ID)
+					continue
+				}
+				seen[p.Ticker] = true
+				allPositions = append(allPositions, p)
+			}
 		}
+		req.Positions = allPositions
+		log.Printf("[recommend] step 5/8  %d position(s) loaded across %d connection(s)", len(allPositions), len(brokerageConns))
 	}
 
 	// Step 6: recent decision history — Claude avoids repeating the same allocation daily
@@ -132,6 +149,14 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	log.Printf("[recommend] step 8/8  sending to Claude (profile=%v market=%v plaid=%v txns=%v positions=%d decisions=%d taxdocs=%d)", profile != nil, snapshot != nil, req.BalanceSummary != nil, req.TransactionSummary != nil, len(req.Positions), len(req.RecentDecisions), len(req.TaxDocuments))
 	rec, err := s.advisor.GetRecommendation(ctx, req, profile, snapshot)
 	if err != nil {
+		if errors.Is(err, ports.ErrAdvisorOverloaded) {
+			cached, fallbackErr := s.cachedRecommendation(ctx, userID, req.BaseBudget)
+			if fallbackErr == nil {
+				log.Printf("[recommend] step 8/8  advisor overloaded — returning cached recommendation from %s", cached.Summary)
+				return cached, nil
+			}
+			log.Printf("[recommend] step 8/8  advisor overloaded and no cached recommendation available: %v", fallbackErr)
+		}
 		return nil, fmt.Errorf("recommendation service: advisor: %w", err)
 	}
 	log.Printf("[recommend] step 7/7  Claude returned %d allocations (risk=%s)", len(rec.Allocations), rec.RiskLevel)
@@ -203,6 +228,35 @@ func (s *RecommendationService) GetCashContext(ctx context.Context, userID strin
 		LargestPendingAmount: txSummary.LargestPendingAmount,
 		LargestPendingName:   txSummary.LargestPendingName,
 		Message:              message,
+	}, nil
+}
+
+// cachedRecommendation pulls the user's most recent investment decision from MongoDB and
+// rescales the allocation amounts to budget. Returns an error when no prior decision exists.
+func (s *RecommendationService) cachedRecommendation(ctx context.Context, userID string, budget float64) (*models.Recommendation, error) {
+	decisions, err := s.decisionRepo.ListByUser(ctx, userID, 1)
+	if err != nil || len(decisions) == 0 {
+		return nil, fmt.Errorf("no cached decision available")
+	}
+	d := decisions[0]
+	if len(d.Allocations) == 0 {
+		return nil, fmt.Errorf("cached decision has no allocations")
+	}
+
+	// Rescale amounts to the requested budget while preserving percentages.
+	scale := budget / d.TotalAmount
+	allocs := make([]models.Allocation, len(d.Allocations))
+	for i, a := range d.Allocations {
+		allocs[i] = a
+		allocs[i].Amount = a.Amount * scale
+	}
+
+	return &models.Recommendation{
+		TotalBudget: budget,
+		Allocations: allocs,
+		Summary:     d.Summary,
+		RiskLevel:   d.RiskLevel,
+		FromCache:   true,
 	}, nil
 }
 

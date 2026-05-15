@@ -27,14 +27,24 @@ type ProfileRepository interface {
 	// RemovePlaidConnection removes the connection matching itemID from the user's document.
 	RemovePlaidConnection(ctx context.Context, userID string, itemID string) error
 
-	// GetBrokerageConnection returns the decrypted brokerage credentials for the user.
-	// Returns nil, nil when no connection exists.
-	GetBrokerageConnection(ctx context.Context, userID string) (*models.BrokerageConnection, error)
+	// GetBrokerageConnections returns all brokerage connections for the user with decrypted credentials.
+	// Falls back to legacy brokerage_connection field for users with no multi-connection array,
+	// synthesizing a single entry with ID="default" and AssetCategories=["default"].
+	// Returns nil, nil when no connection exists anywhere.
+	GetBrokerageConnections(ctx context.Context, userID string) ([]models.BrokerageConnection, error)
 
-	// SaveBrokerageConnection stores encrypted Alpaca credentials on the user's document.
-	// A second call overwrites the previous connection.
-	SaveBrokerageConnection(ctx context.Context, userID string, conn models.BrokerageConnection) error
+	// UpsertBrokerageConnection adds or updates a connection identified by conn.ID.
+	// Encrypts credentials before writing. If no entry with matching ID exists, appends a new one.
+	UpsertBrokerageConnection(ctx context.Context, userID string, conn models.BrokerageConnection) error
 
-	// ClearBrokerageConnection removes brokerage credentials from the user's document.
-	ClearBrokerageConnection(ctx context.Context, userID string) error
+	// RemoveBrokerageConnection removes the connection with the given ID from brokerage_connections.
+	RemoveBrokerageConnection(ctx context.Context, userID string, connectionID string) error
+
+	// SaveLegacySingleBrokerageConnection stores encrypted Alpaca credentials using the old
+	// single-connection field. Used only by the legacy POST /brokerage/connect endpoint.
+	SaveLegacySingleBrokerageConnection(ctx context.Context, userID string, conn models.BrokerageConnection) error
+
+	// ClearLegacySingleBrokerageConnection removes the legacy brokerage_connection field.
+	// Used only by the legacy DELETE /brokerage/connect endpoint.
+	ClearLegacySingleBrokerageConnection(ctx context.Context, userID string) error
 }

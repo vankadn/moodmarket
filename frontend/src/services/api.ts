@@ -10,7 +10,12 @@ export interface PlaidConnectionSummary {
   item_id: string;
 }
 
+export type AssetCategory = "equity" | "bond" | "default";
+
 export interface BrokerageStatus {
+  id: string;
+  name?: string;
+  asset_categories?: AssetCategory[];
   connected: boolean;
   base_url?: string;
   connected_at?: string;
@@ -29,7 +34,7 @@ export interface UserProfile {
   investment_goal: InvestmentGoal;
   has_emergency_fund: boolean;
   include_cash_context: boolean;
-  brokerage?: BrokerageStatus;
+  brokerages?: BrokerageStatus[];
   connected_accounts?: PlaidConnectionSummary[];
 }
 
@@ -62,6 +67,7 @@ export interface Recommendation {
   allocations: Allocation[];
   summary: string;
   risk_level: "low" | "medium" | "high";
+  from_cache?: boolean;
 }
 
 // tokenFetcher is the pluggable source of the bearer token.
@@ -105,6 +111,8 @@ export interface TradeReceipt {
   filled_price: number;
   status: string;
   timestamp: string;
+  brokerage_id?: string;
+  brokerage_name?: string;
 }
 
 export interface InvestRequest {
@@ -112,6 +120,7 @@ export interface InvestRequest {
   total_amount: number;
   risk_level: string;
   summary: string;
+  per_allocation_brokerage?: Record<string, string>;
 }
 
 export interface InvestResponse {
@@ -223,6 +232,36 @@ export async function getCashContext(): Promise<CashContext> {
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
+}
+
+export interface AddBrokerageConnectionRequest {
+  id?: string;
+  name: string;
+  asset_categories: AssetCategory[];
+  api_key: string;
+  secret_key: string;
+  base_url: string;
+}
+
+export async function addBrokerageConnection(req: AddBrokerageConnectionRequest): Promise<BrokerageStatus> {
+  const res = await fetch(`${API_BASE}/brokerage/connections`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `API error: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function removeBrokerageConnection(connectionID: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/brokerage/connections/${connectionID}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
 
 export async function connectBrokerage(apiKey: string, secretKey: string, baseURL: string): Promise<BrokerageStatus> {

@@ -38,22 +38,37 @@ const (
 	GoalShortTermSavings InvestmentGoal = "short_term_savings"
 )
 
+// AssetCategory classifies which asset types a brokerage connection handles for routing.
+type AssetCategory string
+
+const (
+	AssetCategoryEquity  AssetCategory = "equity"
+	AssetCategoryBond    AssetCategory = "bond"
+	AssetCategoryDefault AssetCategory = "default" // catches any allocation not matched by a specific category
+)
+
 // BrokerageConnection holds Alpaca credentials for a user's connected brokerage account.
 // APIKey and SecretKey are stored AES-256-GCM encrypted in MongoDB; the infrastructure
 // layer decrypts them before returning to callers — never stored or logged in plaintext.
 type BrokerageConnection struct {
-	APIKey      string    // encrypted at rest; decrypted by infrastructure layer before use
-	SecretKey   string    // encrypted at rest; decrypted by infrastructure layer before use
-	BaseURL     string
-	Connected   bool
-	ConnectedAt time.Time
+	ID              string          // stable identifier; "default" for legacy single-connection users
+	Name            string          // display label, e.g. "Bonds Account"
+	AssetCategories []AssetCategory // which asset types this connection handles
+	APIKey          string          // encrypted at rest; decrypted by infrastructure layer before use
+	SecretKey       string          // encrypted at rest; decrypted by infrastructure layer before use
+	BaseURL         string
+	Connected       bool
+	ConnectedAt     time.Time
 }
 
 // BrokerageStatus is the safe subset returned to API callers — credentials are never included.
 type BrokerageStatus struct {
-	Connected   bool   `json:"connected"`
-	BaseURL     string `json:"base_url,omitempty"`
-	ConnectedAt string `json:"connected_at,omitempty"`
+	ID              string          `json:"id"`
+	Name            string          `json:"name,omitempty"`
+	AssetCategories []AssetCategory `json:"asset_categories,omitempty"`
+	Connected       bool            `json:"connected"`
+	BaseURL         string          `json:"base_url,omitempty"`
+	ConnectedAt     string          `json:"connected_at,omitempty"`
 }
 
 type UserProfile struct {
@@ -68,7 +83,7 @@ type UserProfile struct {
 	RiskTolerance             RiskTolerance            `json:"risk_tolerance"`
 	InvestmentGoal            InvestmentGoal           `json:"investment_goal"`
 	HasEmergencyFund          bool                     `json:"has_emergency_fund"`
-	IncludeCashContext        bool                     `json:"include_cash_context"`          // user opted in to cash-context signal in Claude prompt
-	Brokerage                 *BrokerageStatus         `json:"brokerage,omitempty"`           // populated by repository, never written back on save
-	ConnectedAccounts         []PlaidConnectionSummary `json:"connected_accounts,omitempty"`  // institution + item_id only; populated by repository, never written back on save
+	IncludeCashContext        bool                     `json:"include_cash_context"`         // user opted in to cash-context signal in Claude prompt
+	Brokerages                []BrokerageStatus        `json:"brokerages,omitempty"`         // populated by repository, never written back on save
+	ConnectedAccounts         []PlaidConnectionSummary `json:"connected_accounts,omitempty"` // institution + item_id only; populated by repository, never written back on save
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ConfirmScreen } from "../components/ConfirmScreen";
 import { ReceiptScreen } from "../components/ReceiptScreen";
 import { CashContextCard } from "../components/CashContextCard";
-import { getRecommendation, invest, getAutoInvestConfig, getCashContext, AutoInvestConfig, CashContext, Recommendation, TradeReceipt, UserProfile } from "../services/api";
+import { getRecommendation, invest, getAutoInvestConfig, getCashContext, AutoInvestConfig, BrokerageStatus, CashContext, Recommendation, TradeReceipt, UserProfile } from "../services/api";
 
 interface Props {
   profile: UserProfile;
@@ -30,8 +30,12 @@ const horizonLabel: Record<string, string> = {
 
 type HomeState = "idle" | "confirming" | "investing" | "receipt";
 
+const brokerageIsConnected = (brokerages: BrokerageStatus[] | undefined) =>
+  (brokerages?.length ?? 0) > 0;
+
 export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onActivity, onBrokerage, onDocuments }: Props) {
   const [amount, setAmount] = useState<number>(100);
+  const [perAllocBrokerage, setPerAllocBrokerage] = useState<Record<string, string>>({});
   const [autoInvestConfig, setAutoInvestConfig] = useState<AutoInvestConfig | null>(null);
   const [cashCtx, setCashCtx] = useState<CashContext | null>(null);
   const [homeState, setHomeState] = useState<HomeState>("idle");
@@ -40,6 +44,9 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
   const [decisionId, setDecisionId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const connected = brokerageIsConnected(profile.brokerages);
+  const brokerages = profile.brokerages ?? [];
 
   useEffect(() => {
     getAutoInvestConfig().then(setAutoInvestConfig).catch(() => {});
@@ -59,6 +66,7 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
     try {
       const result = await getRecommendation({ base_budget: amount, extra_money: 0 });
       setRec(result);
+      setPerAllocBrokerage({});
       setHomeState("confirming");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong");
@@ -72,11 +80,13 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
     setHomeState("investing");
     setError(null);
     try {
+      const overrides = Object.keys(perAllocBrokerage).length > 0 ? perAllocBrokerage : undefined;
       const response = await invest({
         allocations: rec.allocations,
         total_amount: rec.total_budget,
         risk_level: rec.risk_level,
         summary: rec.summary,
+        per_allocation_brokerage: overrides,
       });
       setReceipts(response.receipts);
       setDecisionId(response.decision_id);
@@ -89,6 +99,7 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
 
   function handleCancel() {
     setRec(null);
+    setPerAllocBrokerage({});
     setHomeState("idle");
     setError(null);
   }
@@ -97,6 +108,7 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
     setRec(null);
     setReceipts([]);
     setDecisionId("");
+    setPerAllocBrokerage({});
     setHomeState("idle");
     setError(null);
   }
@@ -105,6 +117,10 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
     const today = new Date().toISOString().slice(0, 10);
     localStorage.setItem("cash_card_shown_date", today);
     setCashCtx(null);
+  }
+
+  function handlePerAllocChange(ticker: string, connID: string) {
+    setPerAllocBrokerage(prev => ({ ...prev, [ticker]: connID }));
   }
 
   const profileSummary = [
@@ -137,7 +153,7 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
           {onBrokerage && (
             <button
               onClick={onBrokerage}
-              style={{ background: "none", border: "none", color: profile.brokerage?.connected ? "#999" : "#c0392b", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
+              style={{ background: "none", border: "none", color: connected ? "#999" : "#c0392b", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
             >
               Brokerage
             </button>
@@ -214,7 +230,7 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
             <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
               Today's investment
             </label>
-            {!profile.brokerage?.connected && (
+            {!connected && (
               <div style={{ marginTop: "8px", padding: "10px 12px", background: "#fdf0ee", border: "1px solid #f5c6cb", borderRadius: "8px", fontSize: "13px", color: "#c0392b" }}>
                 Connect a brokerage account to invest.{" "}
                 {onBrokerage && (
@@ -236,13 +252,13 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
               </div>
               <button
                 onClick={handleGetRecommendation}
-                disabled={loading || !profile.brokerage?.connected}
+                disabled={loading || !connected}
                 style={{
                   flex: 1, padding: "8px 16px",
-                  background: (loading || !profile.brokerage?.connected) ? "#ccc" : "#1a1a1a",
+                  background: (loading || !connected) ? "#ccc" : "#1a1a1a",
                   color: "white", border: "none", borderRadius: "8px",
                   fontSize: "14px", fontWeight: 500,
-                  cursor: (loading || !profile.brokerage?.connected) ? "not-allowed" : "pointer",
+                  cursor: (loading || !connected) ? "not-allowed" : "pointer",
                 }}
               >
                 {loading ? "Generating…" : "Get recommendation"}
@@ -261,6 +277,9 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
       {homeState === "confirming" && rec && (
         <ConfirmScreen
           rec={rec}
+          brokerages={brokerages}
+          perAllocBrokerage={perAllocBrokerage}
+          onPerAllocChange={handlePerAllocChange}
           onConfirm={handleConfirmInvest}
           onCancel={handleCancel}
           loading={false}
@@ -270,6 +289,9 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
       {homeState === "investing" && rec && (
         <ConfirmScreen
           rec={rec}
+          brokerages={brokerages}
+          perAllocBrokerage={perAllocBrokerage}
+          onPerAllocChange={handlePerAllocChange}
           onConfirm={handleConfirmInvest}
           onCancel={handleCancel}
           loading={true}

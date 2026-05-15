@@ -58,8 +58,10 @@ components:
         include_cash_context:
           type: boolean
           description: Opt-in — share Plaid spending signals with Claude advisor
-        brokerage:
-          $ref: '#/components/schemas/BrokerageStatus'
+        brokerages:
+          type: array
+          items:
+            $ref: '#/components/schemas/BrokerageStatus'
         connected_accounts:
           type: array
           items:
@@ -68,6 +70,18 @@ components:
     BrokerageStatus:
       type: object
       properties:
+        id:
+          type: string
+          example: a1b2c3d4e5f6a7b8
+        name:
+          type: string
+          example: Bonds Account
+        asset_categories:
+          type: array
+          items:
+            type: string
+            enum: [equity, bond, default]
+          example: [bond]
         connected:
           type: boolean
         base_url:
@@ -76,6 +90,32 @@ components:
         connected_at:
           type: string
           format: date-time
+
+    AddBrokerageConnectionRequest:
+      type: object
+      required: [name, asset_categories, api_key, secret_key]
+      properties:
+        id:
+          type: string
+          description: Stable ID — omit to auto-generate
+        name:
+          type: string
+          example: Bonds Account
+        asset_categories:
+          type: array
+          items:
+            type: string
+            enum: [equity, bond, default]
+          example: [bond]
+        api_key:
+          type: string
+          example: PKxxxxxxxxxxxxxxxxxxxxxxxx
+        secret_key:
+          type: string
+          example: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+        base_url:
+          type: string
+          example: https://paper-api.alpaca.markets
 
     PlaidConnectionSummary:
       type: object
@@ -141,6 +181,12 @@ components:
         timestamp:
           type: string
           format: date-time
+        brokerage_id:
+          type: string
+          description: ID of the connection that executed this order (omitted if unknown)
+        brokerage_name:
+          type: string
+          description: Display name of the brokerage that executed this order
 
     AutoInvestConfig:
       type: object
@@ -437,6 +483,11 @@ paths:
                   type: string
                 summary:
                   type: string
+                per_allocation_brokerage:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Optional map of ticker → connectionID; omit or leave empty to auto-route by asset category
       responses:
         '200':
           description: Trade receipts
@@ -572,6 +623,42 @@ paths:
                   connected:
                     type: boolean
                     example: false
+
+  /brokerage/connections:
+    post:
+      summary: Add brokerage connection
+      description: Adds or updates a named brokerage connection with asset-category routing rules.
+      tags: [Brokerage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddBrokerageConnectionRequest'
+      responses:
+        '200':
+          description: Connection added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrokerageStatus'
+        '400':
+          description: Validation error
+
+  /brokerage/connections/{id}:
+    delete:
+      summary: Remove brokerage connection
+      tags: [Brokerage]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Connection ID from GET /users/profile brokerages array
+      responses:
+        '204':
+          description: Removed
 
   /documents/upload:
     post:
