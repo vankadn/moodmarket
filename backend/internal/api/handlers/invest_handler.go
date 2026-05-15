@@ -20,12 +20,14 @@ type investUseCase interface {
 }
 
 type InvestHandler struct {
-	service  investUseCase
-	identity ports.IdentityProvider
+	service       investUseCase
+	identity      ports.IdentityProvider
+	profileRepo   ports.ProfileRepository
+	notifications ports.NotificationProvider
 }
 
-func NewInvestHandler(svc investUseCase, identity ports.IdentityProvider) *InvestHandler {
-	return &InvestHandler{service: svc, identity: identity}
+func NewInvestHandler(svc investUseCase, identity ports.IdentityProvider, profileRepo ports.ProfileRepository, notifications ports.NotificationProvider) *InvestHandler {
+	return &InvestHandler{service: svc, identity: identity, profileRepo: profileRepo, notifications: notifications}
 }
 
 func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +77,10 @@ func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(receipts) > 0 {
+		go h.sendSummary(userID, receipts, body.TotalAmount)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(struct {
 		Receipts   []models.TradeReceipt `json:"receipts"`
@@ -83,4 +89,27 @@ func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Receipts:   receipts,
 		DecisionID: decisionID,
 	})
+}
+
+func (h *InvestHandler) sendSummary(userID string, receipts []models.TradeReceipt, totalAmount float64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	target := ports.NotificationTarget{UserID: userID}
+	if profile, err := h.profileRepo.GetByUserID(ctx, userID); err == nil {
+		target.Email = profile.NotificationEmail
+		target.Phone = profile.Phone
+	}
+
+	var totalFilled float64
+	for _, r := range receipts {
+		totalFilled += r.FilledAmount
+	}
+	if totalFilled == 0 {
+		totalFilled = totalAmount // Alpaca paper orders have nil FilledNotional until async fill
+	}
+
+	if err := h.notifications.SendInvestmentSummary(ctx, target, receipts, totalFilled); err != nil {
+		log.Printf("invest handler: notification failed for user=%s: %v", userID, err)
+	}
 }

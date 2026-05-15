@@ -58,6 +58,12 @@ components:
         include_cash_context:
           type: boolean
           description: Opt-in — share Plaid spending signals with Claude advisor
+        notification_email:
+          type: string
+          description: Optional email for post-investment notifications; empty = no email
+        phone:
+          type: string
+          description: Optional E.164 phone number for SMS notifications; empty = no SMS
         brokerages:
           type: array
           items:
@@ -66,6 +72,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PlaidConnectionSummary'
+
+    NotificationSettings:
+      type: object
+      properties:
+        notification_email:
+          type: string
+          example: jane@example.com
+        phone:
+          type: string
+          example: "+15550001234"
 
     BrokerageStatus:
       type: object
@@ -399,6 +415,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AutoInvestConfig'
+
+  /users/notifications:
+    get:
+      summary: Get notification settings
+      tags: [Users]
+      responses:
+        '200':
+          description: Current notification settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettings'
+    patch:
+      summary: Update notification settings
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationSettings'
+            example:
+              notification_email: jane@example.com
+              phone: "+15550001234"
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettings'
 
   /users/cash-context:
     get:

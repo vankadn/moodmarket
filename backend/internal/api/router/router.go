@@ -21,6 +21,7 @@ type Handlers struct {
 	Activity              http.Handler // wrap with http.HandlerFunc if needed
 	Brokerage             http.Handler
 	BrokerageConnections  http.Handler
+	Notifications         http.Handler
 	Portfolio             http.Handler
 	Order                 http.Handler // wrap with http.HandlerFunc if needed
 	Document              http.Handler
@@ -43,6 +44,7 @@ func Build(h Handlers, authProvider ports.AuthProvider) http.Handler {
 	protected.Handle(PlaidAccountsURI, h.Plaid)
 	protected.Handle(AutoInvestConfigURI, h.AutoInvest)
 	protected.Handle(CashContextURI, h.CashContext)
+	protected.Handle(NotificationsURI, h.Notifications)
 	protected.Handle(ActivityURI, h.Activity)
 	protected.Handle(BrokerageConnectURI, h.Brokerage)
 	protected.Handle(BrokerageConnectionsURI, h.BrokerageConnections)

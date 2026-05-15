@@ -725,6 +725,7 @@ Features defined but not yet scheduled. Reviewed after each phase — promoted w
 | Portfolio P&L dashboard | Gains per stock, total return — Phase 11 |
 | Tax optimization | Tax-loss harvesting, asset location strategy |
 | Rebalancing alerts | — |
+| SMS notifications via Twilio | `Phone` field already stored on UserProfile and populated into `NotificationTarget`. Needs: `infrastructure/notifications/twilio.go` implementing `NotificationProvider`, factory wired on `NOTIFICATION_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` env vars. Consider a multi-channel provider that wraps both Resend + Twilio so email and SMS fire together. |
 | Atlas IP allowlist | Replace 0.0.0.0/0 with Railway static IP when on Pro plan |
 | LLC formation | Required before signing Alpaca Broker API or SnapTrade commercial agreements |
 

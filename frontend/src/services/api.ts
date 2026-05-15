@@ -34,6 +34,8 @@ export interface UserProfile {
   investment_goal: InvestmentGoal;
   has_emergency_fund: boolean;
   include_cash_context: boolean;
+  notification_email?: string;
+  phone?: string;
   brokerages?: BrokerageStatus[];
   connected_accounts?: PlaidConnectionSummary[];
 }
@@ -231,6 +233,29 @@ export interface CashContext {
 export async function getCashContext(): Promise<CashContext> {
   const res = await fetch(`${API_BASE}/users/cash-context`, {
     headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export interface NotificationSettings {
+  notification_email: string;
+  phone: string;
+}
+
+export async function getNotificationSettings(): Promise<NotificationSettings> {
+  const res = await fetch(`${API_BASE}/users/notifications`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function updateNotificationSettings(settings: NotificationSettings): Promise<NotificationSettings> {
+  const res = await fetch(`${API_BASE}/users/notifications`, {
+    method: "PATCH",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();

@@ -11,6 +11,7 @@ import { Activity } from "./pages/Activity";
 import { Portfolio } from "./pages/Portfolio";
 import { BrokerageConnect } from "./components/BrokerageConnect";
 import { Documents } from "./pages/Documents";
+import { NotificationSettingsPage } from "./pages/NotificationSettingsPage";
 import { getProfile, UserProfile } from "./services/api";
 
 export type AppState =
@@ -19,6 +20,7 @@ export type AppState =
   | "home"
   | "profile"
   | "auto-invest-settings"
+  | "notifications"
   | "activity"
   | "portfolio"
   | "brokerage"
@@ -79,6 +81,15 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
     return <AutoInvestSettings onBack={() => setState("home")} />;
   }
 
+  if (state === "notifications") {
+    return (
+      <NotificationSettingsPage
+        onBack={() => setState("home")}
+        onSaved={() => refreshAndReturn("home")}
+      />
+    );
+  }
+
   if (state === "activity") {
     return <Activity onBack={() => setState("home")} />;
   }
@@ -107,6 +118,7 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
       onSignOut={signOut}
       onManageAccounts={() => setState("profile")}
       onAutoInvestSettings={() => setState("auto-invest-settings")}
+      onNotificationSettings={() => setState("notifications")}
       onActivity={() => setState("activity")}
       onPortfolio={() => setState("portfolio")}
       onBrokerage={() => setState("brokerage")}

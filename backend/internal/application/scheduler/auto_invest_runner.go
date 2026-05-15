@@ -17,6 +17,7 @@ import (
 func runForUser(
 	ctx context.Context,
 	config models.AutoInvestConfig,
+	target ports.NotificationTarget,
 	recommendSvc *services.RecommendationService,
 	investSvc *services.InvestmentService,
 	notifications ports.NotificationProvider,
@@ -27,7 +28,7 @@ func runForUser(
 
 	rec, err := recommendSvc.GetDailyRecommendation(ctx, config.UserID, req)
 	if err != nil {
-		_ = notifications.SendInvestmentFailure(ctx, config.UserID, fmt.Sprintf("recommendation failed: %v", err))
+		_ = notifications.SendInvestmentFailure(ctx, target, fmt.Sprintf("recommendation failed: %v", err))
 		return 0, fmt.Errorf("recommendation: %w", err)
 	}
 
@@ -37,16 +38,24 @@ func runForUser(
 			log.Printf("[scheduler] user=%s skipping — no brokerage connected", config.UserID)
 			return 0, nil
 		}
-		_ = notifications.SendInvestmentFailure(ctx, config.UserID, fmt.Sprintf("execution failed: %v", err))
+		_ = notifications.SendInvestmentFailure(ctx, target, fmt.Sprintf("execution failed: %v", err))
 		return 0, fmt.Errorf("execution: %w", err)
+	}
+
+	if len(receipts) == 0 {
+		log.Printf("[scheduler] user=%s pipeline done — no positions placed, skipping notification", config.UserID)
+		return 0, nil
 	}
 
 	var totalFilled float64
 	for _, r := range receipts {
 		totalFilled += r.FilledAmount
 	}
+	if totalFilled == 0 {
+		totalFilled = config.Amount // Alpaca paper orders have nil FilledNotional until async fill
+	}
 
-	if err := notifications.SendInvestmentSummary(ctx, config.UserID, receipts, totalFilled); err != nil {
+	if err := notifications.SendInvestmentSummary(ctx, target, receipts, totalFilled); err != nil {
 		log.Printf("[scheduler] user=%s notification failed: %v", config.UserID, err)
 	}
 

@@ -14,6 +14,7 @@ const (
 	ProfileURI          = "/users/profile"
 	AutoInvestConfigURI = "/users/auto-invest/config"
 	CashContextURI      = "/users/cash-context"
+	NotificationsURI    = "/users/notifications"
 	ActivityURI         = "/users/activity"
 
 	PlaidLinkTokenURI = "/plaid/link-token"

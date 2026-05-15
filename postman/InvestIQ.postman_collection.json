@@ -111,6 +111,26 @@
           }
         },
         {
+          "name": "Get notification settings",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/users/notifications", "host": ["{{baseUrl}}"], "path": ["users", "notifications"] }
+          }
+        },
+        {
+          "name": "Update notification settings",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/users/notifications", "host": ["{{baseUrl}}"], "path": ["users", "notifications"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notification_email\": \"jane@example.com\",\n  \"phone\": \"+15550001234\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
           "name": "Get cash context",
           "request": {
             "method": "GET",

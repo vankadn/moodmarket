@@ -127,7 +127,7 @@ func main() {
 	documentSvc := services.NewDocumentService(documentExtractor, documentRepo)
 	idp := middleware.ContextIdentityProvider{}
 
-	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar)
+	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar)
 	go autoInvestScheduler.Start(ctx)
 
 	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)
@@ -138,7 +138,7 @@ func main() {
 	h := router.Handlers{
 		DevLogin:             handlers.NewDevLoginHandler(),
 		Recommend:            handlers.NewRecommendHandler(recommendSvc, idp),
-		Invest:               handlers.NewInvestHandler(investSvc, idp),
+		Invest:               handlers.NewInvestHandler(investSvc, idp, profileRepo, notificationProvider),
 		Profile:              handlers.NewProfileHandler(profileRepo, idp),
 		Plaid:                plaidHandler,
 		AutoInvest:           handlers.NewAutoInvestConfigHandler(autoInvestRepo, idp),
@@ -146,6 +146,7 @@ func main() {
 		Activity:             http.HandlerFunc(activityHandler.GetActivity),
 		Brokerage:            handlers.NewBrokerageHandler(profileRepo, idp),
 		BrokerageConnections: handlers.NewBrokerageConnectionsHandler(profileRepo, idp),
+		Notifications:        handlers.NewNotificationSettingsHandler(profileRepo, idp),
 		Portfolio:            handlers.NewPortfolioHandler(profileRepo, brokerageFactory, idp),
 		Order:                http.HandlerFunc(orderHandler.GetOrder),
 		Document:             documentHandler,

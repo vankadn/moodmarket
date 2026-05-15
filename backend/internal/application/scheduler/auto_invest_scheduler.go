@@ -17,6 +17,7 @@ import (
 // every user whose per-user interval has elapsed since their last run.
 type AutoInvestScheduler struct {
 	autoInvestRepo ports.AutoInvestRepository
+	profileRepo    ports.ProfileRepository
 	recommendSvc   *services.RecommendationService
 	investSvc      *services.InvestmentService
 	schedulerRepo  ports.SchedulerRepository
@@ -26,6 +27,7 @@ type AutoInvestScheduler struct {
 
 func NewAutoInvestScheduler(
 	autoInvestRepo ports.AutoInvestRepository,
+	profileRepo ports.ProfileRepository,
 	recommendSvc *services.RecommendationService,
 	investSvc *services.InvestmentService,
 	schedulerRepo ports.SchedulerRepository,
@@ -34,6 +36,7 @@ func NewAutoInvestScheduler(
 ) *AutoInvestScheduler {
 	return &AutoInvestScheduler{
 		autoInvestRepo: autoInvestRepo,
+		profileRepo:    profileRepo,
 		recommendSvc:   recommendSvc,
 		investSvc:      investSvc,
 		schedulerRepo:  schedulerRepo,
@@ -115,10 +118,18 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 	)
 
 	for _, cfg := range due {
+		target := ports.NotificationTarget{UserID: cfg.UserID}
+		if profile, err := s.profileRepo.GetByUserID(ctx, cfg.UserID); err == nil {
+			target.Email = profile.NotificationEmail
+			target.Phone = profile.Phone
+		} else {
+			log.Printf("[scheduler] cycle %s — could not load profile for user=%s (notifications degraded): %v", runID, cfg.UserID, err)
+		}
+
 		wg.Add(1)
-		go func(c models.AutoInvestConfig) {
+		go func(c models.AutoInvestConfig, t ports.NotificationTarget) {
 			defer wg.Done()
-			invested, err := runForUser(ctx, c, s.recommendSvc, s.investSvc, s.notifications)
+			invested, err := runForUser(ctx, c, t, s.recommendSvc, s.investSvc, s.notifications)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -129,7 +140,7 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 					log.Printf("[scheduler] cycle %s — failed to stamp last_run_at for user=%s: %v", runID, c.UserID, stampErr)
 				}
 			}
-		}(cfg)
+		}(cfg, target)
 	}
 	wg.Wait()
 

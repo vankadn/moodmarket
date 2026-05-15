@@ -6,16 +6,22 @@ import (
 	"log"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
+	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
 type logNotificationProvider struct{}
 
-func (l *logNotificationProvider) SendInvestmentSummary(_ context.Context, userID string, receipts []models.TradeReceipt, _ float64) error {
-	log.Printf("[notify] user=%s auto-invest complete: %d positions placed", userID, len(receipts))
+func (l *logNotificationProvider) SendInvestmentSummary(_ context.Context, to ports.NotificationTarget, receipts []models.TradeReceipt, total float64) error {
+	log.Printf("[notify] user=%s investment complete: %d positions, $%.2f", to.UserID, len(receipts), total)
 	return nil
 }
 
-func (l *logNotificationProvider) SendInvestmentFailure(_ context.Context, userID string, reason string) error {
-	log.Printf("[notify] user=%s auto-invest failed: %s", userID, reason)
+func (l *logNotificationProvider) SendInvestmentFailure(_ context.Context, to ports.NotificationTarget, reason string) error {
+	log.Printf("[notify] user=%s investment failed: %s", to.UserID, reason)
+	return nil
+}
+
+func (l *logNotificationProvider) SendMarketClosed(_ context.Context, to ports.NotificationTarget, date string) error {
+	log.Printf("[notify] user=%s market closed: %s", to.UserID, date)
 	return nil
 }

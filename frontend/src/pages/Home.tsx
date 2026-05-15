@@ -9,6 +9,7 @@ interface Props {
   onSignOut?: () => void;
   onManageAccounts?: () => void;
   onAutoInvestSettings?: () => void;
+  onNotificationSettings?: () => void;
   onActivity?: () => void;
   onBrokerage?: () => void;
   onDocuments?: () => void;
@@ -34,7 +35,7 @@ type HomeState = "idle" | "confirming" | "investing" | "receipt";
 const brokerageIsConnected = (brokerages: BrokerageStatus[] | undefined) =>
   (brokerages?.length ?? 0) > 0;
 
-export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onActivity, onBrokerage, onDocuments, onPortfolio }: Props) {
+export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onNotificationSettings, onActivity, onBrokerage, onDocuments, onPortfolio }: Props) {
   const [amount, setAmount] = useState<number>(100);
   const [perAllocBrokerage, setPerAllocBrokerage] = useState<Record<string, string>>({});
   const [autoInvestConfig, setAutoInvestConfig] = useState<AutoInvestConfig | null>(null);
@@ -217,13 +218,31 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
             style={{
               width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
               padding: "12px 14px", background: "#f8f8f8", borderRadius: "10px",
-              border: "none", cursor: "pointer", marginBottom: "1.5rem", textAlign: "left",
+              border: "none", cursor: "pointer", marginBottom: "8px", textAlign: "left",
             }}
           >
             <div>
               <div style={{ fontSize: "13px", fontWeight: 500, color: "#222" }}>Auto-invest</div>
               <div style={{ fontSize: "11px", color: autoInvestConfig?.enabled ? "#27ae60" : "#999", marginTop: "2px" }}>
                 {autoInvestLabel}
+              </div>
+            </div>
+            <span style={{ color: "#bbb", fontSize: "16px" }}>›</span>
+          </button>
+
+          {/* Notifications settings row */}
+          <button
+            onClick={onNotificationSettings}
+            style={{
+              width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "12px 14px", background: "#f8f8f8", borderRadius: "10px",
+              border: "none", cursor: "pointer", marginBottom: "1.5rem", textAlign: "left",
+            }}
+          >
+            <div>
+              <div style={{ fontSize: "13px", fontWeight: 500, color: "#222" }}>Notifications</div>
+              <div style={{ fontSize: "11px", color: "#999", marginTop: "2px" }}>
+                {profile.notification_email ? profile.notification_email : "Not configured"}
               </div>
             </div>
             <span style={{ color: "#bbb", fontSize: "16px" }}>›</span>

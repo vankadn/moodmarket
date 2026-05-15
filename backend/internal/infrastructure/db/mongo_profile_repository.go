@@ -52,6 +52,8 @@ type profileDocument struct {
 	InvestmentGoal            string                   `bson:"investment_goal"`
 	HasEmergencyFund          bool                     `bson:"has_emergency_fund"`
 	IncludeCashContext        bool                     `bson:"include_cash_context"`
+	NotificationEmail         string                   `bson:"notification_email,omitempty"`
+	Phone                     string                   `bson:"phone,omitempty"`
 	PlaidConnections          []plaidConnectionDoc     `bson:"plaid_connections,omitempty"`
 	BrokerageConn             *brokerageConnectionDoc  `bson:"brokerage_connection,omitempty"`  // legacy single-connection field
 	BrokerageConns            []brokerageConnectionDoc `bson:"brokerage_connections,omitempty"` // multi-connection array
@@ -360,6 +362,8 @@ func toProfile(doc *profileDocument) *models.UserProfile {
 		InvestmentGoal:            models.InvestmentGoal(doc.InvestmentGoal),
 		HasEmergencyFund:          doc.HasEmergencyFund,
 		IncludeCashContext:        doc.IncludeCashContext,
+		NotificationEmail:         doc.NotificationEmail,
+		Phone:                     doc.Phone,
 	}
 
 	// Populate ConnectedAccounts with institution + item_id only; access token is never exposed.
@@ -418,6 +422,8 @@ func fromProfile(p *models.UserProfile) *profileDocument {
 		InvestmentGoal:            string(p.InvestmentGoal),
 		HasEmergencyFund:          p.HasEmergencyFund,
 		IncludeCashContext:        p.IncludeCashContext,
+		NotificationEmail:         p.NotificationEmail,
+		Phone:                     p.Phone,
 	}
 }
 

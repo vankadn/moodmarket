@@ -7,9 +7,19 @@ import (
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
 )
 
-// NotificationProvider sends user-facing notifications after autonomous investment runs.
-// The dev implementation logs to stdout; swap for FCM/APNs before go-live.
+// NotificationTarget holds contact details for one delivery.
+// Empty Email or Phone means that channel is skipped — no error.
+type NotificationTarget struct {
+	UserID string
+	Email  string
+	Phone  string
+}
+
+// NotificationProvider sends user-facing notifications for investment events.
+// Implementations must be non-fatal: channel failures are logged and swallowed,
+// never propagated to the investment pipeline.
 type NotificationProvider interface {
-	SendInvestmentSummary(ctx context.Context, userID string, receipts []models.TradeReceipt, totalInvested float64) error
-	SendInvestmentFailure(ctx context.Context, userID string, reason string) error
+	SendInvestmentSummary(ctx context.Context, to NotificationTarget, receipts []models.TradeReceipt, totalInvested float64) error
+	SendInvestmentFailure(ctx context.Context, to NotificationTarget, reason string) error
+	SendMarketClosed(ctx context.Context, to NotificationTarget, date string) error
 }
