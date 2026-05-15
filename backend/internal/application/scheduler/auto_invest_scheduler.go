@@ -21,6 +21,7 @@ type AutoInvestScheduler struct {
 	investSvc      *services.InvestmentService
 	schedulerRepo  ports.SchedulerRepository
 	notifications  ports.NotificationProvider
+	calendar       ports.MarketCalendar
 }
 
 func NewAutoInvestScheduler(
@@ -29,6 +30,7 @@ func NewAutoInvestScheduler(
 	investSvc *services.InvestmentService,
 	schedulerRepo ports.SchedulerRepository,
 	notifications ports.NotificationProvider,
+	calendar ports.MarketCalendar,
 ) *AutoInvestScheduler {
 	return &AutoInvestScheduler{
 		autoInvestRepo: autoInvestRepo,
@@ -36,6 +38,7 @@ func NewAutoInvestScheduler(
 		investSvc:      investSvc,
 		schedulerRepo:  schedulerRepo,
 		notifications:  notifications,
+		calendar:       calendar,
 	}
 }
 
@@ -73,6 +76,12 @@ func isDue(cfg models.AutoInvestConfig) bool {
 func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 	startedAt := time.Now()
 	runID := fmt.Sprintf("run-%d", startedAt.UnixNano())
+
+	if !s.calendar.IsTradingDay(startedAt) {
+		log.Printf("[scheduler] cycle %s — market closed today (%s), skipping", runID, startedAt.Format("Mon Jan 2"))
+		return
+	}
+
 	log.Printf("[scheduler] cycle %s started", runID)
 
 	configs, err := s.autoInvestRepo.GetAllEnabled(ctx)

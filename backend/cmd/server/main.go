@@ -18,6 +18,7 @@ import (
 	infrabanking "github.com/krishnarajivvns/investiq/internal/infrastructure/banking"
 	inflabrokerage "github.com/krishnarajivvns/investiq/internal/infrastructure/brokerage"
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
+	infracalendar "github.com/krishnarajivvns/investiq/internal/infrastructure/calendar"
 	infraextractor "github.com/krishnarajivvns/investiq/internal/infrastructure/extractor"
 	inframarket "github.com/krishnarajivvns/investiq/internal/infrastructure/market"
 	infranews "github.com/krishnarajivvns/investiq/internal/infrastructure/news"
@@ -60,6 +61,7 @@ func main() {
 		os.Setenv("BROKERAGE_PROVIDER", "mock")
 		os.Setenv("NEWS_PROVIDER", "mock")
 		os.Setenv("DOCUMENT_EXTRACTOR", "mock")
+		os.Setenv("MARKET_CALENDAR", "mock")
 		os.Setenv("DEV_MODE", "true")
 	}
 
@@ -109,6 +111,11 @@ func main() {
 	autoInvestRepo := infradb.NewMongoAutoInvestRepository(database)
 	notificationProvider := infranotifications.NewNotificationProvider()
 
+	marketCalendar, err := infracalendar.NewMarketCalendar()
+	if err != nil {
+		log.Fatalf("market calendar init failed: %v", err)
+	}
+
 	documentExtractor, err := infraextractor.NewDocumentExtractor()
 	if err != nil {
 		log.Fatalf("document extractor init failed: %v", err)
@@ -120,7 +127,7 @@ func main() {
 	documentSvc := services.NewDocumentService(documentExtractor, documentRepo)
 	idp := middleware.ContextIdentityProvider{}
 
-	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider)
+	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar)
 	go autoInvestScheduler.Start(ctx)
 
 	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)

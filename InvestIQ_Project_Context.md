@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-15 (Phase 13b — Complete)
+> Last updated: 2026-05-14 (Phase 15 — Complete)
 
 ---
 
@@ -629,6 +629,33 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 ---
 
+### Phase 14 — Per-User Auto-Invest Frequency (Complete)
+
+- `AutoInvestConfig` gains `IntervalDays int` (0 = daily) and `LastRunAt *time.Time`
+- Scheduler shifts from global env-var clock to hourly tick + per-user `isDue()` check
+- `isDue`: `IntervalDays=0 → 1`; `LastRunAt=nil → run immediately`; backward-compatible — existing docs with missing fields read as zero values and run daily
+- `StampLastRunAt` method added to `AutoInvestRepository` interface + Mongo impl; stamps after each successful user run
+- UI: frequency pill selector (Daily / Every 2 days / Weekly) added to `AutoInvestSettings.tsx`
+- Label "Daily investment amount" → "Investment amount" to match variable frequency
+
+### Phase 15 — Reliability & Maintainability (Complete)
+
+**Phase 15a — Market Holiday Awareness**
+- `domain/ports/market_calendar.go` — `MarketCalendar` interface: `IsTradingDay(t time.Time) bool`
+- `infrastructure/calendar/nyse_calendar.go` — algorithmic NYSE calendar; no external API; all rules: weekends, New Year's (with Sat→Dec 31 edge case), MLK Day, Presidents Day, Good Friday (Easter via Meeus/Jones/Butcher), Memorial Day, Juneteenth (since 2022), Independence Day, Labor Day, Thanksgiving, Christmas; all in America/New_York timezone
+- `infrastructure/calendar/mock_calendar.go` — always returns true; used by MOCK_ALL
+- `infrastructure/calendar/factory.go` — `MARKET_CALENDAR=nyse|mock`
+- Scheduler `runCycle`: early return with log if `!calendar.IsTradingDay(now)`
+- `MOCK_ALL=true` sets `MARKET_CALENDAR=mock`
+
+**Phase 15b — App Shell Unification**
+- `frontend/src/AppShell.tsx` (new) — single source of truth for all 9-state post-auth routing; props: `signOut?: () => void`, `keepPageOnRefresh?: boolean`
+- `keepPageOnRefresh=false` (Dev): account/brokerage change → `setState("loading")` → useEffect → home
+- `keepPageOnRefresh=true` (Clerk): fetch profile inline, stay on current page (no double fetch)
+- `App.tsx` DevApp reduced to ~5 lines: localStorage token check → `<Login />` or `<AppShell />`
+- `ClerkApp.tsx` reduced to ~25 lines: Clerk auth gate + token fetcher wiring → `<AppShell signOut keepPageOnRefresh />`
+- Adding any new page now requires editing only `AppShell.tsx`
+
 ### Phase 12 — Real Broker API Integration (Future)
 
 - Target: Fidelity + Robinhood production APIs
@@ -657,11 +684,11 @@ Features defined but not yet scheduled. Reviewed after each phase — promoted w
 |------|-------|
 | Macro indicators (Fed rate, inflation) | News context covers this for now |
 | Earnings calendar | Adds complexity, marginal value at current scale |
-| Per-user scheduler interval | Deferred post Phase 9 |
+| Per-user scheduler interval | Complete — Phase 14 |
 | Multiple auto-invest configs per user | Deferred |
 | Redis for Plaid balance cache | In-memory is fine until scale demands it |
 | Finnhub news + sentiment scores | Revisit when individual stock recommendations make per-ticker sentiment worth a new dependency; structured sentiment ("2 bearish") is stronger signal than Claude inferring from text, but not worth the extra key at current ETF-only scope |
-| Refactor: single app shell | DevApp.tsx and ClerkApp.tsx duplicate the entire app structure — auth provider is the only thing that should differ. Any new feature added to one must be manually added to the other, which is error-prone (brokerage connect was missing in production for this reason). Refactor to a single AppShell component that receives the auth provider as a prop or reads from config. Auth strategy selected via VITE_AUTH_PROVIDER env var. |
+| Refactor: single app shell | Complete — Phase 15b |
 | Household/family accounts | Phase 13+ |
 | Portfolio P&L dashboard | Gains per stock, total return — Phase 11 |
 | Tax optimization | Tax-loss harvesting, asset location strategy |
@@ -743,6 +770,8 @@ Background data access is legitimate when:
 | MOCK_ALL=true flag | Single env var for zero-external-calls dev setup — no need to set 5 provider vars |
 | Mock advisor | Full end-to-end flow testable without Anthropic key or API calls |
 | AUTO_INVEST_INTERVAL env var | Human-readable duration string; 1m for dev, 24h for prod, no code change |
+| MarketCalendar interface over Alpaca clock API | Alpaca's `/v2/clock` requires per-user credentials — can't be called at the system level before user fan-out. Static algorithmic NYSE calendar in `infrastructure/calendar/` needs no credentials, no network call, and is correct for any year. |
+| AppShell `keepPageOnRefresh` over callback prop | A callback prop for refresh would require AppShell to expose its internal `setState` + `setProfile` externally. A boolean flag keeps state fully internal and cleanly encodes the only behavioral difference between Dev and Clerk modes. |
 | Log provider for notifications | No push infrastructure needed during development |
 | Failure = skip not crash | One user's Plaid/Claude/Alpaca failure must not stop the scheduler for other users |
 | CORS as outermost middleware | No handler can accidentally miss CORS — one place, universal coverage |
@@ -771,7 +800,7 @@ Background data access is legitimate when:
 | Paper trading only | Swap ALPACA_BASE_URL + keys for live |
 | Log provider for notifications | Real push (FCM or APNs) |
 | Per-user interval not supported | Wishlist — user sets own interval from settings |
-| Market holiday awareness | Add NYSE calendar check before scheduler executes |
+| Market holiday awareness | Complete — Phase 15a |
 | Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale (Wishlist) |
 | Encrypted Mongo for Plaid tokens | Vault / AWS Secrets Manager — Phase 9 deployment |
 | One config per user only | Wishlist — multiple schedules with different risk levels |
