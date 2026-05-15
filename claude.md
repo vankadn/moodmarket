@@ -21,6 +21,13 @@ Any import that violates this direction is a hard stop — redesign before proce
 
 Every external dependency (AI, database, auth, market data, brokerage, banking) must be hidden behind an interface in `domain/ports/`. Application layer talks to interfaces only. Swapping any provider requires one new file + one env var change. Nothing else.
 
+## Brokerage providers — hard rules
+
+- All brokerage providers implement `BrokerageProvider` (defined in `domain/ports/`) — no SDK imported into domain, application, or handler layers
+- DEV_MODE and sandbox switching live in factory functions only (`infrastructure/*/factory.go`) — never in handlers or application services
+- **Banned:** `robin_stocks`, any unofficial Robinhood client, any reverse-engineered Fidelity endpoint, any library that scrapes or mimics a broker's private API
+- Approved providers: Alpaca (execution), SnapTrade (portfolio aggregation), Coinbase Advanced Trade (crypto execution)
+
 ## DEV_MODE pattern
 
 `DEV_MODE=true` bypasses auth. That branch lives in exactly one place: `infrastructure/auth/factory.go`. No DEV_MODE checks anywhere else in the codebase.
