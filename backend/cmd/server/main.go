@@ -139,6 +139,7 @@ func main() {
 		Activity:             http.HandlerFunc(activityHandler.GetActivity),
 		Brokerage:            handlers.NewBrokerageHandler(profileRepo, idp),
 		BrokerageConnections: handlers.NewBrokerageConnectionsHandler(profileRepo, idp),
+		Portfolio:            handlers.NewPortfolioHandler(profileRepo, brokerageFactory, idp),
 		Order:                http.HandlerFunc(orderHandler.GetOrder),
 		Document:             documentHandler,
 		Docs:                 handlers.NewDocsHandler(),

@@ -5,9 +5,22 @@ import "time"
 
 // Position is a holding the user currently owns in their brokerage account.
 type Position struct {
-	Ticker      string
-	Quantity    float64
-	MarketValue float64
+	Ticker              string
+	Name                string
+	Quantity            float64
+	MarketValue         float64
+	CostBasis           float64
+	AvgEntryPrice       float64
+	UnrealizedPL        float64
+	UnrealizedPLPercent float64
+}
+
+// HistoryPoint is one data point in a portfolio value time series.
+type HistoryPoint struct {
+	Timestamp     int64   // Unix epoch seconds
+	Equity        float64
+	ProfitLoss    float64
+	ProfitLossPct float64
 }
 
 // TradeOrder is the instruction sent to a brokerage: buy this ticker for this dollar amount.

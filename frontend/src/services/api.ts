@@ -329,6 +329,65 @@ export async function deleteDocument(docID: string): Promise<void> {
   if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
 
+export interface PortfolioPosition {
+  ticker: string;
+  name: string;
+  quantity: number;
+  market_value: number;
+  cost_basis: number;
+  avg_entry_price: number;
+  unrealized_pl: number;
+  unrealized_pl_percent: number;
+}
+
+export interface PortfolioAccount {
+  brokerage_id: string;
+  brokerage_name: string;
+  positions: PortfolioPosition[];
+  total_value: number;
+  total_cost: number;
+  total_unrealized_pl: number;
+}
+
+export interface Portfolio {
+  accounts: PortfolioAccount[];
+  total_value: number;
+  total_cost: number;
+  total_unrealized_pl: number;
+  total_unrealized_pl_percent: number;
+}
+
+export type HistoryPeriod = "1D" | "5D" | "1M" | "1Y" | "5Y";
+
+export interface HistoryPoint {
+  timestamp: number;
+  equity: number;
+  profit_loss: number;
+  profit_loss_pct: number;
+}
+
+export interface PortfolioHistory {
+  period: HistoryPeriod;
+  points: HistoryPoint[];
+  base_value: number;
+}
+
+export async function getPortfolioHistory(period: HistoryPeriod): Promise<PortfolioHistory> {
+  const res = await fetch(`${API_BASE}/portfolio/history?period=${period}`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function getPortfolio(): Promise<Portfolio> {
+  const res = await fetch(`${API_BASE}/portfolio`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
 export async function saveProfile(profile: UserProfile): Promise<UserProfile> {
   const res = await fetch(`${API_BASE}/users/profile`, {
     method: "POST",

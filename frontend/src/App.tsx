@@ -6,6 +6,7 @@ import { Home } from "./pages/Home";
 import { Profile } from "./pages/Profile";
 import { AutoInvestSettings } from "./pages/AutoInvestSettings";
 import { Activity } from "./pages/Activity";
+import { Portfolio } from "./pages/Portfolio";
 import { BrokerageConnect } from "./components/BrokerageConnect";
 import { Documents } from "./pages/Documents";
 import { getProfile, UserProfile } from "./services/api";
@@ -13,7 +14,7 @@ import { ClerkApp } from "./ClerkApp";
 
 const DEV_MODE = import.meta.env.VITE_DEV_MODE === "true";
 
-type DevAppState = "auth" | "loading" | "onboarding" | "home" | "profile" | "auto-invest-settings" | "activity" | "brokerage" | "documents";
+type DevAppState = "auth" | "loading" | "onboarding" | "home" | "profile" | "auto-invest-settings" | "activity" | "portfolio" | "brokerage" | "documents";
 
 function DevApp() {
   const [state, setState] = useState<DevAppState>(() =>
@@ -64,6 +65,10 @@ function DevApp() {
     return <Activity onBack={() => setState("home")} />;
   }
 
+  if (state === "portfolio") {
+    return <Portfolio onBack={() => setState("home")} />;
+  }
+
   if (state === "brokerage") {
     return (
       <BrokerageConnect
@@ -84,6 +89,7 @@ function DevApp() {
       onManageAccounts={() => setState("profile")}
       onAutoInvestSettings={() => setState("auto-invest-settings")}
       onActivity={() => setState("activity")}
+      onPortfolio={() => setState("portfolio")}
       onBrokerage={() => setState("brokerage")}
       onDocuments={() => setState("documents")}
     />

@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-14 (Phase 12b + 12c — Complete)
+> Last updated: 2026-05-15 (Phase 13b — Complete)
 
 ---
 
@@ -74,7 +74,7 @@ Key interfaces:
 - `MarketDataProvider` — live prices (Polygon or mock)
 - `NewsProvider` — market headlines (Polygon or mock)
 - `DecisionRepository` — investment decision persistence
-- `BrokerageProvider` — trade execution (Alpaca or mock)
+- `BrokerageProvider` — trade execution + position reads + portfolio history (Alpaca or mock)
 - `BrokerageProviderFactory` — constructs a `BrokerageProvider` from a per-user `BrokerageConnection`; decouples application layer from credential decryption and Alpaca constructor details
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
 - `NotificationProvider` — push notifications (log provider now, push later)
@@ -143,6 +143,7 @@ See README.md for the full env var reference and provider swap table.
 | `AssetCategory` | `equity` / `bond` / `default` — controls which connection an allocation is routed to |
 | `AutoInvestConfig` | First-class domain model (own collection): Enabled, Amount, Risk, EnabledAt, UpdatedAt |
 | `SchedulerRun` | Audit record for one autonomous cycle: RunID, StartedAt, CompletedAt, UsersProcessed, TotalInvested, Errors |
+| `HistoryPoint` | One data point in a portfolio value time series: Timestamp (Unix epoch seconds), Equity, ProfitLoss, ProfitLossPct |
 | `NewsItem` | One market headline: Headline, Summary, Source, PublishedAt |
 | `TransactionSummary` | Aggregated spending signals: SpendLast7Days, SpendLast30Days, LargestPendingAmount, LargestPendingName, PulledAt |
 
@@ -583,6 +584,49 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - `frontend/src/services/api.ts` — `from_cache?: boolean` on `Recommendation`
 - `frontend/src/components/ConfirmScreen.tsx` — amber banner when `rec.from_cache` is true: "AI advisor is temporarily unavailable. Showing your last recommendation — amounts scaled to today's budget."
 
+### Phase 13 — Portfolio P&L Dashboard (Complete)
+
+**Goal:** Show users what they own, what it's worth, and whether they're up or down — across all connected brokerage accounts.
+
+**Backend:**
+- `domain/models/trade.go` — `Position` enriched: added `Name`, `CostBasis`, `AvgEntryPrice`, `UnrealizedPL`, `UnrealizedPLPercent`
+- `infrastructure/brokerage/alpaca.go` — `GetPositions` now parses `cost_basis`, `avg_entry_price`, `unrealized_pl`, `unrealized_plpc` from Alpaca's `/v2/positions` response (already returned by the API, just not extracted); `unrealized_plpc` converted from decimal to percent
+- `infrastructure/brokerage/mock.go` — realistic mock positions: VTI +13%, QQQ +8%, BND -2%
+- `api/handlers/portfolio_handler.go` (new) — `GET /portfolio`: fetches positions from all connections via `BrokerageProviderFactory`, groups by brokerage, computes per-account and combined totals (`total_value`, `total_cost`, `total_unrealized_pl`, `total_unrealized_pl_percent`)
+- `api/router/routes.go` + `router.go` — `PortfolioURI = "/portfolio"` registered
+
+**Frontend:**
+- `services/api.ts` — `PortfolioPosition`, `PortfolioAccount`, `Portfolio` interfaces + `getPortfolio()`
+- `pages/Portfolio.tsx` (new) — summary header (value / cost / gain+loss in green/red), per-account sections when multiple brokerages connected, flat list when one; empty state when no brokerage; ← Back nav
+- `pages/Home.tsx` — "Portfolio" nav button + `onPortfolio` prop
+- `App.tsx` + `ClerkApp.tsx` — `"portfolio"` state added, routed to `<Portfolio onBack />`
+
+### Phase 13b — Portfolio History Chart (Complete)
+
+**Goal:** Google Finance-style period selector (1D / 5D / 1M / 1Y / 5Y) with SVG line chart showing portfolio equity over time.
+
+**Backend:**
+- `domain/models/trade.go` — `HistoryPoint` struct: `Timestamp int64`, `Equity`, `ProfitLoss`, `ProfitLossPct float64`
+- `domain/ports/brokerage.go` — `GetPortfolioHistory(ctx, userID, period, timeframe string) ([]HistoryPoint, error)` added to `BrokerageProvider` interface
+- `infrastructure/brokerage/alpaca.go` — `GetPortfolioHistory` calls Alpaca `GET /v2/account/portfolio/history?period=X&timeframe=Y&extended_hours=false`; skips zero-equity points (market-closed nulls); `profit_loss_pct` converted from decimal to percent
+- `infrastructure/brokerage/mock.go` — 30-point sine-wave uptrend with period-appropriate step intervals
+- `api/handlers/portfolio_handler.go` — `GET /portfolio/history?period=1D|5D|1M|1Y|5Y`; maps UI label to Alpaca period+timeframe; aggregates equity across all connections by summing parallel arrays; dispatched via path check in `ServeHTTP`
+- `api/router/routes.go` + `router.go` — `PortfolioHistoryURI = "/portfolio/history"` registered before `PortfolioURI`
+
+**Alpaca period/timeframe mapping:**
+
+| UI | Alpaca period | timeframe |
+|----|--------------|-----------|
+| 1D | 1D | 5Min |
+| 5D | 5D | 1H |
+| 1M | 1M | 1D |
+| 1Y | 1A | 1D |
+| 5Y | 5A | 1D |
+
+**Frontend:**
+- `services/api.ts` — `HistoryPoint`, `PortfolioHistory`, `HistoryPeriod` type + `getPortfolioHistory(period)`
+- `pages/Portfolio.tsx` — `PortfolioChart` SVG component: polyline + filled area, green/red based on first→last direction, 5 X-axis time labels, muted placeholder while loading; period pill selector (active pill = dark, others transparent); history fetches on mount + on period change
+
 ---
 
 ### Phase 12 — Real Broker API Integration (Future)
@@ -714,6 +758,8 @@ Background data access is legitimate when:
 | `/health` on top-level mux, not inside `UserIdentity` | `UserIdentity` blocks all non-`/auth/` routes. A health endpoint inside the mux would require a bearer token, breaking Docker/Railway healthchecks. Top-level mux registers `/health` first; everything else falls through to the protected mux. |
 | Per-allocation brokerage override over global override | Global `brokerage_override_id` was the initial Phase 12b design. Per-allocation `per_allocation_brokerage map[ticker→connID]` is strictly more expressive — you can still route everything to one account (just set all tickers to the same ID) but you can also split individual allocations. Stamped on each `TradeReceipt` so MongoDB has a full audit trail of which account executed each trade. |
 | 529 fallback to cached recommendation | Anthropic occasionally returns HTTP 529 (overloaded). Hard-failing the recommendation with a 500 is a bad UX for a daily-use app. The `decisions` collection already has everything needed — pull the last decision, rescale amounts to today's budget, set `FromCache: true`. If no prior decision exists the original error still propagates. No new storage, no cache layer needed. |
+| P&L data from Alpaca not MongoDB | Alpaca already computes avg_entry_price, cost_basis, unrealized_pl per position. Computing this from MongoDB trade receipts would require reconstructing position state across all historical orders (buys/sells, partial fills, splits). Alpaca's live data is simpler and more accurate. |
+| SVG chart, no charting library | Dependency principle: no charting library added. A plain SVG polyline with filled area is sufficient for a sparkline-style chart. Recharts/Chart.js would add ~100KB+ for a feature that needs one line and a few labels. |
 
 ---
 

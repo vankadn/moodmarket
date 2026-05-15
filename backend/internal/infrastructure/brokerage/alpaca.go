@@ -125,9 +125,13 @@ func (p *AlpacaProvider) GetPositions(ctx context.Context, _ string) ([]models.P
 	}
 
 	var alpacaPositions []struct {
-		Symbol      string `json:"symbol"`
-		Qty         string `json:"qty"`
-		MarketValue string `json:"market_value"`
+		Symbol          string `json:"symbol"`
+		Qty             string `json:"qty"`
+		MarketValue     string `json:"market_value"`
+		CostBasis       string `json:"cost_basis"`
+		AvgEntryPrice   string `json:"avg_entry_price"`
+		UnrealizedPL    string `json:"unrealized_pl"`
+		UnrealizedPLPC  string `json:"unrealized_plpc"`
 	}
 	if err := json.Unmarshal(rawBody, &alpacaPositions); err != nil {
 		return nil, fmt.Errorf("alpaca: parse positions response: %w", err)
@@ -137,10 +141,18 @@ func (p *AlpacaProvider) GetPositions(ctx context.Context, _ string) ([]models.P
 	for _, ap := range alpacaPositions {
 		qty, _ := strconv.ParseFloat(ap.Qty, 64)
 		mv, _ := strconv.ParseFloat(ap.MarketValue, 64)
+		cb, _ := strconv.ParseFloat(ap.CostBasis, 64)
+		aep, _ := strconv.ParseFloat(ap.AvgEntryPrice, 64)
+		upl, _ := strconv.ParseFloat(ap.UnrealizedPL, 64)
+		uplpc, _ := strconv.ParseFloat(ap.UnrealizedPLPC, 64)
 		positions = append(positions, models.Position{
-			Ticker:      ap.Symbol,
-			Quantity:    qty,
-			MarketValue: mv,
+			Ticker:              ap.Symbol,
+			Quantity:            qty,
+			MarketValue:         mv,
+			CostBasis:           cb,
+			AvgEntryPrice:       aep,
+			UnrealizedPL:        upl,
+			UnrealizedPLPercent: uplpc * 100, // Alpaca returns as decimal (0.136 = 13.6%)
 		})
 	}
 	return positions, nil
@@ -193,6 +205,63 @@ func (p *AlpacaProvider) GetOrder(ctx context.Context, orderID string) (*models.
 		receipt.FilledPrice, _ = strconv.ParseFloat(*alpacaOrder.FilledAvgPrice, 64)
 	}
 	return receipt, nil
+}
+
+// GetPortfolioHistory fetches equity history from Alpaca's portfolio history endpoint.
+func (p *AlpacaProvider) GetPortfolioHistory(ctx context.Context, _ string, period, timeframe string) ([]models.HistoryPoint, error) {
+	url := fmt.Sprintf("%s/v2/account/portfolio/history?period=%s&timeframe=%s&extended_hours=false", p.baseURL, period, timeframe)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("alpaca: build history request: %w", err)
+	}
+	p.setHeaders(req)
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("alpaca: fetch history: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("alpaca: read history response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("alpaca: history API %d: %s", resp.StatusCode, rawBody)
+	}
+
+	var h struct {
+		Timestamp     []int64   `json:"timestamp"`
+		Equity        []float64 `json:"equity"`
+		ProfitLoss    []float64 `json:"profit_loss"`
+		ProfitLossPct []float64 `json:"profit_loss_pct"`
+	}
+	if err := json.Unmarshal(rawBody, &h); err != nil {
+		return nil, fmt.Errorf("alpaca: parse history response: %w", err)
+	}
+
+	n := len(h.Timestamp)
+	points := make([]models.HistoryPoint, 0, n)
+	for i := 0; i < n; i++ {
+		// Alpaca may include null entries (market closed periods) as 0 — skip them
+		if h.Equity[i] == 0 {
+			continue
+		}
+		var pl, plpct float64
+		if i < len(h.ProfitLoss) {
+			pl = h.ProfitLoss[i]
+		}
+		if i < len(h.ProfitLossPct) {
+			plpct = h.ProfitLossPct[i] * 100
+		}
+		points = append(points, models.HistoryPoint{
+			Timestamp:     h.Timestamp[i],
+			Equity:        h.Equity[i],
+			ProfitLoss:    pl,
+			ProfitLossPct: plpct,
+		})
+	}
+	return points, nil
 }
 
 func (p *AlpacaProvider) setHeaders(req *http.Request) {

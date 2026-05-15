@@ -16,4 +16,7 @@ type BrokerageProvider interface {
 	GetPositions(ctx context.Context, userID string) ([]models.Position, error)
 	// GetOrder returns the current status of a previously placed order.
 	GetOrder(ctx context.Context, orderID string) (*models.TradeReceipt, error)
+	// GetPortfolioHistory returns timestamped equity values for the given period and timeframe.
+	// period examples: "1D", "5D", "1M", "1A", "5A". timeframe examples: "5Min", "1H", "1D".
+	GetPortfolioHistory(ctx context.Context, userID, period, timeframe string) ([]models.HistoryPoint, error)
 }
