@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-15 (Phase 16 — Email notifications complete)
+> Last updated: 2026-05-16 (Phase 16b — Custom domain + Resend domain verified)
 
 ---
 
@@ -476,8 +476,8 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 ### Phase 9 — Complete
 
-- Railway backend deployed: moodmarket-production.up.railway.app
-- Vercel frontend deployed: moodmarket-mu.vercel.app
+- Railway backend deployed: ~~moodmarket-production.up.railway.app~~ → now api.investiq.fit (see Phase 16b)
+- Vercel frontend deployed: ~~moodmarket-mu.vercel.app~~ → now www.investiq.fit (see Phase 16b)
 - MongoDB Atlas free tier connected
 - Per-user Alpaca credentials (encrypted, per-user in Mongo)
 - CORS fixed via ALLOWED_ORIGIN env var
@@ -710,10 +710,25 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 ```
 NOTIFICATION_PROVIDER=resend
 RESEND_API_KEY=re_...
-RESEND_FROM=InvestIQ <noreply@yourdomain.com>   # or onboarding@resend.dev for testing
+RESEND_FROM=InvestIQ <noreply@investiq.fit>
 ```
 
-**Known:** `onboarding@resend.dev` sender only delivers to the Resend account's own email. Verify a domain in Resend dashboard to send to any address.
+### Phase 16b — Domain & Deployment (Complete)
+
+No code changes. Infrastructure and configuration only.
+
+**Custom domain — investiq.fit (Namecheap)**
+- Frontend: https://www.investiq.fit (Vercel — was moodmarket-mu.vercel.app)
+- Backend: https://api.investiq.fit (Railway — was moodmarket-production.up.railway.app)
+- DNS records on Namecheap: A record (@) → Vercel, CNAME (www) → Vercel, CNAME (api) → Railway, TXT (_railway-verify.api) for Railway domain verification
+- TLS: Let's Encrypt via Railway (api subdomain), Vercel (apex + www)
+- `VITE_API_URL` updated to https://api.investiq.fit in Vercel env vars
+- `ALLOWED_ORIGIN` updated to https://www.investiq.fit in Railway env vars
+
+**Email sending — Resend domain verified on investiq.fit**
+- DKIM (TXT), SPF (TXT), DMARC (TXT), MX (send → Amazon SES) records added to Namecheap
+- Domain verified in Resend dashboard — real emails can now be sent to any recipient
+- From address in use: `noreply@investiq.fit`
 
 ### Phase 17 — Alpaca Real Trading (Planned)
 
