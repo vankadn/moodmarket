@@ -216,8 +216,6 @@ func (s *RecommendationService) GetCashContext(ctx context.Context, userID strin
 	label, message := runwayLabelAndMessage(runwayDays)
 
 	log.Printf("[cash-context] runway=%d days label=%s", runwayDays, label)
-	// TODO: remove after 8ca testing
-	log.Printf("[8ca-debug] cash-context computed: runway=%d label=%s", runwayDays, label)
 
 	return models.CashContext{
 		HasData:              true,

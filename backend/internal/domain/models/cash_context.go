@@ -13,5 +13,4 @@ type CashContext struct {
 	LargestPendingAmount float64 `json:"largest_pending_amount"`
 	LargestPendingName   string  `json:"largest_pending_name"`
 	Message              string  `json:"message"`
-	UserOverride         bool    `json:"user_override"` // echoed back; set by frontend, not computed here
 }
