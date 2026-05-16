@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-14 (Phase 15 — Complete)
+> Last updated: 2026-05-15 (Phase 16 — Email notifications complete)
 
 ---
 
@@ -52,7 +52,7 @@ infrastructure/      ← implementations of domain ports
   news/              ← market headlines (Polygon + mock)
   banking/           ← Plaid
   brokerage/         ← Alpaca
-  notifications/     ← log provider (dev), push (future)
+  notifications/     ← log provider (dev), Resend email (prod)
   secrets/           ← Vault / secrets manager (pre go-live)
 
 api/                 ← outermost: HTTP handlers, middleware
@@ -77,7 +77,7 @@ Key interfaces:
 - `BrokerageProvider` — trade execution + position reads + portfolio history (Alpaca or mock)
 - `BrokerageProviderFactory` — constructs a `BrokerageProvider` from a per-user `BrokerageConnection`; decouples application layer from credential decryption and Alpaca constructor details
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
-- `NotificationProvider` — push notifications (log provider now, push later)
+- `NotificationProvider` — post-invest notifications; `SendInvestmentSummary`, `SendInvestmentFailure`, `SendMarketClosed`; log provider (dev), Resend email provider (prod)
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
 
 ### DEV_MODE pattern
@@ -123,7 +123,7 @@ Every brokerage provider implements `BrokerageProvider` in `domain/ports/`. No b
 | Banking | Plaid (production, 10 free connections) / mock | Behind FinancialDataProvider interface; 5-min balance cache via PLAID_CACHE_TTL |
 | Secrets | Encrypted Mongo now, Vault pre go-live | Behind SecretsProvider interface |
 | Scheduler | Go time.Ticker | Drives autonomous investment cycle; interval from AUTO_INVEST_INTERVAL env var |
-| Notifications | Log provider (dev) | Behind NotificationProvider interface; logs to stdout |
+| Notifications | Log provider (dev) / Resend (prod) | Behind NotificationProvider interface; `NOTIFICATION_PROVIDER=resend` + `RESEND_API_KEY` + `RESEND_FROM` activates email; SMS via Twilio backlogged |
 | News | Polygon.io `/v2/reference/news` / mock | Behind NewsProvider interface; daily cache; top 5 SPY-tagged headlines injected into Claude prompt |
 
 ---
@@ -163,6 +163,7 @@ See README.md for the full env var reference and provider swap table.
 | `AssetCategory` | `equity` / `bond` / `default` — controls which connection an allocation is routed to |
 | `AutoInvestConfig` | First-class domain model (own collection): Enabled, Amount, Risk, EnabledAt, UpdatedAt |
 | `SchedulerRun` | Audit record for one autonomous cycle: RunID, StartedAt, CompletedAt, UsersProcessed, TotalInvested, Errors |
+| `NotificationTarget` | Delivery target for one notification: UserID, Email, Phone, Source (`"manual"` or `"auto"`) |
 | `HistoryPoint` | One data point in a portfolio value time series: Timestamp (Unix epoch seconds), Equity, ProfitLoss, ProfitLossPct |
 | `NewsItem` | One market headline: Headline, Summary, Source, PublishedAt |
 | `TransactionSummary` | Aggregated spending signals: SpendLast7Days, SpendLast30Days, LargestPendingAmount, LargestPendingName, PulledAt |
@@ -181,6 +182,8 @@ See README.md for the full env var reference and provider swap table.
 - `investment_goal` enum
 - `has_emergency_fund` boolean
 - `include_cash_context` boolean — opt-in: share spending/runway data with Claude advisor (default false; no migration needed)
+- `notification_email` string (optional) — email address for post-invest notifications; empty = no email sent
+- `phone` string (optional) — E.164 phone number for SMS notifications; stored but SMS not yet implemented (Twilio backlogged)
 - `brokerage_connection` embedded doc (in `users` collection) — encrypted APIKey, SecretKey, BaseURL, ConnectedAt; never serialized to JSON; exposed only as `BrokerageStatus` in profile response
 
 Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its own collection, not on UserProfile.
@@ -675,11 +678,48 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - `ClerkApp.tsx` reduced to ~25 lines: Clerk auth gate + token fetcher wiring → `<AppShell signOut keepPageOnRefresh />`
 - Adding any new page now requires editing only `AppShell.tsx`
 
-### Phase 16 — Alpaca Real Trading (Planned)
+### Phase 16 — Email Notifications (Complete)
+
+**Goal:** Send users an email after every investment — both manual and auto-invest — using Resend.
+
+**Domain:**
+- `NotificationTarget` gains `Source string` (`"manual"` | `"auto"`) — used to vary email copy
+- `UserProfile` gains `NotificationEmail string` and `Phone string` — stored in MongoDB `users` collection; both optional, empty = channel skipped
+
+**Backend:**
+- `infrastructure/notifications/resend.go` — Resend HTTP API client; source-aware copy ("Your investment completed." vs "Your auto-invest ran today."); per-position amount backfilled from allocation when `FilledAmount == 0` (Alpaca paper orders are async); recipient + email_id logged on every send
+- `infrastructure/notifications/factory.go` — `NOTIFICATION_PROVIDER=resend` + `RESEND_API_KEY` + `RESEND_FROM` activates Resend; missing keys fall back to log with warning
+- `api/handlers/notification_settings_handler.go` — `GET /users/notifications` + `PATCH /users/notifications`; reads/writes only email + phone; profile-level fields, not a new collection
+- `infrastructure/db/mongo_profile_repository.go` — `notification_email` and `phone` bson fields added to `profileDocument`, `fromProfile`, `toProfile` (were silently dropped before)
+- `api/handlers/invest_handler.go` — `InvestHandler` gains `profileRepo` + `notifications`; fires `sendSummary` in goroutine with `recover()` after successful Execute; backfills `FilledAmount` from allocations before notifying
+- `application/scheduler/auto_invest_scheduler.go` — gains `profileRepo`; loads user profile in `runCycle` to build fully-populated `NotificationTarget` (email + phone) before each user's goroutine
+- `application/scheduler/auto_invest_runner.go` — accepts pre-built `NotificationTarget`; backfills `FilledAmount` from allocations; guards: skips notification when receipts == 0
+- `middleware/auth.go` + `handlers/cors.go` — `PATCH` added to `Access-Control-Allow-Methods` (was missing, caused preflight failure)
+
+**API:**
+- `GET /users/notifications` — returns `{notification_email, phone}`
+- `PATCH /users/notifications` — updates email + phone only; does not touch other profile fields
+
+**Frontend:**
+- `NotificationSettingsPage.tsx` (new) — email + phone inputs; on Save calls `onSaved()` which refreshes profile and returns to home
+- `Home.tsx` — Notifications row below Auto-invest; shows current email or "Not configured"
+- `AppShell.tsx` — `"notifications"` state added; `onSaved` wired to `refreshAndReturn("home")` so home row updates immediately
+- `api.ts` — `notification_email?` + `phone?` on `UserProfile`; `NotificationSettings` interface; `getNotificationSettings()` + `updateNotificationSettings()`
+
+**Env vars:**
+```
+NOTIFICATION_PROVIDER=resend
+RESEND_API_KEY=re_...
+RESEND_FROM=InvestIQ <noreply@yourdomain.com>   # or onboarding@resend.dev for testing
+```
+
+**Known:** `onboarding@resend.dev` sender only delivers to the Resend account's own email. Verify a domain in Resend dashboard to send to any address.
+
+### Phase 17 — Alpaca Real Trading (Planned)
 
 Switch from paper to live Alpaca trading. Per-user credentials already wired (Phase 8d) — this is a UI change (account type selector) + user supplying live keys. No backend code change required. Requires LLC entity before signing Alpaca Broker API agreement.
 
-### Phase 17 — SnapTrade Portfolio Read (Planned)
+### Phase 18 — SnapTrade Portfolio Read (Planned)
 
 Connect existing Robinhood and Fidelity accounts read-only via SnapTrade. Goals:
 - Aggregate positions, balances, and holdings from both accounts into a unified portfolio view
@@ -688,13 +728,13 @@ Connect existing Robinhood and Fidelity accounts read-only via SnapTrade. Goals:
 
 Do not implement SnapTrade trade execution until SnapTrade confirms Robinhood write/order access is supported.
 
-### Phase 18 — Coinbase Advanced Trade (Planned)
+### Phase 19 — Coinbase Advanced Trade (Planned)
 
 Crypto execution via Coinbase Advanced Trade API (official, API key auth). Same per-user encrypted-credential pattern as Alpaca. Implements `BrokerageProvider` interface — zero application layer changes.
 
-### Phase 19 — SnapTrade Trade Execution via Robinhood (Conditional)
+### Phase 20 — SnapTrade Trade Execution via Robinhood (Conditional)
 
-Only if Phase 17 SnapTrade integration confirms Robinhood write access. Route crypto/equity allocations to Robinhood via SnapTrade when user has it connected. Falls back to Alpaca if not available.
+Only if Phase 18 SnapTrade integration confirms Robinhood write access. Route crypto/equity allocations to Robinhood via SnapTrade when user has it connected. Falls back to Alpaca if not available.
 
 ---
 

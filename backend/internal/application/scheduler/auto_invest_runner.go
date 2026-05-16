@@ -47,12 +47,19 @@ func runForUser(
 		return 0, nil
 	}
 
+	allocByTicker := make(map[string]float64, len(rec.Allocations))
+	for _, a := range rec.Allocations {
+		allocByTicker[a.Ticker] = a.Amount
+	}
 	var totalFilled float64
-	for _, r := range receipts {
-		totalFilled += r.FilledAmount
+	for i := range receipts {
+		if receipts[i].FilledAmount == 0 {
+			receipts[i].FilledAmount = allocByTicker[receipts[i].Ticker]
+		}
+		totalFilled += receipts[i].FilledAmount
 	}
 	if totalFilled == 0 {
-		totalFilled = config.Amount // Alpaca paper orders have nil FilledNotional until async fill
+		totalFilled = config.Amount
 	}
 
 	if err := notifications.SendInvestmentSummary(ctx, target, receipts, totalFilled); err != nil {

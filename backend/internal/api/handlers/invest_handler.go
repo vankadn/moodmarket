@@ -78,7 +78,14 @@ func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(receipts) > 0 {
-		go h.sendSummary(userID, receipts, body.TotalAmount)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[notify] user=%s sendSummary panic: %v", userID, r)
+				}
+			}()
+			h.sendSummary(userID, receipts, body.Allocations, body.TotalAmount)
+		}()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -91,25 +98,39 @@ func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *InvestHandler) sendSummary(userID string, receipts []models.TradeReceipt, totalAmount float64) {
+func (h *InvestHandler) sendSummary(userID string, receipts []models.TradeReceipt, allocations []models.Allocation, totalAmount float64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	target := ports.NotificationTarget{UserID: userID}
+	target := ports.NotificationTarget{UserID: userID, Source: "manual"}
 	if profile, err := h.profileRepo.GetByUserID(ctx, userID); err == nil {
 		target.Email = profile.NotificationEmail
 		target.Phone = profile.Phone
+		log.Printf("[notify] user=%s profile loaded — email=%q phone=%q", userID, target.Email, target.Phone)
+	} else {
+		log.Printf("[notify] user=%s profile load failed: %v", userID, err)
 	}
 
+	// Backfill FilledAmount from allocation when Alpaca hasn't settled yet (paper orders).
+	allocByTicker := make(map[string]float64, len(allocations))
+	for _, a := range allocations {
+		allocByTicker[a.Ticker] = a.Amount
+	}
 	var totalFilled float64
-	for _, r := range receipts {
-		totalFilled += r.FilledAmount
+	for i := range receipts {
+		if receipts[i].FilledAmount == 0 {
+			receipts[i].FilledAmount = allocByTicker[receipts[i].Ticker]
+		}
+		totalFilled += receipts[i].FilledAmount
 	}
 	if totalFilled == 0 {
-		totalFilled = totalAmount // Alpaca paper orders have nil FilledNotional until async fill
+		totalFilled = totalAmount
 	}
 
+	log.Printf("[notify] user=%s firing SendInvestmentSummary — %d positions $%.2f to=%q", userID, len(receipts), totalFilled, target.Email)
 	if err := h.notifications.SendInvestmentSummary(ctx, target, receipts, totalFilled); err != nil {
-		log.Printf("invest handler: notification failed for user=%s: %v", userID, err)
+		log.Printf("[notify] user=%s FAILED: %v", userID, err)
+	} else {
+		log.Printf("[notify] user=%s OK", userID)
 	}
 }

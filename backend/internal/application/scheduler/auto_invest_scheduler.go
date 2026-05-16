@@ -118,7 +118,7 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 	)
 
 	for _, cfg := range due {
-		target := ports.NotificationTarget{UserID: cfg.UserID}
+		target := ports.NotificationTarget{UserID: cfg.UserID, Source: "auto"}
 		if profile, err := s.profileRepo.GetByUserID(ctx, cfg.UserID); err == nil {
 			target.Email = profile.NotificationEmail
 			target.Phone = profile.Phone

@@ -9,10 +9,12 @@ import (
 
 // NotificationTarget holds contact details for one delivery.
 // Empty Email or Phone means that channel is skipped — no error.
+// Source distinguishes "manual" (user-triggered) from "auto" (scheduler-triggered).
 type NotificationTarget struct {
 	UserID string
 	Email  string
 	Phone  string
+	Source string // "manual" | "auto"
 }
 
 // NotificationProvider sends user-facing notifications for investment events.

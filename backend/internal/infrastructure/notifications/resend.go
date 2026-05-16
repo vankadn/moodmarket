@@ -51,8 +51,16 @@ func (r *resendEmailProvider) send(ctx context.Context, to, subject, html string
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("resend: unexpected status %d", resp.StatusCode)
+		var body map[string]any
+		json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+		return fmt.Errorf("resend: status %d: %v", resp.StatusCode, body)
 	}
+
+	var result struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result) //nolint:errcheck
+	log.Printf("[notify] resend accepted — email_id=%s to=%s subject=%q", result.ID, to, subject)
 	return nil
 }
 
@@ -66,9 +74,13 @@ func (r *resendEmailProvider) SendInvestmentSummary(ctx context.Context, to port
 	for _, rec := range receipts {
 		lines = append(lines, fmt.Sprintf("<li><strong>%s</strong> — $%.2f</li>", rec.Ticker, rec.FilledAmount))
 	}
+	intro := "Your investment completed."
+	if to.Source == "auto" {
+		intro = "Your auto-invest ran today."
+	}
 	html := fmt.Sprintf(
-		`<p>Your auto-invest ran today.</p><p><strong>$%.2f</strong> invested across %d position(s):</p><ul>%s</ul><p>Open InvestIQ to review your portfolio.</p>`,
-		totalInvested, len(receipts), strings.Join(lines, ""),
+		`<p>%s</p><p><strong>$%.2f</strong> invested across %d position(s):</p><ul>%s</ul><p>Open InvestIQ to review your portfolio.</p>`,
+		intro, totalInvested, len(receipts), strings.Join(lines, ""),
 	)
 	return r.send(ctx, to.Email, fmt.Sprintf("InvestIQ invested $%.2f today", totalInvested), html)
 }
