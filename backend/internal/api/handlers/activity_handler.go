@@ -32,6 +32,48 @@ type activityResponse struct {
 	Decisions      []activityDecision `json:"decisions"`
 }
 
+type strategyActivityItem struct {
+	ConfigID      string    `json:"config_id"`
+	TotalInvested float64   `json:"total_invested"`
+	DecisionCount int       `json:"decision_count"`
+	FirstRunAt    time.Time `json:"first_run_at"`
+	LastRunAt     time.Time `json:"last_run_at"`
+}
+
+func (h *ActivityHandler) GetActivityByStrategy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID, err := h.identityProvider.GetCurrentUser(r.Context())
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	activities, err := h.decisionRepo.ActivityByStrategy(r.Context(), userID)
+	if err != nil {
+		log.Printf("[activity] by-strategy: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]strategyActivityItem, len(activities))
+	for i, a := range activities {
+		resp[i] = strategyActivityItem{
+			ConfigID:      a.ConfigID,
+			TotalInvested: a.TotalInvested,
+			DecisionCount: a.DecisionCount,
+			FirstRunAt:    a.FirstRunAt,
+			LastRunAt:     a.LastRunAt,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func (h *ActivityHandler) GetActivity(w http.ResponseWriter, r *http.Request) {
 	userID, err := h.identityProvider.GetCurrentUser(r.Context())
 	if err != nil {

@@ -145,6 +145,8 @@ func main() {
 		AutoInvestConfigs:    handlers.NewAutoInvestConfigsHandler(autoInvestRepo, idp),
 		CashContext:          handlers.NewCashContextHandler(recommendSvc, idp),
 		Activity:             http.HandlerFunc(activityHandler.GetActivity),
+		ActivityByStrategy:   http.HandlerFunc(activityHandler.GetActivityByStrategy),
+		ActivityStrategyPnL:  handlers.NewStrategyPnLHandler(idp, decisionRepo, profileRepo, brokerageFactory),
 		Brokerage:            handlers.NewBrokerageHandler(profileRepo, idp),
 		BrokerageConnections: handlers.NewBrokerageConnectionsHandler(profileRepo, idp),
 		Notifications:        handlers.NewNotificationSettingsHandler(profileRepo, idp),

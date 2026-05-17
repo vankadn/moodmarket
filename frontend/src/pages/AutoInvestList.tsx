@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AutoInvestConfig, getAutoInvestConfigs } from "../services/api";
+import { AutoInvestConfig, StrategyActivity, StrategyPnL, getAutoInvestConfigs, getActivityByStrategy, getStrategyPnL } from "../services/api";
 
 interface Props {
   initialConfigs?: AutoInvestConfig[];
@@ -14,23 +14,55 @@ const strategyLabel: Record<string, string> = {
   short_term: "Short Term",
 };
 
-function amountLabel(config: AutoInvestConfig): string {
+function intervalLabel(config: AutoInvestConfig): string {
+  const secs = config.interval_seconds;
+  if (secs && secs > 0) {
+    if (secs % 31536000 === 0) return `${secs / 31536000}y`;
+    if (secs % 2592000 === 0)  return `${secs / 2592000}mo`;
+    if (secs % 86400 === 0)    return `${secs / 86400}d`;
+    if (secs % 3600 === 0)     return `${secs / 3600}h`;
+    if (secs % 60 === 0)       return `${secs / 60}m`;
+    return `${secs}s`;
+  }
   const days = config.interval_days ?? 1;
-  if (days === 1) return `$${config.amount}/day`;
-  if (days === 7) return `$${config.amount}/week`;
-  return `$${config.amount} every ${days} days`;
+  if (days === 1) return "day";
+  if (days === 7) return "week";
+  return `${days}d`;
+}
+
+function amountLabel(config: AutoInvestConfig): string {
+  return `$${config.amount}/${intervalLabel(config)}`;
 }
 
 export function AutoInvestList({ initialConfigs, onConfigsChange, onBack, onSelectConfig, onAddConfig }: Props) {
   const [configs, setConfigs] = useState<AutoInvestConfig[]>(initialConfigs ?? []);
   const [loading, setLoading] = useState(!initialConfigs || initialConfigs.length === 0);
   const [error, setError] = useState<string | null>(null);
+  const [activityMap, setActivityMap] = useState<Map<string, StrategyActivity>>(new Map());
+  const [pnlMap, setPnlMap] = useState<Map<string, StrategyPnL>>(new Map());
 
   useEffect(() => {
     getAutoInvestConfigs()
       .then((fresh) => { setConfigs(fresh); onConfigsChange?.(fresh); })
       .catch(() => setError("Failed to load strategies"))
       .finally(() => setLoading(false));
+
+    // Non-fatal — if either call fails the list still renders without that data.
+    getActivityByStrategy()
+      .then((items) => {
+        const map = new Map<string, StrategyActivity>();
+        items.forEach((a) => map.set(a.config_id, a));
+        setActivityMap(map);
+      })
+      .catch(() => {});
+
+    getStrategyPnL()
+      .then((items) => {
+        const map = new Map<string, StrategyPnL>();
+        items.forEach((p) => map.set(p.config_id, p));
+        setPnlMap(map);
+      })
+      .catch(() => {});
   }, []);
 
   return (
@@ -89,6 +121,28 @@ export function AutoInvestList({ initialConfigs, onConfigsChange, onBack, onSele
               {amountLabel(config)}
               {config.strategy ? ` · ${strategyLabel[config.strategy]}` : ""}
               {` · ${config.risk.charAt(0).toUpperCase() + config.risk.slice(1)}`}
+            </div>
+            <div style={{ fontSize: "11px", marginTop: "4px", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+              {(() => {
+                const a = activityMap.get(config.id ?? "");
+                const p = pnlMap.get(config.id ?? "");
+                if (!a || a.decision_count === 0) {
+                  return <span style={{ color: "#bbb" }}>No runs yet</span>;
+                }
+                const runsLabel = `Invested $${a.total_invested.toFixed(2)} · ${a.decision_count} run${a.decision_count === 1 ? "" : "s"}`;
+                const pnlEl = p && p.brokerage_connected && p.unrealized_pl !== 0
+                  ? (
+                    <span style={{ color: p.unrealized_pl >= 0 ? "#27ae60" : "#c0392b", fontWeight: 600 }}>
+                      {p.unrealized_pl >= 0 ? "+" : ""}${p.unrealized_pl.toFixed(2)} ({p.unrealized_pl_pct >= 0 ? "+" : ""}{p.unrealized_pl_pct.toFixed(2)}%)
+                    </span>
+                  ) : null;
+                return (
+                  <>
+                    <span style={{ color: "#bbb" }}>{runsLabel}</span>
+                    {pnlEl}
+                  </>
+                );
+              })()}
             </div>
           </div>
           <span style={{ color: "#bbb", fontSize: "16px", marginLeft: "12px" }}>›</span>

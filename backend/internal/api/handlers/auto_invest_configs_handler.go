@@ -62,13 +62,14 @@ func (h *autoInvestConfigsHandler) list(w http.ResponseWriter, r *http.Request, 
 }
 
 type multiConfigRequest struct {
-	Name         string               `json:"name"`
-	Enabled      bool                 `json:"enabled"`
-	Amount       float64              `json:"amount"`
-	Risk         models.RiskTolerance `json:"risk"`
-	Strategy     string               `json:"strategy"`
-	IntervalDays int                  `json:"interval_days,omitempty"`
-	EnabledAt    *time.Time           `json:"enabled_at,omitempty"`
+	Name            string               `json:"name"`
+	Enabled         bool                 `json:"enabled"`
+	Amount          float64              `json:"amount"`
+	Risk            models.RiskTolerance `json:"risk"`
+	Strategy        string               `json:"strategy"`
+	IntervalDays    int                  `json:"interval_days,omitempty"`
+	IntervalSeconds int                  `json:"interval_seconds,omitempty"`
+	EnabledAt       *time.Time           `json:"enabled_at,omitempty"`
 }
 
 func (h *autoInvestConfigsHandler) create(w http.ResponseWriter, r *http.Request, userID string) {
@@ -83,14 +84,15 @@ func (h *autoInvestConfigsHandler) create(w http.ResponseWriter, r *http.Request
 	}
 
 	config := &models.AutoInvestConfig{
-		UserID:       userID,
-		Name:         req.Name,
-		Enabled:      req.Enabled,
-		Amount:       req.Amount,
-		Risk:         req.Risk,
-		Strategy:     req.Strategy,
-		IntervalDays: req.IntervalDays,
-		EnabledAt:    enabledAt,
+		UserID:          userID,
+		Name:            req.Name,
+		Enabled:         req.Enabled,
+		Amount:          req.Amount,
+		Risk:            req.Risk,
+		Strategy:        req.Strategy,
+		IntervalDays:    req.IntervalDays,
+		IntervalSeconds: req.IntervalSeconds,
+		EnabledAt:       enabledAt,
 	}
 
 	created, err := h.repo.Create(r.Context(), config)
@@ -122,13 +124,14 @@ func (h *autoInvestConfigsHandler) update(w http.ResponseWriter, r *http.Request
 	}
 
 	config := &models.AutoInvestConfig{
-		Name:         req.Name,
-		Enabled:      req.Enabled,
-		Amount:       req.Amount,
-		Risk:         req.Risk,
-		Strategy:     req.Strategy,
-		IntervalDays: req.IntervalDays,
-		EnabledAt:    enabledAt,
+		Name:            req.Name,
+		Enabled:         req.Enabled,
+		Amount:          req.Amount,
+		Risk:            req.Risk,
+		Strategy:        req.Strategy,
+		IntervalDays:    req.IntervalDays,
+		IntervalSeconds: req.IntervalSeconds,
+		EnabledAt:       enabledAt,
 	}
 
 	updated, err := h.repo.UpdateByID(r.Context(), configID, userID, config)

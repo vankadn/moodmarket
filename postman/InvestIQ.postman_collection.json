@@ -148,6 +148,30 @@
               "query": [{ "key": "since", "value": "{{since30d}}", "description": "RFC3339 — set in environment or remove param for all-time" }]
             }
           }
+        },
+        {
+          "name": "Get activity by strategy",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users/activity/by-strategy",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "activity", "by-strategy"]
+            },
+            "description": "Returns total_invested, decision_count, first_run_at, last_run_at per config_id. config_id 'manual' = user-initiated; '' = legacy pre-Phase-19 decisions."
+          }
+        },
+        {
+          "name": "Get P&L by strategy",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/users/activity/by-strategy/pnl",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "activity", "by-strategy", "pnl"]
+            },
+            "description": "Returns approximate unrealized P&L per config_id. P&L is attributed proportionally based on each strategy's fraction of each ticker's total cost basis. brokerage_connected=false means P&L fields will be 0."
+          }
         }
       ]
     },

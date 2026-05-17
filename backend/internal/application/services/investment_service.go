@@ -41,6 +41,7 @@ func NewInvestmentService(
 // Returns ErrBrokerageNotConnected (wrapped) when the user has no brokerage account.
 // perAllocBrokerage: map of ticker → connectionID for manual per-allocation overrides;
 // nil or missing ticker falls back to asset-category auto-routing.
+// configID: the AutoInvestConfig.ID that triggered this execution; "manual" for user-initiated invest.
 func (s *InvestmentService) Execute(
 	ctx context.Context,
 	userID string,
@@ -48,6 +49,7 @@ func (s *InvestmentService) Execute(
 	totalAmount float64,
 	riskLevel, summary string,
 	perAllocBrokerage map[string]string,
+	configID string,
 ) ([]models.TradeReceipt, string, error) {
 
 	connections, err := s.profileRepo.GetBrokerageConnections(ctx, userID)
@@ -129,6 +131,7 @@ func (s *InvestmentService) Execute(
 
 	decision := &models.InvestmentDecision{
 		UserID:         userID,
+		ConfigID:       configID,
 		Timestamp:      time.Now(),
 		MarketSnapshot: snapshot,
 		Allocations:    allocations,

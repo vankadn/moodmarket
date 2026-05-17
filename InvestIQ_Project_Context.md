@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-16 (Phase 16c — Multi-config auto-invest + strategies loading perf)
+> Last updated: 2026-05-17 (Phase 19 — Strategy Performance Tracking complete: Steps 1–4)
 
 ---
 
@@ -484,7 +484,8 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - BrokerageConnect reachable in production (ClerkApp.tsx fix)
 - Real trades placing on Alpaca live account
 - Atlas IP allowlist: 0.0.0.0/0 (temporary — tighten when Railway Pro)
-- Favicon added (SVG + PNG)
+- Favicon v1 added (SVG + PNG)
+- Favicon redesigned: purple rounded-square (#7C3AED) with bold white "IQ" text — readable at 16px browser-tab size; old 680px chart SVG was illegible at favicon size
 - Polling fix: stop after 20 attempts or 5 consecutive ACCEPTED (after-hours)
 - Alpaca live account funding pending — support ticket filed
 
@@ -771,6 +772,42 @@ No code changes. Infrastructure and configuration only.
 - `AutoInvestList.tsx`: accepts `initialConfigs` prop, renders immediately with no spinner if data present; background re-fetch keeps it fresh and syncs back to AppShell
 - `Home.tsx`: removed own `getAutoInvestConfigs()` fetch — reads from AppShell prop instead
 
+### Phase 19 — Strategy Performance Tracking (Complete)
+
+**Goal:** Show users how each auto-invest strategy has performed over time.
+
+**Step 1 — Tag decisions with config_id (Complete)**
+- `ConfigID string` added to `InvestmentDecision` domain model; `bson:"config_id,omitempty"` in `decisionDocument`
+- Scheduler runner passes `config.ID` into `InvestmentService.Execute` — every auto-invest decision is tagged with the triggering config
+- Manual invest handler passes `"manual"` — explicitly queryable, distinct from legacy docs
+- Legacy docs (pre-Phase 19) have no `config_id` field → reads as `""` — treated as untagged in future aggregations
+- No migration needed — omitempty means absent field reads cleanly as zero value
+- `InvestmentService.Execute` signature gains `configID string` as final param; local `investUseCase` interface in handler updated to match
+
+**Step 2 — Per-strategy activity endpoint (Complete)**
+- `GET /users/activity/by-strategy` — returns array of `StrategyActivity` sorted by `last_run_at` DESC
+- MongoDB `$group` aggregation on `config_id`; returns `total_invested`, `decision_count`, `first_run_at`, `last_run_at` per group
+- `config_id = "manual"` groups all user-initiated investments; `""` groups legacy pre-Phase-19 decisions
+- `StrategyActivity` domain model added to `domain/models/decision.go`; `ActivityByStrategy` method added to `DecisionRepository` port
+- Compound index `(user_id, config_id, timestamp DESC)` created in `NewMongoDecisionRepository` — covers both the aggregation and existing `ListByUser*` queries; idempotent on restart
+- OpenAPI schema `StrategyActivity` added; Postman request added to Users folder
+
+**Step 3 — Strategy list UI enhancement (Complete)**
+- `StrategyActivity` interface + `getActivityByStrategy()` added to `api.ts`
+- `AutoInvestList.tsx`: fetches activity on mount in parallel with configs; builds `Map<configId, StrategyActivity>`; renders "Invested $X.XX across N runs" or "No runs yet" below each card's subtitle
+- Activity fetch is non-fatal — list renders normally if the call fails; row simply shows "No runs yet"
+
+**Step 4 — True P&L per strategy (Complete)**
+- `CostBasisByStrategy(ctx, userID)` added to `DecisionRepository` port and Mongo impl — unwinds `allocations` array, groups by `(config_id, ticker)`, sums `allocations.amount`; returns `map[configID][ticker]amount`
+- `GET /users/activity/by-strategy/pnl` — new `StrategyPnLHandler` with `identity + decisionRepo + profileRepo + brokerageFactory`; fetches live positions across all connections; attributes each strategy's proportional share of each ticker's `unrealized_pl` and `market_value` based on `strategyBasis[ticker] / totalBasis[ticker]`; returns array sorted by `total_invested` DESC
+- `brokerage_connected: false` in response when no brokerage set up — P&L fields are 0, total_invested still shown
+- `StrategyPnL` interface + `getStrategyPnL()` added to `api.ts`
+- `AutoInvestList.tsx`: fetches P&L on mount alongside activity; per-card shows invested amount + run count; when brokerage connected and unrealized_pl ≠ 0, shows P&L in green/red with dollar + percent
+- OpenAPI schema `StrategyPnL` + endpoint spec added; Postman request added to Users folder
+- **Approximation caveat**: P&L attribution is proportional — if two strategies both bought VTI, each gets their fraction of VTI's total position gain. Positions closed or sold after purchase are not tracked (show $0 for that ticker).
+
+---
+
 ### Phase 17 — Alpaca Real Trading (Planned)
 
 Switch from paper to live Alpaca trading. Per-user credentials already wired (Phase 8d) — this is a UI change (account type selector) + user supplying live keys. No backend code change required. Requires LLC entity before signing Alpaca Broker API agreement.
@@ -784,11 +821,11 @@ Connect existing Robinhood and Fidelity accounts read-only via SnapTrade. Goals:
 
 Do not implement SnapTrade trade execution until SnapTrade confirms Robinhood write/order access is supported.
 
-### Phase 19 — Coinbase Advanced Trade (Planned)
+### Phase 20 — Coinbase Advanced Trade (Planned)
 
 Crypto execution via Coinbase Advanced Trade API (official, API key auth). Same per-user encrypted-credential pattern as Alpaca. Implements `BrokerageProvider` interface — zero application layer changes.
 
-### Phase 20 — SnapTrade Trade Execution via Robinhood (Conditional)
+### Phase 21 — SnapTrade Trade Execution via Robinhood (Conditional)
 
 Only if Phase 18 SnapTrade integration confirms Robinhood write access. Route crypto/equity allocations to Robinhood via SnapTrade when user has it connected. Falls back to Alpaca if not available.
 
@@ -931,7 +968,6 @@ Background data access is legitimate when:
 | Market holiday awareness | Complete — Phase 15a |
 | Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale (Wishlist) |
 | Encrypted Mongo for Plaid tokens | Vault / AWS Secrets Manager — Phase 9 deployment |
-| One config per user only | Wishlist — multiple schedules with different risk levels |
 | Receipt shows PENDING NEW | Fixed in Phase 7 — polls until terminal status; per-order max-attempts and after-hours stop added later |
 | `[8a-debug]` log lines in `recommendation_service.go` | Remove after Phase 8a testing is verified; grep `[8a-debug]` |
 | `[8b-debug]` log lines in `recommendation_service.go` | Remove after Phase 8b testing is verified; grep `[8b-debug]` |

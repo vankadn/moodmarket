@@ -272,6 +272,60 @@ components:
           items:
             $ref: '#/components/schemas/ActivityDecision'
 
+    StrategyPnL:
+      type: object
+      description: |
+        Approximate unrealized P&L for one config_id group.
+        P&L is attributed proportionally: each strategy's fraction of a ticker's total cost
+        basis determines its share of that ticker's unrealized gain/loss from Alpaca.
+        current_value, unrealized_pl, and unrealized_pl_pct are 0 when brokerage_connected is false.
+      properties:
+        config_id:
+          type: string
+          example: 6657f2a4e3b8c1a2d4f5e601
+        total_invested:
+          type: number
+          example: 600.00
+        current_value:
+          type: number
+          example: 648.50
+        unrealized_pl:
+          type: number
+          example: 48.50
+        unrealized_pl_pct:
+          type: number
+          example: 8.08
+        brokerage_connected:
+          type: boolean
+        tickers:
+          type: array
+          items:
+            type: string
+          example: [VTI, QQQ, BND]
+
+    StrategyActivity:
+      type: object
+      description: |
+        Aggregated investment stats for one config_id group.
+        config_id is the AutoInvestConfig ID, "manual" for user-initiated investments,
+        or "" for legacy decisions created before Phase 19.
+      properties:
+        config_id:
+          type: string
+          example: 6657f2a4e3b8c1a2d4f5e601
+        total_invested:
+          type: number
+          example: 750.00
+        decision_count:
+          type: integer
+          example: 15
+        first_run_at:
+          type: string
+          format: date-time
+        last_run_at:
+          type: string
+          format: date-time
+
     TaxDocument:
       type: object
       description: Extracted fields from a W-2, 1099, or 1098 PDF. PDF bytes are never stored — only the fields map.
@@ -459,6 +513,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CashContext'
+
+  /users/activity/by-strategy/pnl:
+    get:
+      summary: Get approximate P&L per strategy
+      description: |
+        Computes unrealized P&L per config_id by attributing each strategy's proportional
+        share of live Alpaca position gains/losses based on how much of each ticker's total
+        cost basis came from that strategy's decisions.
+        Returns empty array when no decisions exist. P&L fields are 0 when no brokerage is connected.
+      tags: [Users]
+      responses:
+        '200':
+          description: Per-strategy P&L array, sorted by total_invested descending
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StrategyPnL'
+
+  /users/activity/by-strategy:
+    get:
+      summary: Get activity grouped by strategy
+      description: |
+        Returns total invested, run count, and date range per config_id.
+        config_id "manual" groups all user-initiated investments.
+        Legacy decisions (pre-Phase 19) have config_id "".
+      tags: [Users]
+      responses:
+        '200':
+          description: Per-strategy activity array, sorted by last_run_at descending
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StrategyActivity'
 
   /users/activity:
     get:

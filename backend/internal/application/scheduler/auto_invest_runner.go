@@ -32,7 +32,7 @@ func runForUser(
 		return 0, fmt.Errorf("recommendation: %w", err)
 	}
 
-	receipts, _, err := investSvc.Execute(ctx, config.UserID, rec.Allocations, rec.TotalBudget, rec.RiskLevel, rec.Summary, nil)
+	receipts, _, err := investSvc.Execute(ctx, config.UserID, rec.Allocations, rec.TotalBudget, rec.RiskLevel, rec.Summary, nil, config.ID)
 	if err != nil {
 		if errors.Is(err, ports.ErrBrokerageNotConnected) {
 			log.Printf("[scheduler] user=%s skipping — no brokerage connected", config.UserID)

@@ -51,6 +51,7 @@ export interface AutoInvestConfig {
   risk: RiskTolerance;
   strategy?: StrategyType;
   interval_days?: number;
+  interval_seconds?: number; // when > 0, overrides interval_days; used for sub-day intervals
   enabled_at?: string;
   updated_at?: string;
   last_run_at?: string;
@@ -240,6 +241,40 @@ export interface ActivitySummary {
   total_decisions: number;
   total_invested: number;
   decisions: ActivityDecision[];
+}
+
+export interface StrategyActivity {
+  config_id: string;
+  total_invested: number;
+  decision_count: number;
+  first_run_at: string;
+  last_run_at: string;
+}
+
+export interface StrategyPnL {
+  config_id: string;
+  total_invested: number;
+  current_value: number;
+  unrealized_pl: number;
+  unrealized_pl_pct: number;
+  brokerage_connected: boolean;
+  tickers: string[];
+}
+
+export async function getStrategyPnL(): Promise<StrategyPnL[]> {
+  const res = await fetch(`${API_BASE}/users/activity/by-strategy/pnl`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function getActivityByStrategy(): Promise<StrategyActivity[]> {
+  const res = await fetch(`${API_BASE}/users/activity/by-strategy`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
 }
 
 export async function getActivity(since: Date | null): Promise<ActivitySummary> {

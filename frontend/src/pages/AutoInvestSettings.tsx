@@ -16,11 +16,22 @@ const riskOptions: { value: RiskTolerance; label: string }[] = [
   { value: "aggressive",   label: "Aggressive" },
 ];
 
-const frequencyOptions: { days: number; label: string }[] = [
-  { days: 1, label: "Daily" },
-  { days: 2, label: "Every 2 days" },
-  { days: 7, label: "Weekly" },
-];
+const unitToSeconds: Record<string, number> = {
+  s: 1, m: 60, h: 3600, d: 86400, mo: 2592000, y: 31536000,
+};
+
+function toFreqParts(config: AutoInvestConfig): { value: number; unit: string } {
+  const secs = config.interval_seconds;
+  if (secs && secs > 0) {
+    if (secs % 31536000 === 0) return { value: secs / 31536000, unit: "y" };
+    if (secs % 2592000 === 0)  return { value: secs / 2592000,  unit: "mo" };
+    if (secs % 86400 === 0)    return { value: secs / 86400,    unit: "d" };
+    if (secs % 3600 === 0)     return { value: secs / 3600,     unit: "h" };
+    if (secs % 60 === 0)       return { value: secs / 60,       unit: "m" };
+    return { value: secs, unit: "s" };
+  }
+  return { value: config.interval_days ?? 1, unit: "d" };
+}
 
 const strategyOptions: { value: StrategyType; label: string; description: string }[] = [
   { value: "long_term",  label: "Long Term",  description: "ETFs only, 10+ year horizon" },
@@ -40,6 +51,8 @@ function defaultConfig(): AutoInvestConfig {
 export function AutoInvestSettings({ initialConfig, onBack }: Props) {
   const isEdit = !!initialConfig?.id;
   const [config, setConfig] = useState<AutoInvestConfig>(() => initialConfig ?? defaultConfig());
+  const [freqValue, setFreqValue] = useState(() => toFreqParts(initialConfig ?? defaultConfig()).value);
+  const [freqUnit,  setFreqUnit]  = useState(() => toFreqParts(initialConfig ?? defaultConfig()).unit);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [includeCashCtx, setIncludeCashCtx] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -56,9 +69,11 @@ export function AutoInvestSettings({ initialConfig, onBack }: Props) {
     setSaving(true);
     setError(null);
     try {
+      const intervalSeconds = Math.max(1, freqValue) * unitToSeconds[freqUnit];
+      const configToSave = { ...config, interval_seconds: intervalSeconds, interval_days: 0 };
       const configSave = isEdit && initialConfig?.id
-        ? updateAutoInvestConfig(initialConfig.id, config)
-        : createAutoInvestConfig(config);
+        ? updateAutoInvestConfig(initialConfig.id, configToSave)
+        : createAutoInvestConfig(configToSave);
       const profileSave = profile
         ? saveProfile({ ...profile, include_cash_context: includeCashCtx })
         : Promise.resolve(null);
@@ -195,25 +210,27 @@ export function AutoInvestSettings({ initialConfig, onBack }: Props) {
         <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
           Frequency
         </label>
-        <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-          {frequencyOptions.map(({ days, label }) => {
-            const active = (config.interval_days ?? 1) === days;
-            return (
-              <button
-                key={days}
-                onClick={() => setConfig({ ...config, interval_days: days })}
-                style={{
-                  padding: "8px 16px", borderRadius: "20px", border: "1.5px solid",
-                  borderColor: active ? "#1a1a1a" : "#e0e0e0",
-                  background: active ? "#1a1a1a" : "white",
-                  color: active ? "white" : "#555",
-                  fontSize: "13px", fontWeight: 500, cursor: "pointer",
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
+        <div style={{ display: "flex", alignItems: "center", marginTop: "8px", border: "1px solid #e0e0e0", borderRadius: "8px", overflow: "hidden", width: "fit-content" }}>
+          <span style={{ padding: "9px 12px", fontSize: "13px", color: "#888", background: "#f8f8f8", borderRight: "1px solid #e0e0e0", whiteSpace: "nowrap" }}>
+            Every
+          </span>
+          <input
+            type="number" min={1} value={freqValue}
+            onChange={(e) => setFreqValue(Math.max(1, Number(e.target.value)))}
+            style={{ width: "52px", padding: "9px 8px", border: "none", outline: "none", fontSize: "14px", textAlign: "center" }}
+          />
+          <select
+            value={freqUnit}
+            onChange={(e) => setFreqUnit(e.target.value)}
+            style={{ padding: "9px 8px", border: "none", borderLeft: "1px solid #e0e0e0", outline: "none", fontSize: "14px", background: "#f8f8f8", cursor: "pointer", color: "#333" }}
+          >
+            {import.meta.env.DEV && <option value="s">s</option>}
+            {import.meta.env.DEV && <option value="m">m</option>}
+            <option value="h">h</option>
+            <option value="d">d</option>
+            <option value="mo">mo</option>
+            <option value="y">y</option>
+          </select>
         </div>
       </div>
 

@@ -17,7 +17,9 @@ const (
 	AutoInvestConfigURI     = "/users/auto-invest/config"
 	CashContextURI      = "/users/cash-context"
 	NotificationsURI    = "/users/notifications"
-	ActivityURI         = "/users/activity"
+	ActivityURI             = "/users/activity"
+	ActivityByStrategyURI   = "/users/activity/by-strategy"
+	ActivityStrategyPnLURI  = "/users/activity/by-strategy/pnl"
 
 	PlaidLinkTokenURI = "/plaid/link-token"
 	PlaidExchangeURI  = "/plaid/exchange"

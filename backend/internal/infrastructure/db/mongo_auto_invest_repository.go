@@ -23,7 +23,8 @@ type autoInvestConfigDoc struct {
 	Amount       float64            `bson:"amount"`
 	Risk         string             `bson:"risk"`
 	Strategy     string             `bson:"strategy,omitempty"`
-	IntervalDays int                `bson:"interval_days,omitempty"`
+	IntervalDays    int                `bson:"interval_days,omitempty"`
+	IntervalSeconds int                `bson:"interval_seconds,omitempty"`
 	EnabledAt    time.Time          `bson:"enabled_at,omitempty"`
 	UpdatedAt    time.Time          `bson:"updated_at"`
 	LastRunAt    *time.Time         `bson:"last_run_at,omitempty"`
@@ -71,12 +72,13 @@ func (r *MongoAutoInvestRepository) Upsert(ctx context.Context, config *models.A
 	config.UpdatedAt = time.Now()
 
 	doc := bson.M{
-		"user_id":      config.UserID,
-		"enabled":      config.Enabled,
-		"amount":       config.Amount,
-		"risk":         string(config.Risk),
-		"interval_days": config.IntervalDays,
-		"updated_at":   config.UpdatedAt,
+		"user_id":          config.UserID,
+		"enabled":          config.Enabled,
+		"amount":           config.Amount,
+		"risk":             string(config.Risk),
+		"interval_days":    config.IntervalDays,
+		"interval_seconds": config.IntervalSeconds,
+		"updated_at":       config.UpdatedAt,
 	}
 	if config.Enabled && !config.EnabledAt.IsZero() {
 		doc["enabled_at"] = config.EnabledAt
@@ -119,17 +121,18 @@ func (r *MongoAutoInvestRepository) GetAllEnabled(ctx context.Context) ([]models
 
 func toAutoInvestConfig(doc *autoInvestConfigDoc) *models.AutoInvestConfig {
 	return &models.AutoInvestConfig{
-		ID:           doc.ID.Hex(),
-		UserID:       doc.UserID,
-		Name:         doc.Name,
-		Enabled:      doc.Enabled,
-		Amount:       doc.Amount,
-		Risk:         models.RiskTolerance(doc.Risk),
-		Strategy:     doc.Strategy,
-		IntervalDays: doc.IntervalDays,
-		EnabledAt:    doc.EnabledAt,
-		UpdatedAt:    doc.UpdatedAt,
-		LastRunAt:    doc.LastRunAt,
+		ID:              doc.ID.Hex(),
+		UserID:          doc.UserID,
+		Name:            doc.Name,
+		Enabled:         doc.Enabled,
+		Amount:          doc.Amount,
+		Risk:            models.RiskTolerance(doc.Risk),
+		Strategy:        doc.Strategy,
+		IntervalDays:    doc.IntervalDays,
+		IntervalSeconds: doc.IntervalSeconds,
+		EnabledAt:       doc.EnabledAt,
+		UpdatedAt:       doc.UpdatedAt,
+		LastRunAt:       doc.LastRunAt,
 	}
 }
 
@@ -175,21 +178,23 @@ func (r *MongoAutoInvestRepository) Create(ctx context.Context, config *models.A
 
 	now := time.Now()
 	config.UpdatedAt = now
-	if config.IntervalDays <= 0 {
+	// Require at least one interval — default to 1 day when neither is set.
+	if config.IntervalSeconds <= 0 && config.IntervalDays <= 0 {
 		config.IntervalDays = 1
 	}
 
 	doc := autoInvestConfigDoc{
-		ID:           primitive.NewObjectID(),
-		UserID:       config.UserID,
-		Name:         config.Name,
-		Enabled:      config.Enabled,
-		Amount:       config.Amount,
-		Risk:         string(config.Risk),
-		Strategy:     config.Strategy,
-		IntervalDays: config.IntervalDays,
-		EnabledAt:    config.EnabledAt,
-		UpdatedAt:    config.UpdatedAt,
+		ID:              primitive.NewObjectID(),
+		UserID:          config.UserID,
+		Name:            config.Name,
+		Enabled:         config.Enabled,
+		Amount:          config.Amount,
+		Risk:            string(config.Risk),
+		Strategy:        config.Strategy,
+		IntervalDays:    config.IntervalDays,
+		IntervalSeconds: config.IntervalSeconds,
+		EnabledAt:       config.EnabledAt,
+		UpdatedAt:       config.UpdatedAt,
 	}
 	if _, err := r.collection.InsertOne(ctx, doc); err != nil {
 		return nil, fmt.Errorf("mongo auto-invest repo: create: %w", err)
@@ -210,13 +215,14 @@ func (r *MongoAutoInvestRepository) UpdateByID(ctx context.Context, configID, us
 	config.UpdatedAt = time.Now()
 
 	setFields := bson.M{
-		"name":          config.Name,
-		"enabled":       config.Enabled,
-		"amount":        config.Amount,
-		"risk":          string(config.Risk),
-		"strategy":      config.Strategy,
-		"interval_days": config.IntervalDays,
-		"updated_at":    config.UpdatedAt,
+		"name":             config.Name,
+		"enabled":          config.Enabled,
+		"amount":           config.Amount,
+		"risk":             string(config.Risk),
+		"strategy":         config.Strategy,
+		"interval_days":    config.IntervalDays,
+		"interval_seconds": config.IntervalSeconds,
+		"updated_at":       config.UpdatedAt,
 	}
 	update := bson.M{"$set": setFields}
 	if config.Enabled && !config.EnabledAt.IsZero() {

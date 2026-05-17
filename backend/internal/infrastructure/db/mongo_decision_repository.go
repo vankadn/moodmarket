@@ -19,6 +19,7 @@ import (
 type decisionDocument struct {
 	ID             primitive.ObjectID  `bson:"_id"`
 	UserID         string              `bson:"user_id"`
+	ConfigID       string              `bson:"config_id,omitempty"`
 	Timestamp      time.Time           `bson:"timestamp"`
 	MarketSnapshot *marketSnapshotDoc  `bson:"market_snapshot,omitempty"`
 	Allocations    []allocationDoc     `bson:"allocations"`
@@ -68,7 +69,17 @@ type MongoDecisionRepository struct {
 }
 
 func NewMongoDecisionRepository(db *mongo.Database) *MongoDecisionRepository {
-	return &MongoDecisionRepository{collection: db.Collection("decisions")}
+	coll := db.Collection("decisions")
+	// Compound index covers per-strategy aggregation (user_id + config_id) and date-range
+	// queries (user_id + timestamp). Idempotent on restart.
+	_, _ = coll.Indexes().CreateOne(context.Background(), mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "user_id", Value: 1},
+			{Key: "config_id", Value: 1},
+			{Key: "timestamp", Value: -1},
+		},
+	})
+	return &MongoDecisionRepository{collection: coll}
 }
 
 func (r *MongoDecisionRepository) Save(ctx context.Context, decision *models.InvestmentDecision) error {
@@ -138,12 +149,106 @@ func (r *MongoDecisionRepository) ListByUserSince(ctx context.Context, userID st
 	return decisions, nil
 }
 
+func (r *MongoDecisionRepository) ActivityByStrategy(ctx context.Context, userID string) ([]models.StrategyActivity, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{"user_id": userID}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$config_id"},
+			{Key: "total_invested", Value: bson.M{"$sum": "$total_amount"}},
+			{Key: "decision_count", Value: bson.M{"$sum": 1}},
+			{Key: "first_run_at", Value: bson.M{"$min": "$timestamp"}},
+			{Key: "last_run_at", Value: bson.M{"$max": "$timestamp"}},
+		}}},
+		{{Key: "$sort", Value: bson.D{{Key: "last_run_at", Value: -1}}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("mongo decision repo: activity by strategy: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	type aggResult struct {
+		ConfigID      string    `bson:"_id"`
+		TotalInvested float64   `bson:"total_invested"`
+		DecisionCount int       `bson:"decision_count"`
+		FirstRunAt    time.Time `bson:"first_run_at"`
+		LastRunAt     time.Time `bson:"last_run_at"`
+	}
+
+	var raw []aggResult
+	if err := cursor.All(ctx, &raw); err != nil {
+		return nil, fmt.Errorf("mongo decision repo: activity by strategy decode: %w", err)
+	}
+
+	activities := make([]models.StrategyActivity, len(raw))
+	for i, a := range raw {
+		activities[i] = models.StrategyActivity{
+			ConfigID:      a.ConfigID,
+			TotalInvested: a.TotalInvested,
+			DecisionCount: a.DecisionCount,
+			FirstRunAt:    a.FirstRunAt,
+			LastRunAt:     a.LastRunAt,
+		}
+	}
+	return activities, nil
+}
+
+func (r *MongoDecisionRepository) CostBasisByStrategy(ctx context.Context, userID string) (map[string]map[string]float64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{"user_id": userID}}},
+		{{Key: "$unwind", Value: "$allocations"}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: bson.D{
+				{Key: "config_id", Value: "$config_id"},
+				{Key: "ticker", Value: "$allocations.ticker"},
+			}},
+			{Key: "amount", Value: bson.M{"$sum": "$allocations.amount"}},
+		}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("mongo decision repo: cost basis by strategy: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	type aggResult struct {
+		ID struct {
+			ConfigID string `bson:"config_id"`
+			Ticker   string `bson:"ticker"`
+		} `bson:"_id"`
+		Amount float64 `bson:"amount"`
+	}
+
+	var raw []aggResult
+	if err := cursor.All(ctx, &raw); err != nil {
+		return nil, fmt.Errorf("mongo decision repo: cost basis by strategy decode: %w", err)
+	}
+
+	result := make(map[string]map[string]float64)
+	for _, a := range raw {
+		if result[a.ID.ConfigID] == nil {
+			result[a.ID.ConfigID] = make(map[string]float64)
+		}
+		result[a.ID.ConfigID][a.ID.Ticker] = a.Amount
+	}
+	return result, nil
+}
+
 // --- Conversion helpers ---
 
 func fromDecision(d *models.InvestmentDecision) *decisionDocument {
 	doc := &decisionDocument{
 		ID:          primitive.NewObjectID(),
 		UserID:      d.UserID,
+		ConfigID:    d.ConfigID,
 		Timestamp:   d.Timestamp,
 		Allocations: fromAllocations(d.Allocations),
 		Receipts:    fromReceipts(d.Receipts),
@@ -161,6 +266,7 @@ func toDecision(doc *decisionDocument) models.InvestmentDecision {
 	d := models.InvestmentDecision{
 		ID:          doc.ID.Hex(),
 		UserID:      doc.UserID,
+		ConfigID:    doc.ConfigID,
 		Timestamp:   doc.Timestamp,
 		Allocations: toAllocations(doc.Allocations),
 		Receipts:    toReceipts(doc.Receipts),

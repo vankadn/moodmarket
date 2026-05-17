@@ -13,7 +13,8 @@ type AutoInvestConfig struct {
 	Amount       float64       `json:"amount"`
 	Risk         RiskTolerance `json:"risk"`
 	Strategy     string        `json:"strategy,omitempty"` // "long_term" | "short_term"
-	IntervalDays int           `json:"interval_days,omitempty"`
+	IntervalDays    int           `json:"interval_days,omitempty"`
+	IntervalSeconds int           `json:"interval_seconds,omitempty"` // when > 0, overrides interval_days
 	EnabledAt    time.Time     `json:"enabled_at,omitempty"`
 	UpdatedAt    time.Time     `json:"updated_at"`
 	LastRunAt    *time.Time    `json:"last_run_at,omitempty"`

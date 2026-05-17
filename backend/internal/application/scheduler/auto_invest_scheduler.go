@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -46,11 +47,20 @@ func NewAutoInvestScheduler(
 }
 
 // Start runs the ticker loop in the calling goroutine. Call via go scheduler.Start(ctx).
-// Ticks every hour; per-user interval_days controls actual run frequency.
+// Tick interval is read from AUTO_INVEST_TICK env var (default 1h).
+// Set AUTO_INVEST_TICK=30s in .env for fast local testing of short per-user intervals.
 func (s *AutoInvestScheduler) Start(ctx context.Context) {
-	ticker := time.NewTicker(time.Hour)
+	tick := time.Hour
+	if raw := os.Getenv("AUTO_INVEST_TICK"); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			tick = d
+		} else {
+			log.Printf("[scheduler] invalid AUTO_INVEST_TICK %q — defaulting to 1h", raw)
+		}
+	}
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
-	log.Printf("[scheduler] started — hourly check, per-user interval applies")
+	log.Printf("[scheduler] started — tick=%s, per-user interval applies", tick)
 
 	for {
 		select {
@@ -64,16 +74,23 @@ func (s *AutoInvestScheduler) Start(ctx context.Context) {
 }
 
 // isDue returns true when a user's run interval has elapsed.
-// IntervalDays == 0 is treated as 1 (daily). LastRunAt == nil means never run.
+// IntervalSeconds takes priority when > 0; falls back to IntervalDays (0 treated as 1 day).
+// LastRunAt == nil means the config has never run — always due immediately.
 func isDue(cfg models.AutoInvestConfig) bool {
-	days := cfg.IntervalDays
-	if days <= 0 {
-		days = 1
+	var interval time.Duration
+	if cfg.IntervalSeconds > 0 {
+		interval = time.Duration(cfg.IntervalSeconds) * time.Second
+	} else {
+		days := cfg.IntervalDays
+		if days <= 0 {
+			days = 1
+		}
+		interval = time.Duration(days) * 24 * time.Hour
 	}
 	if cfg.LastRunAt == nil {
 		return true
 	}
-	return time.Since(*cfg.LastRunAt) >= time.Duration(days)*24*time.Hour
+	return time.Since(*cfg.LastRunAt) >= interval
 }
 
 func (s *AutoInvestScheduler) runCycle(ctx context.Context) {

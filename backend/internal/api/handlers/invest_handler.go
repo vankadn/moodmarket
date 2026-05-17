@@ -16,7 +16,7 @@ import (
 // investUseCase is the local interface the handler depends on.
 // Defined here so the handler never imports the services package directly.
 type investUseCase interface {
-	Execute(ctx context.Context, userID string, allocations []models.Allocation, totalAmount float64, riskLevel, summary string, perAllocBrokerage map[string]string) ([]models.TradeReceipt, string, error)
+	Execute(ctx context.Context, userID string, allocations []models.Allocation, totalAmount float64, riskLevel, summary string, perAllocBrokerage map[string]string, configID string) ([]models.TradeReceipt, string, error)
 }
 
 type InvestHandler struct {
@@ -66,7 +66,7 @@ func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	receipts, decisionID, err := h.service.Execute(ctx, userID, body.Allocations, body.TotalAmount, body.RiskLevel, body.Summary, body.PerAllocBrokerage)
+	receipts, decisionID, err := h.service.Execute(ctx, userID, body.Allocations, body.TotalAmount, body.RiskLevel, body.Summary, body.PerAllocBrokerage, "manual")
 	if err != nil {
 		if errors.Is(err, ports.ErrBrokerageNotConnected) {
 			http.Error(w, "no brokerage account connected", http.StatusBadRequest)
