@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-16 (Phase 16c — Multi-config auto-invest + named strategy prompts)
+> Last updated: 2026-05-16 (Phase 16c — Multi-config auto-invest + strategies loading perf)
 
 ---
 
@@ -764,6 +764,12 @@ No code changes. Infrastructure and configuration only.
 - `AutoInvestSettings.tsx`: unified create/edit form; `isEdit = !!initialConfig?.id`; delete with confirm step; `autoName(strategy, risk)` auto-fills name on selection changes; name field still editable
 - `AppShell.tsx`: `"auto-invest-list"` state added; Auto-invest row navigates to list; list → settings with `selectedAutoInvestConfig` passed through
 - `Home.tsx`: uses `getAutoInvestConfigs()`, derives enabled count from array; label: "Off" / "Enabled — $X/day" / "N active"
+
+**Performance fix — strategies loading (same session)**
+- `NewMongoAutoInvestRepository`: creates `user_id` ascending index on `auto_invest_configs` at startup — eliminates full collection scan on `GetAllByUserID`; idempotent on restart
+- `AppShell.tsx`: fetches `getAutoInvestConfigs()` in parallel with `getProfile()` during initial load screen; `autoInvestConfigs` state lifted to AppShell
+- `AutoInvestList.tsx`: accepts `initialConfigs` prop, renders immediately with no spinner if data present; background re-fetch keeps it fresh and syncs back to AppShell
+- `Home.tsx`: removed own `getAutoInvestConfigs()` fetch — reads from AppShell prop instead
 
 ### Phase 17 — Alpaca Real Trading (Planned)
 
