@@ -82,7 +82,8 @@ func (r *resendEmailProvider) SendInvestmentSummary(ctx context.Context, to port
 		`<p>%s</p><p><strong>$%.2f</strong> invested across %d position(s):</p><ul>%s</ul><p>Open InvestIQ to review your portfolio.</p>`,
 		intro, totalInvested, len(receipts), strings.Join(lines, ""),
 	)
-	return r.send(ctx, to.Email, fmt.Sprintf("InvestIQ invested $%.2f today", totalInvested), html)
+	subject := fmt.Sprintf("Your InvestIQ summary — %s", time.Now().Format("January 2, 2006"))
+	return r.send(ctx, to.Email, subject, html)
 }
 
 func (r *resendEmailProvider) SendInvestmentFailure(ctx context.Context, to ports.NotificationTarget, reason string) error {
