@@ -10,6 +10,7 @@ type InvestmentRequest struct {
 	RecentDecisions    []InvestmentDecision `json:"-"` // last N decisions; injected by recommendation service
 	NewsItems          []NewsItem           `json:"-"` // today's market headlines; injected by recommendation service
 	TaxDocuments       []*TaxDocument       `json:"-"` // verified tax docs (W2/1099/1098); injected by recommendation service
+	StrategyPrompt     string               `json:"-"` // optional; prepended to Claude system prompt when set
 }
 
 type Allocation struct {

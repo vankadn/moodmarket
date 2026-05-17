@@ -166,7 +166,7 @@ func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.Invest
 		if attempt > 1 {
 			log.Printf("[advisor]   retry attempt %d/%d", attempt, maxAttempts)
 		}
-		rec, full, err := c.callClaudeWithTools(ctx, messages)
+		rec, full, err := c.callClaudeWithTools(ctx, messages, req.StrategyPrompt)
 		if err == nil {
 			log.Printf("[advisor] ══ DONE   %d allocations  risk=%s  total=$%.2f", len(rec.Allocations), rec.RiskLevel, rec.TotalBudget)
 			log.Printf("[advisor]   summary: %q", rec.Summary)
@@ -212,7 +212,7 @@ func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.Invest
 // Each tool is removed from the available set after its first call, so Claude cannot
 // request the same tool twice. This prevents a nil toolResults bug (nil stored in
 // interface{} marshals as JSON null, not [], which the API rejects).
-func (c *claudeAdvisor) callClaudeWithTools(ctx context.Context, messages []claudeMessage) (*models.Recommendation, string, error) {
+func (c *claudeAdvisor) callClaudeWithTools(ctx context.Context, messages []claudeMessage, strategyPrompt string) (*models.Recommendation, string, error) {
 	// Start with all tools available; remove each one after its first use.
 	remainingTools := make([]claudeTool, len(marketNewsTools))
 	copy(remainingTools, marketNewsTools)
@@ -220,7 +220,7 @@ func (c *claudeAdvisor) callClaudeWithTools(ctx context.Context, messages []clau
 	for turn := 1; turn <= maxToolIterations; turn++ {
 		log.Printf("[advisor] TURN %d →  sending to Claude  (conversation: %d message(s), tools available: %d)", turn, len(messages), len(remainingTools))
 
-		apiResp, err := c.doAPICall(ctx, messages, remainingTools)
+		apiResp, err := c.doAPICall(ctx, messages, remainingTools, strategyPrompt)
 		if err != nil {
 			log.Printf("[advisor] TURN %d     API call failed: %v", turn, err)
 			return nil, "", err
@@ -299,7 +299,7 @@ func removeToolByName(tools []claudeTool, name string) []claudeTool {
 // It uses its own perCallTimeout context so that a tight HTTP request deadline
 // (e.g. a 30-second server write-timeout) cannot abort a call that began with
 // sufficient time. Parent cancellation (server shutdown, etc.) is still respected.
-func (c *claudeAdvisor) doAPICall(parentCtx context.Context, messages []claudeMessage, tools []claudeTool) (*claudeAPIResponse, error) {
+func (c *claudeAdvisor) doAPICall(parentCtx context.Context, messages []claudeMessage, tools []claudeTool, strategyPrompt string) (*claudeAPIResponse, error) {
 	callCtx, cancel := context.WithTimeout(context.Background(), perCallTimeout)
 	defer cancel()
 	// Propagate explicit parent cancellation without inheriting its deadline.
@@ -311,18 +311,22 @@ func (c *claudeAdvisor) doAPICall(parentCtx context.Context, messages []claudeMe
 		}
 	}()
 
+	system := []claudeSystemBlock{}
+	if strategyPrompt != "" {
+		system = append(system, claudeSystemBlock{Type: "text", Text: strategyPrompt})
+	}
+	system = append(system, claudeSystemBlock{
+		Type:         "text",
+		Text:         systemPrompt,
+		CacheControl: &claudeCacheControl{Type: "ephemeral"},
+	})
+
 	body := claudeAPIRequest{
 		Model:     claudeModel,
 		MaxTokens: 1024,
-		System: []claudeSystemBlock{
-			{
-				Type:         "text",
-				Text:         systemPrompt,
-				CacheControl: &claudeCacheControl{Type: "ephemeral"},
-			},
-		},
-		Messages: messages,
-		Tools:    tools,
+		System:    system,
+		Messages:  messages,
+		Tools:     tools,
 	}
 
 	payload, err := json.Marshal(body)
