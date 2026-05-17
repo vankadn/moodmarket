@@ -130,8 +130,12 @@ func main() {
 	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar)
 	go autoInvestScheduler.Start(ctx)
 
+	verdictJob := scheduler.NewVerdictJob(decisionRepo, profileRepo, brokerageFactory, marketProvider)
+	go verdictJob.Start(ctx)
+
 	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)
 	activityHandler := handlers.NewActivityHandler(idp, decisionRepo)
+	evalHandler := handlers.NewEvalHandler(idp, decisionRepo)
 	orderHandler := handlers.NewOrderHandler(idp, profileRepo, brokerageFactory)
 	documentHandler := handlers.NewDocumentHandler(documentSvc, idp)
 
@@ -154,6 +158,7 @@ func main() {
 		Order:                http.HandlerFunc(orderHandler.GetOrder),
 		Document:             documentHandler,
 		Docs:                 handlers.NewDocsHandler(),
+		Eval:                 evalHandler,
 	}
 
 	port := os.Getenv("PORT")

@@ -71,14 +71,14 @@ func (p *polygonProvider) GetDailySnapshot(ctx context.Context) (*models.MarketS
 	return snapshot, nil
 }
 
-// fetch makes the two Polygon API calls and assembles a MarketSnapshot.
+// fetch makes the Polygon API calls and assembles a MarketSnapshot.
 func (p *polygonProvider) fetch(ctx context.Context) (*models.MarketSnapshot, error) {
-	spyPct, err := p.fetchPrevDayChange(ctx, "SPY")
+	spyPct, spyClose, err := p.fetchPrevDay(ctx, "SPY")
 	if err != nil {
 		return nil, fmt.Errorf("polygon: fetch SPY: %w", err)
 	}
 
-	qqqPct, err := p.fetchPrevDayChange(ctx, "QQQ")
+	qqqPct, _, err := p.fetchPrevDay(ctx, "QQQ")
 	if err != nil {
 		return nil, fmt.Errorf("polygon: fetch QQQ: %w", err)
 	}
@@ -90,6 +90,7 @@ func (p *polygonProvider) fetch(ctx context.Context) (*models.MarketSnapshot, er
 
 	return &models.MarketSnapshot{
 		Date:              time.Now().Format("2006-01-02"),
+		SPYPrice:          spyClose,
 		SPYChangePercent:  spyPct,
 		QQQChangePercent:  qqqPct,
 		SectorPerformance: sectors,
@@ -98,14 +99,14 @@ func (p *polygonProvider) fetch(ctx context.Context) (*models.MarketSnapshot, er
 	}, nil
 }
 
-// fetchPrevDayChange calls /v2/aggs/ticker/{ticker}/prev and returns
-// the previous day's open-to-close percentage change.
-func (p *polygonProvider) fetchPrevDayChange(ctx context.Context, ticker string) (float64, error) {
+// fetchPrevDay calls /v2/aggs/ticker/{ticker}/prev and returns both
+// the open-to-close percentage change and the closing price.
+func (p *polygonProvider) fetchPrevDay(ctx context.Context, ticker string) (changePct float64, closePrice float64, err error) {
 	url := fmt.Sprintf("%s/v2/aggs/ticker/%s/prev?adjusted=true&apiKey=%s", polygonBaseURL, ticker, p.apiKey)
 	log.Printf("[polygon] GET prev-day %s", ticker)
-	body, err := p.get(ctx, url)
-	if err != nil {
-		return 0, err
+	body, fetchErr := p.get(ctx, url)
+	if fetchErr != nil {
+		return 0, 0, fetchErr
 	}
 	log.Printf("[polygon] prev-day %s raw response: %s", ticker, body)
 
@@ -117,19 +118,26 @@ func (p *polygonProvider) fetchPrevDayChange(ctx context.Context, ticker string)
 		Status string `json:"status"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return 0, fmt.Errorf("parse prev response: %w", err)
+		return 0, 0, fmt.Errorf("parse prev response: %w", err)
 	}
 	log.Printf("[polygon] prev-day %s status=%q results=%d", ticker, resp.Status, len(resp.Results))
 	if len(resp.Results) == 0 {
-		return 0, fmt.Errorf("no results for %s (markets may be closed)", ticker)
+		return 0, 0, fmt.Errorf("no results for %s (markets may be closed)", ticker)
 	}
 	r := resp.Results[0]
 	if r.Open == 0 {
-		return 0, fmt.Errorf("zero open price for %s", ticker)
+		return 0, 0, fmt.Errorf("zero open price for %s", ticker)
 	}
 	pct := (r.Close - r.Open) / r.Open * 100
 	log.Printf("[polygon] prev-day %s open=%.4f close=%.4f change=%.4f%%", ticker, r.Open, r.Close, pct)
-	return pct, nil
+	return pct, r.Close, nil
+}
+
+// GetPrice returns the previous-day close price for a single ticker.
+// Satisfies the MarketDataProvider.GetPrice port — used by the verdict stamper as the Polygon data point.
+func (p *polygonProvider) GetPrice(ctx context.Context, ticker string) (float64, error) {
+	_, closePrice, err := p.fetchPrevDay(ctx, ticker)
+	return closePrice, err
 }
 
 // fetchSectorPerformance calls the snapshot endpoint for all sector ETFs and returns
@@ -145,7 +153,7 @@ func (p *polygonProvider) fetchSectorPerformance(ctx context.Context) (map[strin
 	for sectorName, etf := range sectorETFs {
 		sectorName, etf := sectorName, etf
 		go func() {
-			pct, err := p.fetchPrevDayChange(ctx, etf)
+			pct, _, err := p.fetchPrevDay(ctx, etf)
 			ch <- result{sector: sectorName, pct: pct, err: err}
 		}()
 	}

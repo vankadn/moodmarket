@@ -12,4 +12,7 @@ import (
 // interface is the only thing the application layer ever touches.
 type MarketDataProvider interface {
 	GetDailySnapshot(ctx context.Context) (*models.MarketSnapshot, error)
+	// GetPrice returns the previous-day close price for a single ticker.
+	// Used by the verdict stamper as the Polygon data point alongside Alpaca's real-time quote.
+	GetPrice(ctx context.Context, ticker string) (float64, error)
 }

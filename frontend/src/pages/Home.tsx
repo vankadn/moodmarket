@@ -11,10 +11,10 @@ interface Props {
   onManageAccounts?: () => void;
   onAutoInvestSettings?: () => void;
   onNotificationSettings?: () => void;
-  onActivity?: () => void;
   onBrokerage?: () => void;
   onDocuments?: () => void;
   onPortfolio?: () => void;
+  onEval?: () => void;
 }
 
 const goalLabel: Record<string, string> = {
@@ -36,7 +36,7 @@ type HomeState = "idle" | "confirming" | "investing" | "receipt";
 const brokerageIsConnected = (brokerages: BrokerageStatus[] | undefined) =>
   (brokerages?.length ?? 0) > 0;
 
-export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, onAutoInvestSettings, onNotificationSettings, onActivity, onBrokerage, onDocuments, onPortfolio }: Props) {
+export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, onAutoInvestSettings, onNotificationSettings, onBrokerage, onDocuments, onPortfolio, onEval }: Props) {
   const [amount, setAmount] = useState<number>(100);
   const [perAllocBrokerage, setPerAllocBrokerage] = useState<Record<string, string>>({});
   const [cashCtx, setCashCtx] = useState<CashContext | null>(null);
@@ -153,9 +153,9 @@ export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, 
               Portfolio
             </button>
           )}
-          {onActivity && (
+          {onEval && (
             <button
-              onClick={onActivity}
+              onClick={onEval}
               style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
             >
               Activity

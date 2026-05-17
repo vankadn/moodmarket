@@ -14,6 +14,7 @@ type TickerSnapshot struct {
 // from the provider, and the advisor builds its prompt defensively.
 type MarketSnapshot struct {
 	Date              string             `json:"date"`
+	SPYPrice          float64            `json:"spy_price,omitempty"`  // previous-day close; used as benchmark entry in verdict stamping
 	SPYChangePercent  float64            `json:"spy_change_percent"`
 	QQQChangePercent  float64            `json:"qqq_change_percent"`
 	SectorPerformance map[string]float64 `json:"sector_performance"`

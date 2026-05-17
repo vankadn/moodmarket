@@ -20,6 +20,8 @@ const (
 	ActivityURI             = "/users/activity"
 	ActivityByStrategyURI   = "/users/activity/by-strategy"
 	ActivityStrategyPnLURI  = "/users/activity/by-strategy/pnl"
+	EvalSummaryURI          = "/users/eval/summary"
+	EvalDecisionsURI        = "/users/eval/decisions"
 
 	PlaidLinkTokenURI = "/plaid/link-token"
 	PlaidExchangeURI  = "/plaid/exchange"

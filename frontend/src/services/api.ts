@@ -367,6 +367,77 @@ export async function removeBrokerageConnection(connectionID: string): Promise<v
   if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
 
+// --- Eval (Phase 23) ---
+
+export interface EvalDecisionRef {
+  id: string;
+  date: string;
+  return_pct: number;
+  amount: number;
+}
+
+export interface StrategyEvalItem {
+  config_id: string;
+  win_rate: number;
+  avg_return_pct: number;
+  decision_count: number;
+}
+
+export interface EvalSummary {
+  total_decisions: number;
+  verdicted_decisions: number;
+  win_rate: number;         // 0.0–1.0
+  avg_return_pct: number;
+  avg_spy_return_pct: number;
+  best_decision?: EvalDecisionRef;
+  worst_decision?: EvalDecisionRef;
+  by_strategy: StrategyEvalItem[];
+}
+
+export interface TickerVerdictItem {
+  ticker: string;
+  entry_price: number;
+  prev_day_price: number;
+  prev_day_timestamp: string;
+  current_price: number;
+  current_timestamp: string;
+  return_pct: number;
+  today_change_pct: number;
+}
+
+export interface VerdictItem {
+  stamped_at: string;
+  overall_return_pct: number;
+  spy_return_pct: number;
+  beat_market: boolean;
+  ticker_verdicts: TickerVerdictItem[];
+}
+
+export interface EvalDecision {
+  id: string;
+  timestamp: string;
+  total_amount: number;
+  risk_level: string;
+  config_id?: string;
+  verdict: VerdictItem;
+}
+
+export async function getEvalSummary(): Promise<EvalSummary> {
+  const res = await fetch(`${API_BASE}/users/eval/summary`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function getEvalDecisions(page = 1, limit = 20): Promise<EvalDecision[]> {
+  const res = await fetch(`${API_BASE}/users/eval/decisions?page=${page}&limit=${limit}`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
 export async function connectBrokerage(apiKey: string, secretKey: string, baseURL: string): Promise<BrokerageStatus> {
   const res = await fetch(`${API_BASE}/brokerage/connect`, {
     method: "POST",

@@ -19,4 +19,7 @@ type BrokerageProvider interface {
 	// GetPortfolioHistory returns timestamped equity values for the given period and timeframe.
 	// period examples: "1D", "5D", "1M", "1A", "5A". timeframe examples: "5Min", "1H", "1D".
 	GetPortfolioHistory(ctx context.Context, userID, period, timeframe string) ([]models.HistoryPoint, error)
+	// GetCurrentPrice returns the real-time last trade price for a single ticker.
+	// Used by the verdict stamper to compute returns since entry.
+	GetCurrentPrice(ctx context.Context, ticker string) (float64, error)
 }

@@ -8,12 +8,12 @@ import { Home } from "./pages/Home";
 import { Profile } from "./pages/Profile";
 import { AutoInvestList } from "./pages/AutoInvestList";
 import { AutoInvestSettings } from "./pages/AutoInvestSettings";
-import { Activity } from "./pages/Activity";
 import { Portfolio } from "./pages/Portfolio";
 import { BrokerageConnect } from "./components/BrokerageConnect";
 import { Documents } from "./pages/Documents";
 import { NotificationSettingsPage } from "./pages/NotificationSettingsPage";
 import { AutoInvestConfig, getAutoInvestConfigs, getProfile, UserProfile } from "./services/api";
+import { Eval } from "./pages/Eval";
 
 export type AppState =
   | "loading"
@@ -23,10 +23,10 @@ export type AppState =
   | "auto-invest-list"
   | "auto-invest-settings"
   | "notifications"
-  | "activity"
   | "portfolio"
   | "brokerage"
-  | "documents";
+  | "documents"
+  | "eval";
 
 interface AppShellProps {
   signOut?: () => void;
@@ -119,10 +119,6 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
     );
   }
 
-  if (state === "activity") {
-    return <Activity onBack={() => setState("home")} />;
-  }
-
   if (state === "portfolio") {
     return <Portfolio onBack={() => setState("home")} />;
   }
@@ -141,6 +137,10 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
     return <Documents onBack={() => setState("home")} />;
   }
 
+  if (state === "eval") {
+    return <Eval onBack={() => setState("home")} autoInvestConfigs={autoInvestConfigs} />;
+  }
+
   return (
     <Home
       profile={profile!}
@@ -149,10 +149,10 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
       onManageAccounts={() => setState("profile")}
       onAutoInvestSettings={() => setState("auto-invest-list")}
       onNotificationSettings={() => setState("notifications")}
-      onActivity={() => setState("activity")}
       onPortfolio={() => setState("portfolio")}
       onBrokerage={() => setState("brokerage")}
       onDocuments={() => setState("documents")}
+      onEval={() => setState("eval")}
     />
   );
 }

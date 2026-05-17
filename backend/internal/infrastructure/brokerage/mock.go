@@ -69,6 +69,24 @@ func (m *MockBrokerageProvider) GetPortfolioHistory(_ context.Context, _ string,
 	return points, nil
 }
 
+func (m *MockBrokerageProvider) GetCurrentPrice(_ context.Context, ticker string) (float64, error) {
+	prices := map[string]float64{
+		"SPY":  522.00,
+		"QQQ":  447.00,
+		"VTI":  267.00,
+		"BND":  73.50,
+		"VXUS": 62.50,
+		"XLE":  89.00,
+		"XLF":  45.00,
+		"XLV":  143.00,
+		"XLI":  132.00,
+	}
+	if p, ok := prices[ticker]; ok {
+		return p, nil
+	}
+	return 152.00, nil
+}
+
 func (m *MockBrokerageProvider) GetPositions(_ context.Context, _ string) ([]models.Position, error) {
 	return []models.Position{
 		{Ticker: "VTI", Name: "Vanguard Total Market ETF", Quantity: 0.42, MarketValue: 98.50, CostBasis: 87.00, AvgEntryPrice: 207.14, UnrealizedPL: 11.50, UnrealizedPLPercent: 13.22},

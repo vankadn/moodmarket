@@ -29,6 +29,7 @@ type Handlers struct {
 	Order                 http.Handler // wrap with http.HandlerFunc if needed
 	Document              http.Handler
 	Docs                  http.Handler
+	Eval                  http.Handler
 }
 
 // Build returns the top-level http.Handler for the server.
@@ -53,6 +54,8 @@ func Build(h Handlers, authProvider ports.AuthProvider) http.Handler {
 	protected.Handle(ActivityStrategyPnLURI, h.ActivityStrategyPnL) // most specific — register first
 	protected.Handle(ActivityByStrategyURI, h.ActivityByStrategy)
 	protected.Handle(ActivityURI, h.Activity)
+	protected.Handle(EvalSummaryURI, h.Eval)
+	protected.Handle(EvalDecisionsURI, h.Eval)
 	protected.Handle(BrokerageConnectURI, h.Brokerage)
 	protected.Handle(BrokerageConnectionsURI, h.BrokerageConnections)
 	protected.Handle(BrokerageConnectionByIDURI, h.BrokerageConnections)

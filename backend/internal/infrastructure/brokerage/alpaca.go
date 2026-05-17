@@ -264,6 +264,44 @@ func (p *AlpacaProvider) GetPortfolioHistory(ctx context.Context, _ string, peri
 	return points, nil
 }
 
+// GetCurrentPrice returns the latest trade price for a ticker from Alpaca's market data API.
+// Uses the IEX feed (available on free tier). Falls back gracefully on non-200 responses.
+func (p *AlpacaProvider) GetCurrentPrice(ctx context.Context, ticker string) (float64, error) {
+	url := fmt.Sprintf("https://data.alpaca.markets/v2/stocks/%s/trades/latest?feed=iex", ticker)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("alpaca: build price request for %s: %w", ticker, err)
+	}
+	p.setHeaders(req)
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("alpaca: fetch price for %s: %w", ticker, err)
+	}
+	defer resp.Body.Close()
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("alpaca: read price response for %s: %w", ticker, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("alpaca: price API %d for %s: %s", resp.StatusCode, ticker, rawBody)
+	}
+
+	var result struct {
+		Trade struct {
+			Price float64 `json:"p"`
+		} `json:"trade"`
+	}
+	if err := json.Unmarshal(rawBody, &result); err != nil {
+		return 0, fmt.Errorf("alpaca: parse price response for %s: %w", ticker, err)
+	}
+	if result.Trade.Price <= 0 {
+		return 0, fmt.Errorf("alpaca: zero price returned for %s", ticker)
+	}
+	return result.Trade.Price, nil
+}
+
 func (p *AlpacaProvider) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("APCA-API-KEY-ID", p.apiKey)
