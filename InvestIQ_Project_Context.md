@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-16 (Phase 16b — Custom domain + Resend domain verified)
+> Last updated: 2026-05-16 (Phase 16c — Multi-config auto-invest + named strategy prompts)
 
 ---
 
@@ -730,6 +730,41 @@ No code changes. Infrastructure and configuration only.
 - Domain verified in Resend dashboard — real emails can now be sent to any recipient
 - From address in use: `noreply@investiq.fit`
 
+### Phase 16c — Multi-Config Auto-Invest + Named Strategy Prompts (Complete)
+
+**Named strategy prompts**
+- New file `backend/internal/application/advisor/prompts.go` defines `LongTermPrompt` and `ShortTermPrompt` constants
+- `InvestmentRequest` model gains `StrategyPrompt string \`json:"-"\`` field (not persisted)
+- `callClaudeWithTools` / `doAPICall` accept a `strategyPrompt string` parameter
+- Claude system block order: strategy prompt first (dynamic, no cache), base system prompt last (`cache_control: ephemeral`)
+- When `StrategyPrompt` is empty the base prompt is sent alone — no regression for manual invest flow
+
+**Multi-config auto-invest — domain**
+- `AutoInvestConfig` model gains `Name string` and `Strategy string` (`"long_term"` | `"short_term"`)
+- `AutoInvestRepository` port adds four new methods: `GetAllByUserID`, `Create`, `UpdateByID`, `DeleteByID`
+- `StampLastRunAt` signature changed from `(ctx, userID, t)` to `(ctx, configID, t)` — scheduler stamps the correct config, not all configs for a user
+
+**Multi-config auto-invest — infrastructure**
+- `mongoAutoInvestRepository` implements all four new methods
+- `Create`: `insertOne` with new `primitive.NewObjectID()`, normalises `interval_days ≤ 0 → 1`
+- `UpdateByID`: filter `{_id: oid, user_id: userID}`; `$unset enabled_at` when disabling (avoids stale field with `omitempty`)
+- `DeleteByID`: returns error if `DeletedCount == 0` (caller gets 500, prevents silent no-op)
+- `StampLastRunAt`: now filters by `{_id: oid}` — exact per-config stamp
+
+**Multi-config auto-invest — API**
+- New handler file `auto_invest_configs_handler.go` (CRUD for `/users/auto-invest/configs`)
+- Routes: `GET /configs` list, `POST /configs` create (201), `PUT /configs/:id` update, `DELETE /configs/:id` (204)
+- `multiConfigRequest` includes `EnabledAt *time.Time` so the frontend can round-trip an existing timestamp without a DB read
+- Routes registered in router: subtree `/configs/` before exact `/configs`, both before legacy `/config`
+- `main.go` wires `NewAutoInvestConfigsHandler`
+
+**Multi-config auto-invest — frontend**
+- `api.ts`: added `StrategyType`, `name?`/`strategy?` to `AutoInvestConfig`; four clean multi-config functions (`getAutoInvestConfigs`, `createAutoInvestConfig`, `updateAutoInvestConfig`, `deleteAutoInvestConfig`)
+- `AutoInvestList.tsx` (new): fetches all configs, shows name / Active pill / amount / strategy+risk subtitle, chevron navigation; "+ Add strategy" button
+- `AutoInvestSettings.tsx`: unified create/edit form; `isEdit = !!initialConfig?.id`; delete with confirm step; `autoName(strategy, risk)` auto-fills name on selection changes; name field still editable
+- `AppShell.tsx`: `"auto-invest-list"` state added; Auto-invest row navigates to list; list → settings with `selectedAutoInvestConfig` passed through
+- `Home.tsx`: uses `getAutoInvestConfigs()`, derives enabled count from array; label: "Off" / "Enabled — $X/day" / "N active"
+
 ### Phase 17 — Alpaca Real Trading (Planned)
 
 Switch from paper to live Alpaca trading. Per-user credentials already wired (Phase 8d) — this is a UI change (account type selector) + user supplying live keys. No backend code change required. Requires LLC entity before signing Alpaca Broker API agreement.
@@ -772,7 +807,7 @@ Features defined but not yet scheduled. Reviewed after each phase — promoted w
 | Macro indicators (Fed rate, inflation) | News context covers this for now |
 | Earnings calendar | Adds complexity, marginal value at current scale |
 | Per-user scheduler interval | Complete — Phase 14 |
-| Multiple auto-invest configs per user | Deferred |
+| Multiple auto-invest configs per user | Complete — Phase 16c |
 | Redis for Plaid balance cache | In-memory is fine until scale demands it |
 | Finnhub news + sentiment scores | Revisit when individual stock recommendations make per-ticker sentiment worth a new dependency; structured sentiment ("2 bearish") is stronger signal than Claude inferring from text, but not worth the extra key at current ETF-only scope |
 | Refactor: single app shell | Complete — Phase 15b |

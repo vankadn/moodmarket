@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ConfirmScreen } from "../components/ConfirmScreen";
 import { ReceiptScreen } from "../components/ReceiptScreen";
 import { CashContextCard } from "../components/CashContextCard";
-import { getRecommendation, invest, getAutoInvestConfig, getCashContext, AutoInvestConfig, BrokerageStatus, CashContext, Recommendation, TradeReceipt, UserProfile } from "../services/api";
+import { getRecommendation, invest, getAutoInvestConfigs, getCashContext, AutoInvestConfig, BrokerageStatus, CashContext, Recommendation, TradeReceipt, UserProfile } from "../services/api";
 
 interface Props {
   profile: UserProfile;
@@ -38,7 +38,7 @@ const brokerageIsConnected = (brokerages: BrokerageStatus[] | undefined) =>
 export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onNotificationSettings, onActivity, onBrokerage, onDocuments, onPortfolio }: Props) {
   const [amount, setAmount] = useState<number>(100);
   const [perAllocBrokerage, setPerAllocBrokerage] = useState<Record<string, string>>({});
-  const [autoInvestConfig, setAutoInvestConfig] = useState<AutoInvestConfig | null>(null);
+  const [autoInvestConfigs, setAutoInvestConfigs] = useState<AutoInvestConfig[]>([]);
   const [cashCtx, setCashCtx] = useState<CashContext | null>(null);
   const [homeState, setHomeState] = useState<HomeState>("idle");
   const [rec, setRec] = useState<Recommendation | null>(null);
@@ -51,7 +51,7 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
   const brokerages = profile.brokerages ?? [];
 
   useEffect(() => {
-    getAutoInvestConfig().then(setAutoInvestConfig).catch(() => {});
+    getAutoInvestConfigs().then(setAutoInvestConfigs).catch(() => {});
     getCashContext().then(ctx => {
       if (ctx.has_data && ctx.runway_label === "tight") {
         const today = new Date().toISOString().slice(0, 10);
@@ -132,9 +132,11 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
     { label: "Horizon", value: horizonLabel[profile.time_horizon] ?? profile.time_horizon },
   ];
 
-  const autoInvestLabel = autoInvestConfig?.enabled
-    ? `Enabled — $${autoInvestConfig.amount}/day`
-    : "Off";
+  const enabledConfigs = autoInvestConfigs.filter(c => c.enabled);
+  const autoInvestLabel =
+    enabledConfigs.length === 0 ? "Off" :
+    enabledConfigs.length === 1 ? `Enabled — $${enabledConfigs[0].amount}/day` :
+    `${enabledConfigs.length} active`;
 
   return (
     <div style={{ maxWidth: "560px", margin: "0 auto", padding: "2rem 1rem" }}>
@@ -223,7 +225,7 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
           >
             <div>
               <div style={{ fontSize: "13px", fontWeight: 500, color: "#222" }}>Auto-invest</div>
-              <div style={{ fontSize: "11px", color: autoInvestConfig?.enabled ? "#27ae60" : "#999", marginTop: "2px" }}>
+              <div style={{ fontSize: "11px", color: enabledConfigs.length > 0 ? "#27ae60" : "#999", marginTop: "2px" }}>
                 {autoInvestLabel}
               </div>
             </div>

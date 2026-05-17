@@ -136,8 +136,8 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 				errs = append(errs, fmt.Sprintf("user=%s: %v", c.UserID, err))
 			} else {
 				totalInvested += invested
-				if stampErr := s.autoInvestRepo.StampLastRunAt(ctx, c.UserID, startedAt); stampErr != nil {
-					log.Printf("[scheduler] cycle %s — failed to stamp last_run_at for user=%s: %v", runID, c.UserID, stampErr)
+				if stampErr := s.autoInvestRepo.StampLastRunAt(ctx, c.ID, startedAt); stampErr != nil {
+					log.Printf("[scheduler] cycle %s — failed to stamp last_run_at for config=%s user=%s: %v", runID, c.ID, c.UserID, stampErr)
 				}
 			}
 		}(cfg, target)

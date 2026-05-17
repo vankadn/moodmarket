@@ -17,6 +17,7 @@ type Handlers struct {
 	Profile               http.Handler
 	Plaid                 http.Handler
 	AutoInvest            http.Handler
+	AutoInvestConfigs     http.Handler
 	CashContext           http.Handler
 	Activity              http.Handler // wrap with http.HandlerFunc if needed
 	Brokerage             http.Handler
@@ -42,6 +43,8 @@ func Build(h Handlers, authProvider ports.AuthProvider) http.Handler {
 	protected.Handle(PlaidLinkTokenURI, h.Plaid)
 	protected.Handle(PlaidExchangeURI, h.Plaid)
 	protected.Handle(PlaidAccountsURI, h.Plaid)
+	protected.Handle(AutoInvestConfigsByIDURI, h.AutoInvestConfigs) // subtree for /:id — must be before base
+	protected.Handle(AutoInvestConfigsURI, h.AutoInvestConfigs)
 	protected.Handle(AutoInvestConfigURI, h.AutoInvest)
 	protected.Handle(CashContextURI, h.CashContext)
 	protected.Handle(NotificationsURI, h.Notifications)

@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
-import { AutoInvestConfig, RiskTolerance, UserProfile, getAutoInvestConfig, saveAutoInvestConfig, getProfile, saveProfile } from "../services/api";
+import {
+  AutoInvestConfig, RiskTolerance, StrategyType, UserProfile,
+  createAutoInvestConfig, updateAutoInvestConfig, deleteAutoInvestConfig,
+  getProfile, saveProfile,
+} from "../services/api";
 
 interface Props {
+  initialConfig?: AutoInvestConfig;
   onBack: () => void;
 }
 
@@ -17,44 +22,64 @@ const frequencyOptions: { days: number; label: string }[] = [
   { days: 7, label: "Weekly" },
 ];
 
-export function AutoInvestSettings({ onBack }: Props) {
-  const [config, setConfig] = useState<AutoInvestConfig | null>(null);
+const strategyOptions: { value: StrategyType; label: string; description: string }[] = [
+  { value: "long_term",  label: "Long Term",  description: "ETFs only, 10+ year horizon" },
+  { value: "short_term", label: "Short Term", description: "ETFs + large-cap stocks, 1-year horizon" },
+];
+
+function autoName(strategy: string | undefined, risk: RiskTolerance): string {
+  const s = strategy === "long_term" ? "Long Term" : strategy === "short_term" ? "Short Term" : "";
+  const r = risk.charAt(0).toUpperCase() + risk.slice(1);
+  return s ? `${s} — ${r}` : r;
+}
+
+function defaultConfig(): AutoInvestConfig {
+  return { enabled: true, amount: 100, risk: "moderate", interval_days: 1, name: autoName("long_term", "moderate"), strategy: "long_term" };
+}
+
+export function AutoInvestSettings({ initialConfig, onBack }: Props) {
+  const isEdit = !!initialConfig?.id;
+  const [config, setConfig] = useState<AutoInvestConfig>(() => initialConfig ?? defaultConfig());
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [includeCashCtx, setIncludeCashCtx] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
-    getAutoInvestConfig().then(setConfig).catch(() => setError("Failed to load settings"));
-    getProfile().then(p => { setProfile(p); setIncludeCashCtx(p.include_cash_context); }).catch(() => {});
+    getProfile()
+      .then(p => { setProfile(p); setIncludeCashCtx(p.include_cash_context); })
+      .catch(() => {});
   }, []);
 
   async function handleSave() {
-    if (!config) return;
     setSaving(true);
     setError(null);
-    setSaved(false);
     try {
-      const [updated] = await Promise.all([
-        saveAutoInvestConfig(config),
-        profile ? saveProfile({ ...profile, include_cash_context: includeCashCtx }) : Promise.resolve(null),
-      ]);
-      setConfig(updated);
-      setSaved(true);
+      const configSave = isEdit && initialConfig?.id
+        ? updateAutoInvestConfig(initialConfig.id, config)
+        : createAutoInvestConfig(config);
+      const profileSave = profile
+        ? saveProfile({ ...profile, include_cash_context: includeCashCtx })
+        : Promise.resolve(null);
+      await Promise.all([configSave, profileSave]);
+      onBack();
     } catch {
       setError("Failed to save settings");
-    } finally {
       setSaving(false);
     }
   }
 
-  if (!config) {
-    return (
-      <div style={{ maxWidth: "560px", margin: "0 auto", padding: "2rem 1rem" }}>
-        <p style={{ color: "#888", fontSize: "14px" }}>{error ?? "Loading…"}</p>
-      </div>
-    );
+  async function handleDelete() {
+    if (!initialConfig?.id) return;
+    setSaving(true);
+    try {
+      await deleteAutoInvestConfig(initialConfig.id);
+      onBack();
+    } catch {
+      setError("Failed to delete strategy");
+      setSaving(false);
+    }
   }
 
   return (
@@ -66,7 +91,57 @@ export function AutoInvestSettings({ onBack }: Props) {
         >
           ← Back
         </button>
-        <h1 style={{ fontSize: "20px", fontWeight: 600, margin: 0 }}>Auto-invest settings</h1>
+        <h1 style={{ fontSize: "20px", fontWeight: 600, margin: 0 }}>
+          {isEdit ? "Edit strategy" : "New strategy"}
+        </h1>
+      </div>
+
+      {/* Name */}
+      <div style={{ marginBottom: "1.25rem" }}>
+        <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+          Strategy name
+        </label>
+        <input
+          type="text"
+          placeholder="e.g. Long Term — Aggressive"
+          value={config.name ?? ""}
+          onChange={(e) => setConfig({ ...config, name: e.target.value })}
+          style={{
+            display: "block", width: "100%", marginTop: "8px",
+            padding: "10px 12px", border: "1px solid #e0e0e0", borderRadius: "8px",
+            fontSize: "14px", outline: "none", boxSizing: "border-box",
+          }}
+        />
+      </div>
+
+      {/* Strategy */}
+      <div style={{ marginBottom: "1.25rem" }}>
+        <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+          Strategy
+        </label>
+        <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+          {strategyOptions.map(({ value, label, description }) => {
+            const active = (config.strategy ?? "long_term") === value;
+            return (
+              <button
+                key={value}
+                onClick={() => setConfig(prev => ({ ...prev, strategy: value, name: autoName(value, prev.risk) }))}
+                style={{
+                  flex: 1, padding: "10px 12px", borderRadius: "10px", border: "1.5px solid",
+                  borderColor: active ? "#1a1a1a" : "#e0e0e0",
+                  background: active ? "#1a1a1a" : "white",
+                  color: active ? "white" : "#555",
+                  fontSize: "13px", fontWeight: 500, cursor: "pointer", textAlign: "left",
+                }}
+              >
+                <div>{label}</div>
+                <div style={{ fontSize: "11px", marginTop: "3px", opacity: 0.7, fontWeight: 400 }}>
+                  {description}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Enable toggle */}
@@ -166,7 +241,7 @@ export function AutoInvestSettings({ onBack }: Props) {
           {riskOptions.map(({ value, label }) => (
             <button
               key={value}
-              onClick={() => setConfig({ ...config, risk: value })}
+              onClick={() => setConfig(prev => ({ ...prev, risk: value, name: autoName(prev.strategy, value) }))}
               style={{
                 padding: "8px 16px", borderRadius: "20px", border: "1.5px solid",
                 borderColor: config.risk === value ? "#1a1a1a" : "#e0e0e0",
@@ -186,11 +261,6 @@ export function AutoInvestSettings({ onBack }: Props) {
           {error}
         </div>
       )}
-      {saved && (
-        <div style={{ color: "#27ae60", fontSize: "13px", padding: "10px", background: "#f0fdf4", borderRadius: "8px", marginBottom: "1rem" }}>
-          Settings saved
-        </div>
-      )}
 
       <button
         onClick={handleSave}
@@ -201,10 +271,58 @@ export function AutoInvestSettings({ onBack }: Props) {
           color: "white", border: "none", borderRadius: "10px",
           fontSize: "15px", fontWeight: 500,
           cursor: saving ? "not-allowed" : "pointer",
+          marginBottom: "1rem",
         }}
       >
-        {saving ? "Saving…" : "Save settings"}
+        {saving ? "Saving…" : isEdit ? "Save changes" : "Create strategy"}
       </button>
+
+      {isEdit && !confirmDelete && (
+        <button
+          onClick={() => setConfirmDelete(true)}
+          style={{
+            width: "100%", padding: "13px",
+            background: "white", color: "#c0392b",
+            border: "1.5px solid #f5c6cb", borderRadius: "10px",
+            fontSize: "15px", fontWeight: 500, cursor: "pointer",
+          }}
+        >
+          Delete strategy
+        </button>
+      )}
+
+      {confirmDelete && (
+        <div style={{ padding: "14px 16px", background: "#fdf0ee", borderRadius: "10px", border: "1px solid #f5c6cb" }}>
+          <p style={{ margin: "0 0 12px", fontSize: "14px", color: "#c0392b", fontWeight: 500 }}>
+            Delete this strategy? This cannot be undone.
+          </p>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              onClick={handleDelete}
+              disabled={saving}
+              style={{
+                flex: 1, padding: "10px",
+                background: "#c0392b", color: "white",
+                border: "none", borderRadius: "8px",
+                fontSize: "14px", fontWeight: 500, cursor: saving ? "not-allowed" : "pointer",
+              }}
+            >
+              Yes, delete
+            </button>
+            <button
+              onClick={() => setConfirmDelete(false)}
+              style={{
+                flex: 1, padding: "10px",
+                background: "white", color: "#555",
+                border: "1.5px solid #e0e0e0", borderRadius: "8px",
+                fontSize: "14px", fontWeight: 500, cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

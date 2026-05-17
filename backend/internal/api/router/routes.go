@@ -12,7 +12,9 @@ const (
 	InvestURI    = "/invest"
 
 	ProfileURI          = "/users/profile"
-	AutoInvestConfigURI = "/users/auto-invest/config"
+	AutoInvestConfigsURI    = "/users/auto-invest/configs"
+	AutoInvestConfigsByIDURI = "/users/auto-invest/configs/" // subtree — config_id is path suffix
+	AutoInvestConfigURI     = "/users/auto-invest/config"
 	CashContextURI      = "/users/cash-context"
 	NotificationsURI    = "/users/notifications"
 	ActivityURI         = "/users/activity"

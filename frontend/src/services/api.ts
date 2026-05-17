@@ -40,12 +40,16 @@ export interface UserProfile {
   connected_accounts?: PlaidConnectionSummary[];
 }
 
+export type StrategyType = "long_term" | "short_term";
+
 export interface AutoInvestConfig {
   id?: string;
   user_id?: string;
+  name?: string;
   enabled: boolean;
   amount: number;
   risk: RiskTolerance;
+  strategy?: StrategyType;
   interval_days?: number;
   enabled_at?: string;
   updated_at?: string;
@@ -186,6 +190,43 @@ export async function saveAutoInvestConfig(config: AutoInvestConfig): Promise<Au
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
+}
+
+export async function getAutoInvestConfigs(): Promise<AutoInvestConfig[]> {
+  const res = await fetch(`${API_BASE}/users/auto-invest/configs`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  const data = await res.json();
+  return data || [];
+}
+
+export async function createAutoInvestConfig(config: AutoInvestConfig): Promise<AutoInvestConfig> {
+  const res = await fetch(`${API_BASE}/users/auto-invest/configs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function updateAutoInvestConfig(id: string, config: AutoInvestConfig): Promise<AutoInvestConfig> {
+  const res = await fetch(`${API_BASE}/users/auto-invest/configs/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteAutoInvestConfig(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/users/auto-invest/configs/${id}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
 
 export interface ActivityDecision {

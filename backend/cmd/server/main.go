@@ -142,6 +142,7 @@ func main() {
 		Profile:              handlers.NewProfileHandler(profileRepo, idp),
 		Plaid:                plaidHandler,
 		AutoInvest:           handlers.NewAutoInvestConfigHandler(autoInvestRepo, idp),
+		AutoInvestConfigs:    handlers.NewAutoInvestConfigsHandler(autoInvestRepo, idp),
 		CashContext:          handlers.NewCashContextHandler(recommendSvc, idp),
 		Activity:             http.HandlerFunc(activityHandler.GetActivity),
 		Brokerage:            handlers.NewBrokerageHandler(profileRepo, idp),
