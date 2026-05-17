@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { AutoInvestConfig, getAutoInvestConfigs } from "../services/api";
 
 interface Props {
+  initialConfigs?: AutoInvestConfig[];
+  onConfigsChange?: (configs: AutoInvestConfig[]) => void;
   onBack: () => void;
   onSelectConfig: (config: AutoInvestConfig) => void;
   onAddConfig: () => void;
@@ -19,14 +21,14 @@ function amountLabel(config: AutoInvestConfig): string {
   return `$${config.amount} every ${days} days`;
 }
 
-export function AutoInvestList({ onBack, onSelectConfig, onAddConfig }: Props) {
-  const [configs, setConfigs] = useState<AutoInvestConfig[]>([]);
-  const [loading, setLoading] = useState(true);
+export function AutoInvestList({ initialConfigs, onConfigsChange, onBack, onSelectConfig, onAddConfig }: Props) {
+  const [configs, setConfigs] = useState<AutoInvestConfig[]>(initialConfigs ?? []);
+  const [loading, setLoading] = useState(!initialConfigs || initialConfigs.length === 0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     getAutoInvestConfigs()
-      .then(setConfigs)
+      .then((fresh) => { setConfigs(fresh); onConfigsChange?.(fresh); })
       .catch(() => setError("Failed to load strategies"))
       .finally(() => setLoading(false));
   }, []);

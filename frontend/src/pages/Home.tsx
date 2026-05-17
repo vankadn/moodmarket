@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { ConfirmScreen } from "../components/ConfirmScreen";
 import { ReceiptScreen } from "../components/ReceiptScreen";
 import { CashContextCard } from "../components/CashContextCard";
-import { getRecommendation, invest, getAutoInvestConfigs, getCashContext, AutoInvestConfig, BrokerageStatus, CashContext, Recommendation, TradeReceipt, UserProfile } from "../services/api";
+import { getRecommendation, invest, getCashContext, AutoInvestConfig, BrokerageStatus, CashContext, Recommendation, TradeReceipt, UserProfile } from "../services/api";
 
 interface Props {
   profile: UserProfile;
+  autoInvestConfigs: AutoInvestConfig[];
   onSignOut?: () => void;
   onManageAccounts?: () => void;
   onAutoInvestSettings?: () => void;
@@ -35,10 +36,9 @@ type HomeState = "idle" | "confirming" | "investing" | "receipt";
 const brokerageIsConnected = (brokerages: BrokerageStatus[] | undefined) =>
   (brokerages?.length ?? 0) > 0;
 
-export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSettings, onNotificationSettings, onActivity, onBrokerage, onDocuments, onPortfolio }: Props) {
+export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, onAutoInvestSettings, onNotificationSettings, onActivity, onBrokerage, onDocuments, onPortfolio }: Props) {
   const [amount, setAmount] = useState<number>(100);
   const [perAllocBrokerage, setPerAllocBrokerage] = useState<Record<string, string>>({});
-  const [autoInvestConfigs, setAutoInvestConfigs] = useState<AutoInvestConfig[]>([]);
   const [cashCtx, setCashCtx] = useState<CashContext | null>(null);
   const [homeState, setHomeState] = useState<HomeState>("idle");
   const [rec, setRec] = useState<Recommendation | null>(null);
@@ -51,7 +51,6 @@ export function Home({ profile, onSignOut, onManageAccounts, onAutoInvestSetting
   const brokerages = profile.brokerages ?? [];
 
   useEffect(() => {
-    getAutoInvestConfigs().then(setAutoInvestConfigs).catch(() => {});
     getCashContext().then(ctx => {
       if (ctx.has_data && ctx.runway_label === "tight") {
         const today = new Date().toISOString().slice(0, 10);

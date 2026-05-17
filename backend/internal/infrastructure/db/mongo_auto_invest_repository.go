@@ -34,7 +34,13 @@ type MongoAutoInvestRepository struct {
 }
 
 func NewMongoAutoInvestRepository(db *mongo.Database) *MongoAutoInvestRepository {
-	return &MongoAutoInvestRepository{collection: db.Collection("auto_invest_configs")}
+	coll := db.Collection("auto_invest_configs")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	coll.Indexes().CreateOne(ctx, mongo.IndexModel{ //nolint:errcheck
+		Keys: bson.D{{Key: "user_id", Value: 1}},
+	})
+	return &MongoAutoInvestRepository{collection: coll}
 }
 
 // GetByUserID returns the stored config, or a safe default if none exists.

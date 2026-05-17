@@ -13,7 +13,7 @@ import { Portfolio } from "./pages/Portfolio";
 import { BrokerageConnect } from "./components/BrokerageConnect";
 import { Documents } from "./pages/Documents";
 import { NotificationSettingsPage } from "./pages/NotificationSettingsPage";
-import { AutoInvestConfig, getProfile, UserProfile } from "./services/api";
+import { AutoInvestConfig, getAutoInvestConfigs, getProfile, UserProfile } from "./services/api";
 
 export type AppState =
   | "loading"
@@ -40,12 +40,18 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
   const [state, setState] = useState<AppState>("loading");
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [selectedAutoInvestConfig, setSelectedAutoInvestConfig] = useState<AutoInvestConfig | undefined>(undefined);
+  const [autoInvestConfigs, setAutoInvestConfigs] = useState<AutoInvestConfig[]>([]);
 
   useEffect(() => {
     if (state !== "loading") return;
-    getProfile()
-      .then((p) => { setProfile(p); setState("home"); })
-      .catch(() => setState("onboarding"));
+    Promise.all([
+      getProfile(),
+      getAutoInvestConfigs().catch(() => [] as AutoInvestConfig[]),
+    ]).then(([p, configs]) => {
+      setProfile(p);
+      setAutoInvestConfigs(configs);
+      setState("home");
+    }).catch(() => setState("onboarding"));
   }, [state]);
 
   function refreshAndReturn(returnTo: AppState) {
@@ -83,6 +89,8 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
   if (state === "auto-invest-list") {
     return (
       <AutoInvestList
+        initialConfigs={autoInvestConfigs}
+        onConfigsChange={setAutoInvestConfigs}
         onBack={() => setState("home")}
         onSelectConfig={(config) => { setSelectedAutoInvestConfig(config); setState("auto-invest-settings"); }}
         onAddConfig={() => { setSelectedAutoInvestConfig(undefined); setState("auto-invest-settings"); }}
@@ -94,7 +102,10 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
     return (
       <AutoInvestSettings
         initialConfig={selectedAutoInvestConfig}
-        onBack={() => setState("auto-invest-list")}
+        onBack={() => {
+          getAutoInvestConfigs().then(setAutoInvestConfigs).catch(() => {});
+          setState("auto-invest-list");
+        }}
       />
     );
   }
@@ -133,6 +144,7 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
   return (
     <Home
       profile={profile!}
+      autoInvestConfigs={autoInvestConfigs}
       onSignOut={signOut}
       onManageAccounts={() => setState("profile")}
       onAutoInvestSettings={() => setState("auto-invest-list")}
