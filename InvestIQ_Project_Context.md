@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-17 (Phase 19 — Strategy Performance Tracking complete: Steps 1–4)
+> Last updated: 2026-05-17 (Phase 19 complete — Phases 22/23/24 planned: decision verdicts, eval dashboard, feedback loop)
 
 ---
 
@@ -828,6 +828,77 @@ Crypto execution via Coinbase Advanced Trade API (official, API key auth). Same 
 ### Phase 21 — SnapTrade Trade Execution via Robinhood (Conditional)
 
 Only if Phase 18 SnapTrade integration confirms Robinhood write access. Route crypto/equity allocations to Robinhood via SnapTrade when user has it connected. Falls back to Alpaca if not available.
+
+### Phase 22 — Decision Verdicts (Eval Foundation)
+
+**Goal:** Every AI recommendation gets a performance verdict stamped on it automatically. This is the data pipeline that makes Phases 23 and 24 possible.
+
+**How it works:**
+- Background job runs daily, finds all `InvestmentDecision` records that have no verdict yet
+- For each decision, fetches current price of every ticker via `BrokerageProvider` (Alpaca — already wired)
+- Computes per-ticker return: `(current_price - avg_entry_price) / avg_entry_price * 100`
+- Computes overall decision return vs SPY return over same period (benchmark)
+- Stamps result back onto the decision document in Mongo
+
+**Domain changes:**
+- `InvestmentDecision` gains `Verdict *DecisionVerdict` (optional, omitempty)
+- `DecisionVerdict` struct: `StampedAt time.Time`, `OverallReturnPct float64`, `SPYReturnPct float64`, `BeatMarket bool`, per-ticker breakdown `[]TickerVerdict{Ticker, EntryPrice, CurrentPrice, ReturnPct}`
+- New `DecisionRepository` method: `StampVerdict(ctx, decisionID, verdict)`
+- New `DecisionRepository` method: `ListUnverdicted(ctx, userID) []InvestmentDecision`
+
+**Infrastructure:**
+- `BrokerageProvider` interface gains `GetCurrentPrice(ctx, userID, ticker string) (float64, error)`
+- Alpaca impl calls `GET /v2/stocks/{ticker}/quotes/latest`
+- Mock impl returns deterministic prices
+- Verdict job wired into scheduler alongside auto-invest job — runs once daily after market close
+
+**Constraints:**
+- Onion architecture — verdict job lives in `application/scheduler/`
+- No new external dependencies — Alpaca already wired
+- Verdicts are append-only — never overwrite an existing verdict
+
+### Phase 23 — Eval Dashboard
+
+**Goal:** Surface the verdict data so the question "is the AI actually good?" has a real answer.
+
+**Depends on:** Phase 22 complete and verdicts accumulating.
+
+**Backend:**
+- New endpoint `GET /users/eval/summary` — returns: win rate (% decisions that beat SPY), average return vs SPY, best decision ever, worst decision ever, per-strategy breakdown if `config_id` present
+- New endpoint `GET /users/eval/decisions` — paginated list of decisions with verdicts attached
+
+**Frontend:**
+- New `Eval.tsx` page — accessible from Home
+- Summary header: Win rate pill (green/red), avg return vs SPY benchmark
+- Decision list: each card shows date, amount, return %, beat/lost to SPY indicator
+- Per-strategy section if multiple configs exist
+- Empty state: "Verdicts appear after your first full trading day"
+
+**Hard constraints:**
+- SVG only — no charting library
+- No new UI component libraries
+
+### Phase 24 — Feedback Loop
+
+**Goal:** Claude receives its own performance history in every prompt. Recommendations get smarter over time.
+
+**Depends on:** Phase 23 — eval data must be real and meaningful before injecting it.
+
+**How it works:**
+- `RecommendationService` fetches eval summary for the user before building the Claude prompt
+- Injects a performance block into the system prompt:
+  > "Your past recommendations: 14 decisions, 71% beat SPY, avg +2.3% vs SPY +1.1%. Top performer: VTI (+8.2%). Worst: ARKK (-4.1%). Aggressive risk configs outperformed conservative configs."
+- Claude reasons with this context — can adjust conviction, avoid repeat losers, double down on winners
+- Performance block uses `cache_control: ephemeral` — same pattern as existing prompt caching
+
+**Domain changes:**
+- `InvestmentRequest` gains `PerformanceSummary *EvalSummary` (optional) — injected by service, never persisted
+- `buildSystemPrompt` updated to include performance block when summary is non-nil
+
+**Constraints:**
+- Performance block is informational only — Claude still respects user risk tolerance and amount
+- If eval data is empty (new user), prompt is unchanged — no regression
+- No new external dependencies
 
 ---
 
