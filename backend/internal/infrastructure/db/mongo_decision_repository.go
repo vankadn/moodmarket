@@ -292,19 +292,23 @@ func (r *MongoDecisionRepository) ListUnverdicted(ctx context.Context, userID st
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	noRealVerdict := bson.A{
-		bson.M{"verdict": bson.M{"$exists": false}},
+	// "No verdict yet" is age-gated — don't evaluate too quickly.
+	// Bad-verdict conditions (empty tickers, Inf, zero-overall-with-data) are NOT age-gated —
+	// they must be corrected regardless of how recent the decision is.
+	badVerdict := bson.A{
 		bson.M{"verdict.ticker_verdicts": bson.M{"$size": 0}},
 		bson.M{"verdict.overall_return_pct": bson.M{"$gt": 1e15}},
 		bson.M{"verdict.overall_return_pct": bson.M{"$lt": -1e15}},
 		bson.M{"verdict.overall_return_pct": 0, "verdict.ticker_verdicts.0": bson.M{"$exists": true}},
 	}
+	noVerdictYet := bson.M{"verdict": bson.M{"$exists": false}}
+	if minAge > 0 {
+		cutoff := time.Now().Add(-minAge)
+		noVerdictYet["timestamp"] = bson.M{"$lt": cutoff}
+	}
 	filter := bson.M{
 		"user_id": userID,
-		"$or":     noRealVerdict,
-	}
-	if minAge > 0 {
-		filter["timestamp"] = bson.M{"$lt": time.Now().Add(-minAge)}
+		"$or":     append(bson.A{noVerdictYet}, badVerdict...),
 	}
 	opts := options.Find().SetSort(bson.D{{Key: "timestamp", Value: 1}})
 	cursor, err := r.collection.Find(ctx, filter, opts)
@@ -329,16 +333,17 @@ func (r *MongoDecisionRepository) GetUsersWithPendingVerdicts(ctx context.Contex
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	filter := bson.M{"$or": bson.A{
-		bson.M{"verdict": bson.M{"$exists": false}},
+	badVerdictConds := bson.A{
 		bson.M{"verdict.ticker_verdicts": bson.M{"$size": 0}},
 		bson.M{"verdict.overall_return_pct": bson.M{"$gt": 1e15}},
 		bson.M{"verdict.overall_return_pct": bson.M{"$lt": -1e15}},
 		bson.M{"verdict.overall_return_pct": 0, "verdict.ticker_verdicts.0": bson.M{"$exists": true}},
-	}}
-	if minAge > 0 {
-		filter["timestamp"] = bson.M{"$lt": time.Now().Add(-minAge)}
 	}
+	noVerdictCond := bson.M{"verdict": bson.M{"$exists": false}}
+	if minAge > 0 {
+		noVerdictCond["timestamp"] = bson.M{"$lt": time.Now().Add(-minAge)}
+	}
+	filter := bson.M{"$or": append(bson.A{noVerdictCond}, badVerdictConds...)}
 	raw, err := r.collection.Distinct(ctx, "user_id", filter)
 	if err != nil {
 		return nil, fmt.Errorf("mongo decision repo: distinct users with pending verdicts: %w", err)

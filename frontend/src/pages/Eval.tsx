@@ -23,10 +23,10 @@ function fmtDollars(n: number): string {
 }
 
 function configName(configId: string | undefined, configs: AutoInvestConfig[]): string {
-  if (!configId || configId === "manual") return "Manual";
-  if (configId === "") return "Legacy";
+  if (configId === undefined || configId === null || configId === "manual") return "Manual";
+  if (configId === "") return "Manual";
   const cfg = configs.find(c => c.id === configId);
-  return cfg?.name ?? configId.slice(0, 8);
+  return cfg?.name ?? "Deleted strategy";
 }
 
 export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
@@ -57,7 +57,29 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
 
   const winPct = summary ? Math.round(summary.win_rate * 100) : 0;
   const hasVerdicts = (summary?.verdicted_decisions ?? 0) > 0;
-  const showByStrategy = (summary?.by_strategy?.length ?? 0) > 1;
+
+  // Merge by_strategy rows that map to the same display name (e.g. multiple configs named "Long Term")
+  const mergedStrategies = (() => {
+    if (!summary?.by_strategy) return [];
+    const map = new Map<string, typeof summary.by_strategy[0]>();
+    for (const s of summary.by_strategy) {
+      const name = configName(s.config_id, autoInvestConfigs);
+      const existing = map.get(name);
+      if (existing) {
+        const total = existing.decision_count + s.decision_count;
+        map.set(name, {
+          ...existing,
+          decision_count: total,
+          win_rate: (existing.win_rate * existing.decision_count + s.win_rate * s.decision_count) / total,
+          avg_return_pct: (existing.avg_return_pct * existing.decision_count + s.avg_return_pct * s.decision_count) / total,
+        });
+      } else {
+        map.set(name, s);
+      }
+    }
+    return Array.from(map.values());
+  })();
+  const showByStrategy = mergedStrategies.length > 1;
 
   return (
     <div style={{ maxWidth: "560px", margin: "0 auto", padding: "2rem 1rem" }}>
@@ -152,9 +174,9 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
               <div style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "8px" }}>
                 By strategy
               </div>
-              {summary.by_strategy.map(s => (
+              {mergedStrategies.map(s => (
                 <div
-                  key={s.config_id}
+                  key={configName(s.config_id, autoInvestConfigs)}
                   style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", background: "#f8f8f8", borderRadius: "8px", marginBottom: "6px" }}
                 >
                   <div>
