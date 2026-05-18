@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-17 (Phase 19 complete — Phases 22/23/24 planned: decision verdicts, eval dashboard, feedback loop)
+> Last updated: 2026-05-18 (Phase 22 + 23 complete — decision verdicts + Activity dashboard merged; Phase 24 planned: feedback loop)
 
 ---
 
@@ -167,6 +167,9 @@ See README.md for the full env var reference and provider swap table.
 | `HistoryPoint` | One data point in a portfolio value time series: Timestamp (Unix epoch seconds), Equity, ProfitLoss, ProfitLossPct |
 | `NewsItem` | One market headline: Headline, Summary, Source, PublishedAt |
 | `TransactionSummary` | Aggregated spending signals: SpendLast7Days, SpendLast30Days, LargestPendingAmount, LargestPendingName, PulledAt |
+| `DecisionVerdict` | Performance result stamped on a decision: StampedAt, OverallReturnPct, SPYReturnPct, BeatMarket, TickerVerdicts |
+| `TickerVerdict` | Per-ticker performance: Ticker, EntryPrice, PrevDayPrice, PrevDayTimestamp, CurrentPrice, CurrentTimestamp, ReturnPct, TodayChangePct |
+| `EvalSummary` | Aggregated verdict stats: TotalDecisions, VerdictedDecisions, WinRate, AvgReturnPct, AvgSPYReturnPct, BestDecision, WorstDecision, ByStrategy |
 
 ---
 
@@ -829,52 +832,65 @@ Crypto execution via Coinbase Advanced Trade API (official, API key auth). Same 
 
 Only if Phase 18 SnapTrade integration confirms Robinhood write access. Route crypto/equity allocations to Robinhood via SnapTrade when user has it connected. Falls back to Alpaca if not available.
 
-### Phase 22 — Decision Verdicts (Eval Foundation)
+### Phase 22 — Decision Verdicts (Complete)
 
-**Goal:** Every AI recommendation gets a performance verdict stamped on it automatically. This is the data pipeline that makes Phases 23 and 24 possible.
+**Goal:** Every AI recommendation gets a performance verdict stamped on it automatically.
 
 **How it works:**
-- Background job runs daily, finds all `InvestmentDecision` records that have no verdict yet
-- For each decision, fetches current price of every ticker via `BrokerageProvider` (Alpaca — already wired)
-- Computes per-ticker return: `(current_price - avg_entry_price) / avg_entry_price * 100`
-- Computes overall decision return vs SPY return over same period (benchmark)
-- Stamps result back onto the decision document in Mongo
+- Background `VerdictJob` runs on `VERDICT_JOB_TICK` interval (10s dev / 24h prod), immediately on startup, then on every tick
+- Finds all decisions without a verdict older than `VERDICT_MIN_AGE` (0s dev / 24h prod) plus decisions with bad verdicts (Inf, 0 return with tickers, empty ticker_verdicts)
+- Age gate applies ONLY to "no verdict yet" — bad-verdict decisions are re-stamped regardless of age
+- Deduplicates tickers across all decisions, fetches each unique ticker from Polygon exactly once per run (avoids 429 on free tier)
+- Per-user Alpaca brokerage provider used for real-time current prices; Polygon prev-day close as fallback when Alpaca unavailable
+- Entry price: `receipt.FilledPrice` when available; Polygon prev-day as proxy when `FilledPrice = 0` (Alpaca async orders are accepted, not filled, at submission time)
+- Equal-weight fallback when `FilledAmount = 0` (async Alpaca orders don't report fill amount at submission)
+- SPY benchmark from `MarketSnapshot.SPYPrice` stored at decision time; decisions predating Phase 19 have no SPY price → benchmark skipped
 
 **Domain changes:**
-- `InvestmentDecision` gains `Verdict *DecisionVerdict` (optional, omitempty)
-- `DecisionVerdict` struct: `StampedAt time.Time`, `OverallReturnPct float64`, `SPYReturnPct float64`, `BeatMarket bool`, per-ticker breakdown `[]TickerVerdict{Ticker, EntryPrice, CurrentPrice, ReturnPct}`
-- New `DecisionRepository` method: `StampVerdict(ctx, decisionID, verdict)`
-- New `DecisionRepository` method: `ListUnverdicted(ctx, userID) []InvestmentDecision`
+- `InvestmentDecision` gains `Verdict *DecisionVerdict` (optional, omitempty) in `domain/models/decision.go`
+- `DecisionVerdict`: StampedAt, OverallReturnPct, SPYReturnPct, BeatMarket, `[]TickerVerdict`
+- `TickerVerdict`: Ticker, EntryPrice, PrevDayPrice, PrevDayTimestamp, CurrentPrice, CurrentTimestamp, ReturnPct, TodayChangePct
+- `DecisionRepository` gains: `StampVerdict(ctx, id, verdict)`, `ListUnverdicted(ctx, userID, minAge)`
+- `BrokerageProvider` interface gains `GetCurrentPrice(ctx, ticker) (float64, error)` — no userID in signature
 
 **Infrastructure:**
-- `BrokerageProvider` interface gains `GetCurrentPrice(ctx, userID, ticker string) (float64, error)`
-- Alpaca impl calls `GET /v2/stocks/{ticker}/quotes/latest`
-- Mock impl returns deterministic prices
-- Verdict job wired into scheduler alongside auto-invest job — runs once daily after market close
+- `application/scheduler/verdict_stamper.go` — `stampVerdicts` (per-user) + `buildVerdict` (per-decision) + `buildPriceCache` (deduped Polygon)
+- `application/scheduler/verdict_job.go` — `VerdictJob`, runs immediately on startup
+- `infrastructure/brokerage/alpaca.go` — `GetCurrentPrice` calls `GET /v2/stocks/{ticker}/quotes/latest`
+- `infrastructure/db/mongo_decision_repository.go` — `StampVerdict` filter allows overwriting bad verdicts; `ListUnverdicted` with split age-gate; `GetEvalSummary` MongoDB aggregation pipeline with `$addFields` to normalize empty `config_id` → `"manual"`
+- `api/handlers/eval_handler.go` — `safeFloat()` sanitizes NaN/Inf stored from old bad verdicts before JSON encoding
 
-**Constraints:**
-- Onion architecture — verdict job lives in `application/scheduler/`
-- No new external dependencies — Alpaca already wired
-- Verdicts are append-only — never overwrite an existing verdict
+**Env vars:**
+```
+VERDICT_JOB_TICK=10s   # dev; 24h prod
+VERDICT_MIN_AGE=0s     # dev (stamp immediately); 24h prod
+```
 
-### Phase 23 — Eval Dashboard
+### Phase 23 — Activity Dashboard (Complete, merged with Phase 7 Activity)
 
-**Goal:** Surface the verdict data so the question "is the AI actually good?" has a real answer.
+**Goal:** Surface verdict data answering "is the AI actually good?" — unified with the existing Activity tab into a single "Activity" page.
 
-**Depends on:** Phase 22 complete and verdicts accumulating.
+**What was merged:** The old separate `Activity.tsx` page (Phase 7 — total invested, decision timeline) was absorbed into `Eval.tsx`. The "Eval" nav button was renamed "Activity". No separate Activity page or route exists any more.
 
-**Backend:**
-- New endpoint `GET /users/eval/summary` — returns: win rate (% decisions that beat SPY), average return vs SPY, best decision ever, worst decision ever, per-strategy breakdown if `config_id` present
-- New endpoint `GET /users/eval/decisions` — paginated list of decisions with verdicts attached
+**Backend — 2 new endpoints:**
+- `GET /users/eval/summary` — win rate (% that beat SPY), avg return vs SPY, best/worst decision, per-strategy breakdown; empty `config_id` and `null` both normalized to `"manual"` in MongoDB aggregation
+- `GET /users/eval/decisions?page=1&limit=500` — paginated list of verdicted decisions with full verdict embedded
 
-**Frontend:**
-- New `Eval.tsx` page — accessible from Home
-- Summary header: Win rate pill (green/red), avg return vs SPY benchmark
-- Decision list: each card shows date, amount, return %, beat/lost to SPY indicator
-- Per-strategy section if multiple configs exist
-- Empty state: "Verdicts appear after your first full trading day"
+**Frontend (`frontend/src/pages/Eval.tsx`):**
+- Parallel fetch of `getEvalSummary()` + `getEvalDecisions(1, 500)` + `getActivity(null)` on mount
+- Total Invested from `activity.total_invested` (Activity API); verdict data from eval endpoints
+- Summary card: Total invested + avg return (or "Verdicts appear after trades settle" when none)
+- Win rate progress bar vs SPY; Best / Worst decision cards
+- By-strategy section — only shown when `>1 distinct display name`; client-side merge: same-name configs (different IDs) are combined with weighted-average win_rate + avg_return_pct
+- Decision history: all decisions from Activity API, verdict overlaid where eval data has a match (by ID); "Pending" label when no verdict yet
+- Per-ticker pill row below each verdicted decision: ticker + return_pct in green/red
 
-**Hard constraints:**
+**Key implementation details:**
+- `configName()` maps `config_id` → display name: `undefined | null | "manual" | "" → "Manual"`, found ID → config name, missing ID → `"Deleted strategy"`
+- `safeFloat()` in handler prevents `json.Encoder` crash on `+Infinity` (was stored from a bug where `FilledPrice=0` was used as denominator before the entryPrice fallback fix)
+- No new MongoDB collections — verdict stamped directly onto `decisions` documents
+
+**Hard constraints met:**
 - SVG only — no charting library
 - No new UI component libraries
 
@@ -1025,6 +1041,13 @@ Background data access is legitimate when:
 | 529 fallback to cached recommendation | Anthropic occasionally returns HTTP 529 (overloaded). Hard-failing the recommendation with a 500 is a bad UX for a daily-use app. The `decisions` collection already has everything needed — pull the last decision, rescale amounts to today's budget, set `FromCache: true`. If no prior decision exists the original error still propagates. No new storage, no cache layer needed. |
 | P&L data from Alpaca not MongoDB | Alpaca already computes avg_entry_price, cost_basis, unrealized_pl per position. Computing this from MongoDB trade receipts would require reconstructing position state across all historical orders (buys/sells, partial fills, splits). Alpaca's live data is simpler and more accurate. |
 | SVG chart, no charting library | Dependency principle: no charting library added. A plain SVG polyline with filled area is sufficient for a sparkline-style chart. Recharts/Chart.js would add ~100KB+ for a feature that needs one line and a few labels. |
+| Polygon deduplication in verdict job | Naive verdict stamping called Polygon once per decision per ticker — 37 decisions × 5 tickers = 185 calls against a ~5/min free tier → all 429. Fix: collect unique tickers across all decisions for one user, fetch each once (`buildPriceCache`), share cache across all decisions in that run. |
+| Polygon prev-day as entry price fallback | Alpaca market orders are async — `FilledPrice = 0` and status = `"accepted"` at order submission time. Verdict job needs an entry price to compute return. Polygon prev-day close is a reasonable proxy for same-day market orders. Return will be slightly off (vs true fill price) but directionally correct and avoids skipping the decision entirely. |
+| Equal-weight fallback when FilledAmount = 0 | Same Alpaca async issue — `FilledAmount` is 0 at submission. Without a fallback, `totalWeight` never accumulates and `OverallReturnPct` stays 0. Equal weighting (1.0 per ticker) gives a correct unweighted average until Alpaca updates the order. |
+| `safeFloat()` at handler boundary | MongoDB can store `+Infinity` if a bug divides by zero during stamping. `json.Encoder` panics (returns no bytes) on Inf/NaN → "Unexpected end of JSON input" on the frontend. `safeFloat()` converts any non-finite to 0 at the serialization boundary — safe default, never crashes. |
+| Split age gate in `ListUnverdicted` | Original design: top-level `"timestamp": {$lt: now-minAge}` applied to ALL filter conditions, blocking re-stamp of today's bad-verdict decisions. Fix: move age gate inside the "no verdict yet" branch only (`noVerdictYet` map with conditional timestamp field); bad-verdict conditions have no timestamp constraint. |
+| Merged Activity + Eval into single "Activity" page | Two separate tabs (Activity = timeline, Eval = performance) would require users to switch between them to see related data. Merging into one page (three parallel API calls on mount) gives a single unified view: invested amount, verdict stats, and decision history with verdicts overlaid. |
+| `config_id = ""` normalized to `"manual"` in MongoDB aggregation | Legacy decisions (pre-Phase 19) have no `config_id` field — reads as `""` in Go. MongoDB `$group` on raw `config_id` creates a `""` bucket separate from the `"manual"` bucket. Fix: `$addFields` + `$cond` in aggregation pipeline normalizes both to `"manual"` before grouping. Frontend also merges same-display-name configs via weighted average for configs with different IDs but identical user-facing names. |
 
 ---
 
@@ -1047,3 +1070,55 @@ Background data access is legitimate when:
 | `CashContext.UserOverride` field is dead | Field exists in the model but is never set; was part of the original Phase 8ca design before the redesign removed per-session override. Remove when cleaning up. |
 | Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |
 | Alpaca still paper trading only | Per-user credentials are wired — switching to live is a UI change (user selects "Live trading" account type) + using real Alpaca keys. No code change needed. |
+| Verdict entry price uses Polygon proxy | When `FilledPrice = 0` (async Alpaca order), Polygon prev-day close is used as entry price. This understates or overstates return vs the actual fill price. When Alpaca eventually updates the order to `filled` with a real `filled_avg_price`, the verdict is not re-computed. True fix: re-fetch Alpaca order status after a delay and re-stamp with real fill price. |
+| ~~Verdict job runs unconditionally on holidays~~ | Resolved — verdict job deleted; stamping is inline per user, not a batch job |
+
+---
+
+## Retrospectives
+
+### Phase 22 → 23: build the pipeline without tests, pay for it in the next phase
+
+Phase 22 added the entire verdict data pipeline (VerdictJob, stampVerdicts, Polygon/Alpaca price fetching, MongoDB stamping) with no unit tests. Every requirement existed only in the code — nothing machine-verifiable. When Phase 23 surfaced verdicts in the Activity UI, five separate bugs appeared that were only visible at runtime:
+
+| Bug | Root cause | What it cost |
+|-----|------------|-------------|
+| Polygon 429 rate limit | Per-ticker fetch in a loop; one API call per decision × N tickers = rapid exhaustion | Extra deploy cycle to add deduplication |
+| `FilledPrice = 0` → `Infinity` | Alpaca async orders have `FilledPrice=0` at submission; dividing by zero produced Inf | Extra deploy cycle to add equal-weight fallback |
+| `json.Encoder` crash on Inf/NaN | JSON cannot encode IEEE Infinity; the `/eval/summary` endpoint panicked for affected users | Extra deploy cycle to add `safeFloat()` guard |
+| Age gate blocked re-stamping of bad verdicts | `minAge` cutoff applied to ALL decisions including already-stamped-wrong ones | Extra deploy cycle to split age gate: new decisions only |
+| `config_id = ""` broke strategy grouping | Legacy decisions pre-Phase 19 have no `config_id`; MongoDB `$group` treated `""` and `"manual"` as separate buckets | Extra deploy cycle + frontend merge logic |
+
+**Rule reinforced:** write unit tests before or alongside the pipeline, not after. The tests added in this session for Phases 22 and 23 (`verdict_stamper_test.go`, `eval_handler_test.go`, `Eval.test.tsx`) make all five bugs machine-verifiable — any regression now fails immediately in CI rather than in the UI.
+
+---
+
+### Verdict job: retry condition too broad → infinite re-queue loop
+
+The `badVerdict` mongo condition `{"verdict.ticker_verdicts": {"$size": 0}}` was added to handle a legitimate case: Alpaca async orders where `FilledPrice=0` at submission get stamped with zero tickers, then corrected when brokerage data arrives. That condition means "empty ticker list = retry later."
+
+Pre-Phase-22 decisions also produce empty ticker lists — but for a permanent reason: no SPY entry price and no brokerage receipts were ever recorded. After being stamped with `tickers=[]`, they matched the same retry condition and were re-queued on every verdict job cycle indefinitely. On a short `VERDICT_JOB_TICK` (e.g. `5m` for local dev) this produced continuous log noise and pointless DB reads.
+
+**Fix:** both `ListUnverdicted` and `GetUsersWithPendingVerdicts` now require `market_snapshot.spy_price > 0`. Pre-Phase-22 decisions have `spy_price=0` (or the field absent) and are permanently excluded from the verdict queue.
+
+**Rule reinforced:** when adding a "retry on bad state" condition, enumerate the states that can actually be corrected vs. states that are permanently terminal. Terminal states need a separate filter or a `skipped` flag — otherwise they re-queue forever.
+
+---
+
+### Verdict job: stop and ask "why a job?" before reaching for a background goroutine
+
+The verdict job (`VerdictJob`) was introduced as the obvious solution to a batch problem: "compute performance scores for all users' decisions once a day." A background goroutine with a ticker felt natural — that's how cron-style work gets done.
+
+But the question was never asked: **who actually needs these verdicts, and when?**
+
+The answer: the user — when they open the Activity page or make a new recommendation. Verdicts are meaningless until someone looks at them. A dormant user has no page to load, so computing their verdicts on a schedule produces work that is immediately thrown away. The job was solving a problem that only exists if you assume verdicts need to be pre-computed for everyone, which they don't.
+
+**What the job cost:**
+- A background goroutine that had to be kept alive, monitored, and configured
+- `VERDICT_JOB_TICK` and `VERDICT_MIN_AGE` env vars that were set to `10s`/`0s` for dev testing and never changed back — causing continuous Polygon API calls and log noise in every dev session
+- Polygon 429 rate limit exhaustion from batch-processing all users simultaneously
+- An infinite re-queue loop when `ticker_verdicts.size=0` decisions matched the retry condition on every cycle
+
+**The fix:** delete the job. Call `stampVerdicts` inline in `GetDailyRecommendation` as a goroutine concurrent with the tax doc fetch. Every path that produces a decision (manual invest, auto-invest) goes through `GetDailyRecommendation`, so every decision gets stamped on the next call — with zero polling, zero separate goroutine, zero env vars.
+
+**Rule:** before introducing a background job, ask: "Is there a natural request-time trigger that covers all the cases?" If the answer is yes, inline it. Jobs are appropriate when work must happen on a fixed schedule regardless of user activity (e.g. sending a daily digest email). They are not appropriate when the work is only meaningful in response to user activity that already provides a trigger.

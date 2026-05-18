@@ -159,6 +159,13 @@ func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.Invest
 		req.BaseBudget+req.ExtraMoney, profile != nil, snapshot != nil, len(req.Positions), len(req.RecentDecisions))
 	log.Printf("[advisor]   user message built: %d chars", len(userMsg))
 
+	fullSystem := systemPrompt
+	if req.StrategyPrompt != "" {
+		fullSystem = "[STRATEGY PREFIX]\n" + req.StrategyPrompt + "\n\n[BASE SYSTEM PROMPT]\n" + systemPrompt
+	}
+	log.Printf("[advisor] ── system prompt (%d chars) ───────────────────────────────────\n%s\n[advisor] ── end system prompt ─────────────────────────────────────────────", len(fullSystem), fullSystem)
+	log.Printf("[advisor] ── user message (%d chars) ────────────────────────────────────\n%s\n[advisor] ── end user message ──────────────────────────────────────────────", len(userMsg), userMsg)
+
 	messages := []claudeMessage{{Role: "user", Content: userMsg}}
 
 	var lastErr error
@@ -553,6 +560,19 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 			}
 		}
 		msg += "Use tax data as additional context for income-adjusted allocation decisions.\n"
+	}
+
+	// Performance feedback — injected only when >= 5 verdicts exist (set by recommendation service).
+	// Gives Claude a signal on whether its past picks have beaten the market for this user.
+	if ps := req.PerformanceSummary; ps != nil {
+		wins := int(ps.WinRate * float64(ps.VerdictedDecisions))
+		msg += fmt.Sprintf("\nPAST PERFORMANCE (%d evaluated decisions):\n", ps.VerdictedDecisions)
+		msg += fmt.Sprintf("- Win rate vs SPY: %d%% (%d/%d beat the market)\n", int(ps.WinRate*100), wins, ps.VerdictedDecisions)
+		msg += fmt.Sprintf("- Avg return: %+.1f%% vs SPY avg %+.1f%%\n", ps.AvgReturnPct, ps.AvgSPYReturnPct)
+		if ps.BestDecision != nil && ps.WorstDecision != nil {
+			msg += fmt.Sprintf("- Best decision: %+.1f%% | Worst: %+.1f%%\n", ps.BestDecision.ReturnPct, ps.WorstDecision.ReturnPct)
+		}
+		msg += "Use as context only — do not override the user's stated risk tolerance or investment amount.\n"
 	}
 
 	msg += "\nGive me today's investment allocation."

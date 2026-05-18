@@ -216,6 +216,65 @@ func TestBuildUserMessage(t *testing.T) {
 			},
 			mustNotContain: []string{"TODAY'S MARKET NEWS"},
 		},
+
+		// Phase 24 — Performance feedback section
+
+		{
+			name: "performance_summary_absent_for_new_user_with_no_verdicts",
+			// New users have no verdicted decisions yet.
+			// The section must be absent so the prompt is unchanged from the pre-Phase-24 baseline.
+			req:            models.InvestmentRequest{BaseBudget: 100},
+			mustNotContain: []string{"PAST PERFORMANCE"},
+		},
+		{
+			name: "performance_summary_absent_when_performance_summary_is_nil",
+			// RecommendationService sets PerformanceSummary=nil when verdict count < threshold.
+			// The prompt must not include the section regardless of what the eval API returned.
+			req: models.InvestmentRequest{
+				BaseBudget:         100,
+				PerformanceSummary: nil,
+			},
+			mustNotContain: []string{"PAST PERFORMANCE"},
+		},
+		{
+			name: "performance_summary_present_with_win_rate_and_avg_return_when_threshold_met",
+			// When PerformanceSummary is set (service guarantees >= 5 verdicts),
+			// the section must appear so Claude can calibrate whether its strategy is working.
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				PerformanceSummary: &models.EvalSummary{
+					VerdictedDecisions: 14,
+					WinRate:            0.71,
+					AvgReturnPct:       2.3,
+					AvgSPYReturnPct:    1.1,
+					BestDecision:       &models.EvalDecisionRef{ReturnPct: 8.2},
+					WorstDecision:      &models.EvalDecisionRef{ReturnPct: -4.1},
+				},
+			},
+			mustContain: []string{
+				"PAST PERFORMANCE",
+				"14 evaluated decisions",
+				"71%",
+				"+2.3%",
+				"+1.1%",
+			},
+		},
+		{
+			name: "performance_summary_instruction_says_context_only_not_directive",
+			// The feedback section must explicitly say it is non-directive.
+			// Without this guard, Claude might override the user's stated risk tolerance
+			// based on past returns — the same mistake Phase 8ca fixed for spending context.
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				PerformanceSummary: &models.EvalSummary{
+					VerdictedDecisions: 7,
+					WinRate:            0.43,
+					AvgReturnPct:       -0.5,
+					AvgSPYReturnPct:    1.2,
+				},
+			},
+			mustContain: []string{"context only", "do not override"},
+		},
 	}
 
 	for _, tc := range cases {

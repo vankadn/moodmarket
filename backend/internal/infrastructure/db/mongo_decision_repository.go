@@ -272,10 +272,11 @@ func (r *MongoDecisionRepository) StampVerdict(ctx context.Context, decisionID s
 		return fmt.Errorf("mongo decision repo: invalid decision id %q: %w", decisionID, err)
 	}
 
-	// Write if: no verdict, empty ticker data, abnormal return (Inf/NaN), or has ticker data but overall=0 (fill-amount bug).
+	// Write if: no verdict, abnormal return (Inf/NaN), or has ticker data but overall=0 (fill-amount bug).
+	// Deliberately excluded: ticker_verdicts.size=0 — a zero-ticker stamp means no brokerage
+	// receipts exist and none will ever arrive. Treating it as retryable causes infinite re-queue.
 	noVerdictFilter := bson.M{"_id": oid, "$or": bson.A{
 		bson.M{"verdict": bson.M{"$exists": false}},
-		bson.M{"verdict.ticker_verdicts": bson.M{"$size": 0}},
 		bson.M{"verdict.overall_return_pct": bson.M{"$gt": 1e15}},
 		bson.M{"verdict.overall_return_pct": bson.M{"$lt": -1e15}},
 		bson.M{"verdict.overall_return_pct": 0, "verdict.ticker_verdicts.0": bson.M{"$exists": true}},
@@ -293,10 +294,10 @@ func (r *MongoDecisionRepository) ListUnverdicted(ctx context.Context, userID st
 	defer cancel()
 
 	// "No verdict yet" is age-gated — don't evaluate too quickly.
-	// Bad-verdict conditions (empty tickers, Inf, zero-overall-with-data) are NOT age-gated —
-	// they must be corrected regardless of how recent the decision is.
+	// Bad-verdict retry conditions (Inf/NaN, fill-amount bug) are NOT age-gated.
+	// Excluded: ticker_verdicts.size=0 — zero tickers means no brokerage receipts exist
+	// and none will ever arrive. Retrying it causes an infinite re-queue loop.
 	badVerdict := bson.A{
-		bson.M{"verdict.ticker_verdicts": bson.M{"$size": 0}},
 		bson.M{"verdict.overall_return_pct": bson.M{"$gt": 1e15}},
 		bson.M{"verdict.overall_return_pct": bson.M{"$lt": -1e15}},
 		bson.M{"verdict.overall_return_pct": 0, "verdict.ticker_verdicts.0": bson.M{"$exists": true}},
@@ -308,7 +309,11 @@ func (r *MongoDecisionRepository) ListUnverdicted(ctx context.Context, userID st
 	}
 	filter := bson.M{
 		"user_id": userID,
-		"$or":     append(bson.A{noVerdictYet}, badVerdict...),
+		// Only consider decisions that have a real SPY entry price (set by Phase 22+).
+		// Pre-Phase-22 decisions have spy_price=0 and no receipts — they can never produce
+		// a meaningful verdict and would be re-queued every cycle if included.
+		"market_snapshot.spy_price": bson.M{"$gt": 0},
+		"$or":                       append(bson.A{noVerdictYet}, badVerdict...),
 	}
 	opts := options.Find().SetSort(bson.D{{Key: "timestamp", Value: 1}})
 	cursor, err := r.collection.Find(ctx, filter, opts)
@@ -333,8 +338,9 @@ func (r *MongoDecisionRepository) GetUsersWithPendingVerdicts(ctx context.Contex
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
+	// Excluded: ticker_verdicts.size=0 — zero tickers means no brokerage receipts exist
+	// and none will ever arrive. Retrying it causes an infinite re-queue loop.
 	badVerdictConds := bson.A{
-		bson.M{"verdict.ticker_verdicts": bson.M{"$size": 0}},
 		bson.M{"verdict.overall_return_pct": bson.M{"$gt": 1e15}},
 		bson.M{"verdict.overall_return_pct": bson.M{"$lt": -1e15}},
 		bson.M{"verdict.overall_return_pct": 0, "verdict.ticker_verdicts.0": bson.M{"$exists": true}},
@@ -343,7 +349,13 @@ func (r *MongoDecisionRepository) GetUsersWithPendingVerdicts(ctx context.Contex
 	if minAge > 0 {
 		noVerdictCond["timestamp"] = bson.M{"$lt": time.Now().Add(-minAge)}
 	}
-	filter := bson.M{"$or": append(bson.A{noVerdictCond}, badVerdictConds...)}
+	// Only consider decisions that have a real SPY entry price (set by Phase 22+).
+	// Pre-Phase-22 decisions have spy_price=0 and no receipts — they can never produce
+	// a meaningful verdict and would be re-queued every cycle if included.
+	filter := bson.M{
+		"market_snapshot.spy_price": bson.M{"$gt": 0},
+		"$or":                       append(bson.A{noVerdictCond}, badVerdictConds...),
+	}
 	raw, err := r.collection.Distinct(ctx, "user_id", filter)
 	if err != nil {
 		return nil, fmt.Errorf("mongo decision repo: distinct users with pending verdicts: %w", err)

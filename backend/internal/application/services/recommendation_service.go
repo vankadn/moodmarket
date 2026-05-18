@@ -130,36 +130,67 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	// Step 6: recent decision history — Claude avoids repeating the same allocation daily
 	recentDecisions, err := s.decisionRepo.ListByUser(ctx, userID, 10)
 	if err != nil {
-		log.Printf("[recommend] step 6/8  recent decisions fetch failed (%v) — skipped", err)
+		log.Printf("[recommend] step 6/9  recent decisions fetch failed (%v) — skipped", err)
 	} else {
 		req.RecentDecisions = recentDecisions
-		log.Printf("[recommend] step 6/8  %d recent decision(s) loaded", len(recentDecisions))
+		log.Printf("[recommend] step 6/9  %d recent decision(s) loaded", len(recentDecisions))
 	}
+
+	// Step 6.5: stamp verdicts for any decisions older than 24h that haven't been evaluated yet.
+	// Runs concurrently with step 7 so tax doc fetch and Polygon calls happen in parallel.
+	// Must complete before step 8 so GetEvalSummary reflects freshly-stamped verdicts.
+	log.Printf("[recommend] step 6.5/9  verdict stamping started")
+	stampDone := make(chan struct{})
+	go func() {
+		defer close(stampDone)
+		stampVerdicts(ctx, userID, 24*time.Hour,
+			s.decisionRepo, s.profileRepo, s.brokerageFactory, s.marketData)
+	}()
 
 	// Step 7: tax documents — gives Claude income, withholding, and housing context
 	taxDocs, err := s.documentRepo.GetByUserID(ctx, userID)
 	if err != nil {
-		log.Printf("[recommend] step 7/8  tax documents fetch failed (%v) — skipped", err)
+		log.Printf("[recommend] step 7/9  tax documents fetch failed (%v) — skipped", err)
 	} else {
 		req.TaxDocuments = taxDocs
-		log.Printf("[recommend] step 7/8  %d tax document(s) loaded", len(taxDocs))
+		log.Printf("[recommend] step 7/9  %d tax document(s) loaded", len(taxDocs))
 	}
 
-	// Step 8: Claude generates allocation (fetches market news itself via get_market_news tool)
-	log.Printf("[recommend] step 8/8  sending to Claude (profile=%v market=%v plaid=%v txns=%v positions=%d decisions=%d taxdocs=%d)", profile != nil, snapshot != nil, req.BalanceSummary != nil, req.TransactionSummary != nil, len(req.Positions), len(req.RecentDecisions), len(req.TaxDocuments))
+	<-stampDone
+	log.Printf("[recommend] step 6.5/9  verdict stamping complete")
+
+	// Step 8: performance summary — gives Claude feedback on its own track record for this user.
+	// Non-fatal; omitted silently if below the 5-verdict threshold or on any error.
+	const minVerdictsForFeedback = 5
+	if ps, psErr := s.decisionRepo.GetEvalSummary(ctx, userID); psErr != nil {
+		log.Printf("[recommend] step 8/9  performance summary fetch failed (%v) — skipped", psErr)
+	} else if ps != nil && ps.VerdictedDecisions >= minVerdictsForFeedback {
+		req.PerformanceSummary = ps
+		log.Printf("[recommend] step 8/9  performance summary loaded (verdicts=%d winRate=%.0f%%)", ps.VerdictedDecisions, ps.WinRate*100)
+	} else {
+		log.Printf("[recommend] step 8/9  performance summary skipped (verdicts=%d, threshold=%d)", func() int {
+			if ps != nil {
+				return ps.VerdictedDecisions
+			}
+			return 0
+		}(), minVerdictsForFeedback)
+	}
+
+	// Step 9: Claude generates allocation (fetches market news itself via get_market_news tool)
+	log.Printf("[recommend] step 9/9  sending to Claude (profile=%v market=%v plaid=%v txns=%v positions=%d decisions=%d taxdocs=%d perf=%v)", profile != nil, snapshot != nil, req.BalanceSummary != nil, req.TransactionSummary != nil, len(req.Positions), len(req.RecentDecisions), len(req.TaxDocuments), req.PerformanceSummary != nil)
 	rec, err := s.advisor.GetRecommendation(ctx, req, profile, snapshot)
 	if err != nil {
 		if errors.Is(err, ports.ErrAdvisorOverloaded) {
 			cached, fallbackErr := s.cachedRecommendation(ctx, userID, req.BaseBudget)
 			if fallbackErr == nil {
-				log.Printf("[recommend] step 8/8  advisor overloaded — returning cached recommendation from %s", cached.Summary)
+				log.Printf("[recommend] step 9/9  advisor overloaded — returning cached recommendation from %s", cached.Summary)
 				return cached, nil
 			}
-			log.Printf("[recommend] step 8/8  advisor overloaded and no cached recommendation available: %v", fallbackErr)
+			log.Printf("[recommend] step 9/9  advisor overloaded and no cached recommendation available: %v", fallbackErr)
 		}
 		return nil, fmt.Errorf("recommendation service: advisor: %w", err)
 	}
-	log.Printf("[recommend] step 7/7  Claude returned %d allocations (risk=%s)", len(rec.Allocations), rec.RiskLevel)
+	log.Printf("[recommend] step 9/9  Claude returned %d allocations (risk=%s)", len(rec.Allocations), rec.RiskLevel)
 
 	// Persist decision
 	decision := &models.InvestmentDecision{

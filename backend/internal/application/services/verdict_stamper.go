@@ -1,5 +1,5 @@
-// application/scheduler/verdict_stamper.go
-package scheduler
+// application/services/verdict_stamper.go
+package services
 
 import (
 	"context"

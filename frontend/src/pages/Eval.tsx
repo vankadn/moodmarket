@@ -9,20 +9,20 @@ interface Props {
   autoInvestConfigs?: AutoInvestConfig[];
 }
 
-function fmtPct(n: number, forceSign = false): string {
+export function fmtPct(n: number, forceSign = false): string {
   const sign = forceSign && n > 0 ? "+" : "";
   return `${sign}${n.toFixed(2)}%`;
 }
 
-function fmtDate(iso: string): string {
+export function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function fmtDollars(n: number): string {
+export function fmtDollars(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 }
 
-function configName(configId: string | undefined, configs: AutoInvestConfig[]): string {
+export function configName(configId: string | undefined, configs: AutoInvestConfig[]): string {
   if (configId === undefined || configId === null || configId === "manual") return "Manual";
   if (configId === "") return "Manual";
   const cfg = configs.find(c => c.id === configId);
