@@ -31,10 +31,19 @@ func (c *ClassificationCache) Classify(ticker string) (string, bool) {
 	return ac, true
 }
 
+// Store writes a single ticker→assetClass entry into the in-memory map immediately.
+// Call this after StoreClassification persists to Mongo so the cache stays hot
+// without requiring a full reload.
+func (c *ClassificationCache) Store(ticker, assetClass string) {
+	c.mu.Lock()
+	c.data[ticker] = assetClass
+	c.mu.Unlock()
+}
+
 // RefreshCache reloads all approved entries from Mongo into memory.
 // Call on startup only — never during a live recommendation request.
 func (c *ClassificationCache) RefreshCache(ctx context.Context, repo ports.ClassificationRepository) error {
-	entries, err := repo.LoadApproved(ctx)
+	entries, err := repo.LoadAll(ctx)
 	if err != nil {
 		return fmt.Errorf("classification cache: refresh: %w", err)
 	}

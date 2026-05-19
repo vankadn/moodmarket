@@ -6,19 +6,21 @@ import (
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
 )
 
-// Classifier is the read-only cache interface. Infrastructure implementations
-// must never hit Mongo during a Classify call — memory only.
+// Classifier is the read/write cache interface.
+// Implementations must never hit Mongo during Classify — memory only.
 type Classifier interface {
 	Classify(ticker string) (assetClass string, known bool)
+	// Store writes a new classification into the in-memory map immediately.
+	// Called after StoreClassification persists to Mongo.
+	Store(ticker, assetClass string)
 }
 
 // ClassificationRepository persists ticker→asset-class mappings.
 type ClassificationRepository interface {
-	// Seed writes entries using $setOnInsert so existing records are never overwritten.
-	Seed(ctx context.Context, entries []models.ClassificationEntry) error
-	// LoadApproved returns all approved:true entries for cache hydration.
-	LoadApproved(ctx context.Context) ([]models.ClassificationEntry, error)
-	// QueueUnknown records an unapproved Claude-suggested classification.
-	// Upserts on ticker — never duplicates. Never overwrites an existing entry.
-	QueueUnknown(ctx context.Context, ticker, suggestedClass string) error
+	// LoadAll returns every ticker in the collection for cache hydration at startup.
+	// The approved field is preserved for future use but not used as a filter.
+	LoadAll(ctx context.Context) ([]models.ClassificationEntry, error)
+	// StoreClassification upserts a Claude-classified ticker.
+	// Uses $setOnInsert for first_seen_at so re-classification never resets the timestamp.
+	StoreClassification(ctx context.Context, ticker, assetClass string) error
 }

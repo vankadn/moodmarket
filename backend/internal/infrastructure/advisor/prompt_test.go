@@ -28,6 +28,8 @@ func (s stubClassifier) Classify(ticker string) (string, bool) {
 	return ac, true
 }
 
+func (s stubClassifier) Store(_, _ string) {}
+
 // buildCase is a convenience wrapper so table rows stay readable.
 type buildCase struct {
 	name       string

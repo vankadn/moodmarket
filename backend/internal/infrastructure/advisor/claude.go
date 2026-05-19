@@ -183,7 +183,7 @@ func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.Invest
 		}
 		rec, full, err := c.callClaudeWithTools(ctx, messages, req.StrategyPrompt)
 		if err == nil {
-			c.queueUnknownTickers(rec.Allocations)
+			c.classifyAndStore(rec.Allocations)
 			log.Printf("[advisor] ══ DONE   %d allocations  risk=%s  total=$%.2f", len(rec.Allocations), rec.RiskLevel, rec.TotalBudget)
 			log.Printf("[advisor]   summary: %q", rec.Summary)
 			return rec, nil
@@ -439,9 +439,10 @@ func extractJSON(s string) string {
 	return s
 }
 
-// queueUnknownTickers fires a goroutine for each allocation whose ticker is not
-// in the approved cache. The goroutine never blocks the recommendation flow.
-func (c *claudeAdvisor) queueUnknownTickers(allocations []models.Allocation) {
+// classifyAndStore fires a goroutine for each allocation whose ticker is not in the
+// approved cache. Claude's suggested asset_class is stored as approved:true immediately
+// and the in-memory cache is updated so subsequent recommendations see it without restart.
+func (c *claudeAdvisor) classifyAndStore(allocations []models.Allocation) {
 	if c.classifier == nil || c.classRepo == nil {
 		return
 	}
@@ -450,11 +451,14 @@ func (c *claudeAdvisor) queueUnknownTickers(allocations []models.Allocation) {
 		if known {
 			continue
 		}
-		ticker, suggested := alloc.Ticker, alloc.AssetClass
+		ticker, assetClass := alloc.Ticker, alloc.AssetClass
 		go func() {
-			if err := c.classRepo.QueueUnknown(context.Background(), ticker, suggested); err != nil {
-				log.Printf("[advisor] QueueUnknown %s: %v", ticker, err)
+			if err := c.classRepo.StoreClassification(context.Background(), ticker, assetClass); err != nil {
+				log.Printf("[classification] ERROR storing %s: %v", ticker, err)
+				return
 			}
+			c.classifier.Store(ticker, assetClass)
+			log.Printf("[classification] NEW: %s → %s (Claude-classified)", ticker, assetClass)
 		}()
 	}
 }

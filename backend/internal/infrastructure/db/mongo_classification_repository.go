@@ -27,7 +27,6 @@ type MongoClassificationRepository struct {
 
 func NewMongoClassificationRepository(db *mongo.Database) *MongoClassificationRepository {
 	coll := db.Collection("ticker_classifications")
-	// Unique index on ticker — enforces one record per symbol.
 	_, _ = coll.Indexes().CreateOne(context.Background(), mongo.IndexModel{
 		Keys:    bson.D{{Key: "ticker", Value: 1}},
 		Options: options.Index().SetUnique(true),
@@ -35,40 +34,12 @@ func NewMongoClassificationRepository(db *mongo.Database) *MongoClassificationRe
 	return &MongoClassificationRepository{collection: coll}
 }
 
-func (r *MongoClassificationRepository) Seed(ctx context.Context, entries []models.ClassificationEntry) error {
-	if len(entries) == 0 {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	writeModels := make([]mongo.WriteModel, len(entries))
-	for i, e := range entries {
-		doc := bson.M{
-			"ticker":              e.Ticker,
-			"asset_class":         e.AssetClass,
-			"approved":            e.Approved,
-			"suggested_by_claude": e.SuggestedByClaude,
-			"first_seen_at":       e.FirstSeenAt,
-		}
-		writeModels[i] = mongo.NewUpdateOneModel().
-			SetFilter(bson.M{"ticker": e.Ticker}).
-			SetUpdate(bson.M{"$setOnInsert": doc}).
-			SetUpsert(true)
-	}
-
-	_, err := r.collection.BulkWrite(ctx, writeModels, options.BulkWrite().SetOrdered(false))
-	if err != nil {
-		return fmt.Errorf("mongo classification repo: seed: %w", err)
-	}
-	return nil
-}
-
-func (r *MongoClassificationRepository) LoadApproved(ctx context.Context) ([]models.ClassificationEntry, error) {
+// LoadAll returns every ticker in the collection regardless of approved status.
+func (r *MongoClassificationRepository) LoadAll(ctx context.Context) ([]models.ClassificationEntry, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	cursor, err := r.collection.Find(ctx, bson.M{"approved": true})
+	cursor, err := r.collection.Find(ctx, bson.M{})
 	if err != nil {
 		return nil, fmt.Errorf("mongo classification repo: load approved: %w", err)
 	}
@@ -92,25 +63,29 @@ func (r *MongoClassificationRepository) LoadApproved(ctx context.Context) ([]mod
 	return entries, nil
 }
 
-// QueueUnknown records a Claude-suggested classification for manual review.
-// Uses $setOnInsert so an already-approved ticker is never downgraded.
-func (r *MongoClassificationRepository) QueueUnknown(ctx context.Context, ticker, suggestedClass string) error {
+// StoreClassification upserts a Claude-classified ticker as approved:true.
+// $set updates the class and approval on every call; $setOnInsert preserves first_seen_at.
+func (r *MongoClassificationRepository) StoreClassification(ctx context.Context, ticker, assetClass string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	_, err := r.collection.UpdateOne(ctx,
 		bson.M{"ticker": ticker},
-		bson.M{"$setOnInsert": bson.M{
-			"ticker":              ticker,
-			"asset_class":         suggestedClass,
-			"approved":            false,
-			"suggested_by_claude": true,
-			"first_seen_at":       time.Now(),
-		}},
+		bson.D{
+			{Key: "$set", Value: bson.M{
+				"asset_class":         assetClass,
+				"approved":            true,
+				"suggested_by_claude": true,
+			}},
+			{Key: "$setOnInsert", Value: bson.M{
+				"ticker":        ticker,
+				"first_seen_at": time.Now(),
+			}},
+		},
 		options.Update().SetUpsert(true),
 	)
 	if err != nil {
-		return fmt.Errorf("mongo classification repo: queue unknown %s: %w", ticker, err)
+		return fmt.Errorf("mongo classification repo: store %s: %w", ticker, err)
 	}
 	return nil
 }

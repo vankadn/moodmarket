@@ -78,16 +78,14 @@ func main() {
 	profileRepo := infradb.NewMongoProfileRepository(database)
 	decisionRepo := infradb.NewMongoDecisionRepository(database)
 
-	// Startup sequence: seed classifications → hydrate in-memory cache → start server.
+	// Load approved classifications from Mongo into memory. New tickers are classified
+	// by Claude at recommendation time and stored immediately — no seed step needed.
 	classificationRepo := infradb.NewMongoClassificationRepository(database)
-	if err := classificationRepo.Seed(ctx, infraclassification.SeedEntries()); err != nil {
-		log.Fatalf("ticker classification seed failed: %v", err)
-	}
 	classificationCache := infraclassification.NewClassificationCache()
 	if err := classificationCache.RefreshCache(ctx, classificationRepo); err != nil {
 		log.Fatalf("ticker classification cache load failed: %v", err)
 	}
-	log.Printf("[startup] ticker_classifications seeded and cache loaded")
+	log.Printf("[startup] ticker_classifications cache loaded")
 
 	newsProvider, err := infranews.NewNewsProvider()
 	if err != nil {
