@@ -47,7 +47,7 @@ ANTHROPIC_API_KEY=your_key_here
 
 ```
 cd backend
-go run cmd/server/main.go
+go run ./cmd/server/main.go
 ```
 
 ### 4. Start the frontend
