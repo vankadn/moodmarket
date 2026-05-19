@@ -8,16 +8,16 @@ import (
 )
 
 // NewAdvisor reads AI_PROVIDER and returns the matching implementation.
-// newsProvider is passed to the Claude advisor so it can call get_market_news as a tool.
+// classifier and classRepo are passed to the Claude advisor for concentration-aware prompting.
 // Adding a new provider requires one new file and one new case here — nothing else changes.
-func NewAdvisor(newsProvider ports.NewsProvider) (ports.InvestmentAdvisor, error) {
+func NewAdvisor(newsProvider ports.NewsProvider, classifier ports.Classifier, classRepo ports.ClassificationRepository) (ports.InvestmentAdvisor, error) {
 	provider := os.Getenv("AI_PROVIDER")
 	if provider == "" {
 		provider = "claude"
 	}
 	switch provider {
 	case "claude":
-		return newClaudeAdvisor(newsProvider), nil
+		return newClaudeAdvisor(newsProvider, classifier, classRepo), nil
 	case "mock":
 		if os.Getenv("DEV_MODE") != "true" {
 			return nil, fmt.Errorf("advisor factory: AI_PROVIDER=mock is not allowed in production (DEV_MODE != true)")

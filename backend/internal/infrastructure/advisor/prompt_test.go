@@ -12,14 +12,29 @@ import (
 	"time"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
+	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
+
+// stubClassifier satisfies ports.Classifier for tests without hitting Mongo.
+type stubClassifier struct {
+	m map[string]string
+}
+
+func (s stubClassifier) Classify(ticker string) (string, bool) {
+	ac, ok := s.m[ticker]
+	if !ok {
+		return "Other", false
+	}
+	return ac, true
+}
 
 // buildCase is a convenience wrapper so table rows stay readable.
 type buildCase struct {
-	name     string
-	req      models.InvestmentRequest
-	profile  *models.UserProfile
-	snapshot *models.MarketSnapshot
+	name       string
+	req        models.InvestmentRequest
+	profile    *models.UserProfile
+	snapshot   *models.MarketSnapshot
+	classifier stubClassifier
 	// assertions: each string must (or must not) appear in the output
 	mustContain    []string
 	mustNotContain []string
@@ -275,13 +290,83 @@ func TestBuildUserMessage(t *testing.T) {
 			},
 			mustContain: []string{"context only", "do not override"},
 		},
+
+		// Concentration block tests
+
+		{
+			name: "concentration_block_absent_without_classifier",
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				Positions: []models.Position{
+					{Ticker: "VTI", MarketValue: 600},
+					{Ticker: "BND", MarketValue: 400},
+				},
+			},
+			// nil classifier → concentration block must not appear
+			mustNotContain: []string{"CURRENT PORTFOLIO CONCENTRATION"},
+		},
+		{
+			name: "concentration_block_groups_by_asset_class",
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				Positions: []models.Position{
+					{Ticker: "VTI", MarketValue: 500},
+					{Ticker: "QQQ", MarketValue: 300},
+					{Ticker: "BND", MarketValue: 200},
+				},
+			},
+			classifier: stubClassifier{m: map[string]string{
+				"VTI": "US Equity",
+				"QQQ": "US Equity",
+				"BND": "Bonds",
+			}},
+			mustContain: []string{
+				"CURRENT PORTFOLIO CONCENTRATION",
+				"US Equity",
+				"Bonds",
+				"VTI",
+				"QQQ",
+				"BND",
+			},
+		},
+		{
+			name: "concentration_block_sorts_classes_by_pct_descending",
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				Positions: []models.Position{
+					{Ticker: "BND", MarketValue: 100},
+					{Ticker: "VTI", MarketValue: 900},
+				},
+			},
+			classifier: stubClassifier{m: map[string]string{
+				"VTI": "US Equity",
+				"BND": "Bonds",
+			}},
+			// US Equity (90%) must appear before Bonds (10%)
+			mustContain: []string{"US Equity: 90%", "Bonds: 10%"},
+		},
+		{
+			name: "concentration_block_unknown_ticker_goes_to_other",
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				Positions: []models.Position{
+					{Ticker: "UNKNOWN", MarketValue: 1000},
+				},
+			},
+			classifier: stubClassifier{m: map[string]string{}},
+			mustContain: []string{"Other: 100%", "UNKNOWN"},
+		},
 	}
 
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			msg := buildUserMessage(tc.req, tc.profile, tc.snapshot)
+			var cl ports.Classifier
+			if tc.classifier.m != nil {
+				cl = tc.classifier
+			}
+			msg := buildUserMessage(tc.req, tc.profile, tc.snapshot, cl)
 
 			for _, want := range tc.mustContain {
 				if !strings.Contains(msg, want) {

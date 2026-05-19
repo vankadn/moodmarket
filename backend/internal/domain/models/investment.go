@@ -16,6 +16,7 @@ type InvestmentRequest struct {
 
 type Allocation struct {
 	Ticker     string  `json:"ticker"`
+	AssetClass string  `json:"asset_class,omitempty"`
 	Name       string  `json:"name"`
 	Type       string  `json:"type"`
 	Amount     float64 `json:"amount"`

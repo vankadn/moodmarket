@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -48,16 +49,19 @@ ALLOCATION LOGIC (apply in order):
 3. Emergency fund: if missing, weight toward capital preservation until one exists
 4. Existing positions: do NOT recommend any ticker where the new allocation would push the user above 40% concentration in that ticker across their total portfolio
 5. Recent history: do NOT repeat the exact same allocation as the previous day — vary tickers or weights meaningfully
+6. CONCENTRATION RULE: Do not recommend any allocation that would push an asset class already above 40% concentration higher. If all asset classes are below 40%, allocate freely based on risk profile and market context.
+7. TICKER RULE: Prefer tickers not already held in the portfolio unless the position is below 5% and adding more is justified by today's market context.
 
 OUTPUT CONTRACT:
 Return ONLY a raw JSON object. No markdown, no code fences, no text before or after.
 All fields required. Allocations must sum exactly to total_budget.
 
-{"total_budget":100.00,"allocations":[{"ticker":"VTI","name":"Vanguard Total Market ETF","type":"etf","amount":60.00,"percentage":60.0,"rationale":"broad US equity exposure"},{"ticker":"BND","name":"Vanguard Bond ETF","type":"etf","amount":40.00,"percentage":40.0,"rationale":"fixed income stability"}],"summary":"One sentence describing today's strategy.","risk_level":"medium"}
+{"total_budget":100.00,"allocations":[{"ticker":"VTI","asset_class":"US Equity","name":"Vanguard Total Market ETF","type":"etf","amount":60.00,"percentage":60.0,"rationale":"broad US equity exposure"},{"ticker":"BND","asset_class":"Bonds","name":"Vanguard Bond ETF","type":"etf","amount":40.00,"percentage":40.0,"rationale":"fixed income stability"}],"summary":"One sentence describing today's strategy.","risk_level":"medium"}
 
 RULES:
 - 3 to 5 allocations per recommendation
 - real tickers only (SPY, VTI, BND, QQQ, AAPL, MSFT, NVDA, AMZN, SGOV, SHV, VXUS, XLE, XLF, XLV, etc.)
+- asset_class: the asset class of the ticker (US Equity, International, Bonds, Real Estate, Commodities, or Other)
 - risk_level: exactly one of low / medium / high
 - rationale: under 12 words, specific to today's context — not generic`
 
@@ -141,19 +145,23 @@ type claudeAdvisor struct {
 	apiKey       string
 	httpClient   *http.Client
 	newsProvider ports.NewsProvider
+	classifier   ports.Classifier
+	classRepo    ports.ClassificationRepository
 }
 
-func newClaudeAdvisor(newsProvider ports.NewsProvider) *claudeAdvisor {
+func newClaudeAdvisor(newsProvider ports.NewsProvider, classifier ports.Classifier, classRepo ports.ClassificationRepository) *claudeAdvisor {
 	return &claudeAdvisor{
 		apiKey:       os.Getenv("ANTHROPIC_API_KEY"),
 		httpClient:   &http.Client{},
 		newsProvider: newsProvider,
+		classifier:   classifier,
+		classRepo:    classRepo,
 	}
 }
 
 // GetRecommendation builds the initial user message, then runs the tool-use loop with retries.
 func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.InvestmentRequest, profile *models.UserProfile, snapshot *models.MarketSnapshot) (*models.Recommendation, error) {
-	userMsg := buildUserMessage(req, profile, snapshot)
+	userMsg := buildUserMessage(req, profile, snapshot, c.classifier)
 
 	log.Printf("[advisor] ══ START  budget=$%.2f  profile=%v  market=%v  positions=%d  decisions=%d",
 		req.BaseBudget+req.ExtraMoney, profile != nil, snapshot != nil, len(req.Positions), len(req.RecentDecisions))
@@ -175,6 +183,7 @@ func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.Invest
 		}
 		rec, full, err := c.callClaudeWithTools(ctx, messages, req.StrategyPrompt)
 		if err == nil {
+			c.queueUnknownTickers(rec.Allocations)
 			log.Printf("[advisor] ══ DONE   %d allocations  risk=%s  total=$%.2f", len(rec.Allocations), rec.RiskLevel, rec.TotalBudget)
 			log.Printf("[advisor]   summary: %q", rec.Summary)
 			return rec, nil
@@ -430,7 +439,81 @@ func extractJSON(s string) string {
 	return s
 }
 
-func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile, snapshot *models.MarketSnapshot) string {
+// queueUnknownTickers fires a goroutine for each allocation whose ticker is not
+// in the approved cache. The goroutine never blocks the recommendation flow.
+func (c *claudeAdvisor) queueUnknownTickers(allocations []models.Allocation) {
+	if c.classifier == nil || c.classRepo == nil {
+		return
+	}
+	for _, alloc := range allocations {
+		_, known := c.classifier.Classify(alloc.Ticker)
+		if known {
+			continue
+		}
+		ticker, suggested := alloc.Ticker, alloc.AssetClass
+		go func() {
+			if err := c.classRepo.QueueUnknown(context.Background(), ticker, suggested); err != nil {
+				log.Printf("[advisor] QueueUnknown %s: %v", ticker, err)
+			}
+		}()
+	}
+}
+
+// buildConcentrationBlock groups positions by asset class and formats the
+// CURRENT PORTFOLIO CONCENTRATION section. Returns "" when classifier is nil.
+func buildConcentrationBlock(positions []models.Position, classifier ports.Classifier, totalValue float64) string {
+	if classifier == nil || len(positions) == 0 || totalValue == 0 {
+		return ""
+	}
+
+	type tickerEntry struct {
+		ticker string
+		value  float64
+	}
+	type classGroup struct {
+		name    string
+		value   float64
+		tickers []tickerEntry
+	}
+
+	groupMap := map[string]*classGroup{}
+	var classOrder []string
+
+	for _, p := range positions {
+		ac, _ := classifier.Classify(p.Ticker)
+		if _, exists := groupMap[ac]; !exists {
+			groupMap[ac] = &classGroup{name: ac}
+			classOrder = append(classOrder, ac)
+		}
+		groupMap[ac].value += p.MarketValue
+		groupMap[ac].tickers = append(groupMap[ac].tickers, tickerEntry{p.Ticker, p.MarketValue})
+	}
+
+	groups := make([]*classGroup, 0, len(groupMap))
+	for _, ac := range classOrder {
+		groups = append(groups, groupMap[ac])
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].value > groups[j].value
+	})
+
+	var sb strings.Builder
+	sb.WriteString("\nCURRENT PORTFOLIO CONCENTRATION:\n")
+	for _, g := range groups {
+		classPct := g.value / totalValue * 100
+		sort.Slice(g.tickers, func(i, j int) bool {
+			return g.tickers[i].value > g.tickers[j].value
+		})
+		parts := make([]string, len(g.tickers))
+		for i, t := range g.tickers {
+			parts[i] = fmt.Sprintf("%s %.0f%%", t.ticker, t.value/totalValue*100)
+		}
+		sb.WriteString(fmt.Sprintf("- %s: %.0f%% ($%.0f) — %s\n", g.name, classPct, g.value, strings.Join(parts, ", ")))
+	}
+	return sb.String()
+}
+
+func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile, snapshot *models.MarketSnapshot, classifier ports.Classifier) string {
 	total := req.BaseBudget + req.ExtraMoney
 	msg := fmt.Sprintf("Total to invest today: $%.2f\n\n", total)
 
@@ -496,6 +579,11 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 		for _, p := range req.Positions {
 			totalValue += p.MarketValue
 		}
+
+		if block := buildConcentrationBlock(req.Positions, classifier, totalValue); block != "" {
+			msg += block
+		}
+
 		msg += "\nCURRENT BROKERAGE POSITIONS:\n"
 		for _, p := range req.Positions {
 			pct := 0.0

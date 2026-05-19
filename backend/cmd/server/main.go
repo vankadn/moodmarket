@@ -17,6 +17,7 @@ import (
 	infraauth "github.com/krishnarajivvns/investiq/internal/infrastructure/auth"
 	infrabanking "github.com/krishnarajivvns/investiq/internal/infrastructure/banking"
 	inflabrokerage "github.com/krishnarajivvns/investiq/internal/infrastructure/brokerage"
+	infraclassification "github.com/krishnarajivvns/investiq/internal/infrastructure/classification"
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
 	infracalendar "github.com/krishnarajivvns/investiq/internal/infrastructure/calendar"
 	infraextractor "github.com/krishnarajivvns/investiq/internal/infrastructure/extractor"
@@ -77,12 +78,23 @@ func main() {
 	profileRepo := infradb.NewMongoProfileRepository(database)
 	decisionRepo := infradb.NewMongoDecisionRepository(database)
 
+	// Startup sequence: seed classifications → hydrate in-memory cache → start server.
+	classificationRepo := infradb.NewMongoClassificationRepository(database)
+	if err := classificationRepo.Seed(ctx, infraclassification.SeedEntries()); err != nil {
+		log.Fatalf("ticker classification seed failed: %v", err)
+	}
+	classificationCache := infraclassification.NewClassificationCache()
+	if err := classificationCache.RefreshCache(ctx, classificationRepo); err != nil {
+		log.Fatalf("ticker classification cache load failed: %v", err)
+	}
+	log.Printf("[startup] ticker_classifications seeded and cache loaded")
+
 	newsProvider, err := infranews.NewNewsProvider()
 	if err != nil {
 		log.Fatalf("news provider init failed: %v", err)
 	}
 
-	advisor, err := infraadvisor.NewAdvisor(newsProvider)
+	advisor, err := infraadvisor.NewAdvisor(newsProvider, classificationCache, classificationRepo)
 	if err != nil {
 		log.Fatalf("advisor init failed: %v", err)
 	}
