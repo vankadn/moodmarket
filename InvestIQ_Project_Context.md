@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-18 (Phase 22 + 23 complete — decision verdicts + Activity dashboard merged; Phase 24 planned: feedback loop)
+> Last updated: 2026-05-19 (Phases 22–25 complete; Phase 26 next)
 
 ---
 
@@ -46,6 +46,7 @@ application/         ← use cases, orchestration
 
 infrastructure/      ← implementations of domain ports
   advisor/           ← AI provider implementations (Claude + mock)
+  classification/    ← in-memory ticker→asset-class cache
   db/                ← MongoDB
   auth/              ← Auth providers (DEV + Clerk)
   market/            ← stock price APIs (Polygon + mock)
@@ -79,6 +80,8 @@ Key interfaces:
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
 - `NotificationProvider` — post-invest notifications; `SendInvestmentSummary`, `SendInvestmentFailure`, `SendMarketClosed`; log provider (dev), Resend email provider (prod)
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
+- `Classifier` — in-memory ticker→asset-class lookup; `ClassificationCache` implements this; never hits Mongo during a recommendation
+- `ClassificationRepository` — ticker classification persistence: `Seed`, `LoadApproved`, `QueueUnknown`
 
 ### DEV_MODE pattern
 `DEV_MODE=true` in `.env` auto-logs in as the hardcoded dev user. Zero login required during development. This logic lives in exactly ONE place — `infrastructure/auth/factory.go`. No DEV_MODE checks anywhere else.
@@ -170,6 +173,8 @@ See README.md for the full env var reference and provider swap table.
 | `DecisionVerdict` | Performance result stamped on a decision: StampedAt, OverallReturnPct, SPYReturnPct, BeatMarket, TickerVerdicts |
 | `TickerVerdict` | Per-ticker performance: Ticker, EntryPrice, PrevDayPrice, PrevDayTimestamp, CurrentPrice, CurrentTimestamp, ReturnPct, TodayChangePct |
 | `EvalSummary` | Aggregated verdict stats: TotalDecisions, VerdictedDecisions, WinRate, AvgReturnPct, AvgSPYReturnPct, BestDecision, WorstDecision, ByStrategy |
+| `ClassificationEntry` | One ticker record: ticker, asset_class, approved, suggested_by_claude, first_seen_at |
+| `Allocation.AssetClass` | Asset class on each allocation — returned by Claude in JSON, verified against cache; `omitempty` so old decisions are unaffected |
 
 ---
 
@@ -201,6 +206,8 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 | `auto_invest_configs` | One document per user: enabled, amount, risk, EnabledAt, UpdatedAt |
 | `decisions` | Every daily investment decision: userId, timestamp, market snapshot, allocations, receipts, Plaid snapshot |
 | `scheduler_runs` | One document per autonomous cycle: runID, timestamp, users processed, total invested, errors |
+| `ticker_classifications` | Ticker→asset-class map; approved entries loaded into memory at startup via ClassificationCache |
+| `tax_documents` | Extracted tax form fields (W2/1099/1098); form-specific upsert keys |
 
 ---
 
@@ -809,6 +816,52 @@ No code changes. Infrastructure and configuration only.
 - OpenAPI schema `StrategyPnL` + endpoint spec added; Postman request added to Users folder
 - **Approximation caveat**: P&L attribution is proportional — if two strategies both bought VTI, each gets their fraction of VTI's total position gain. Positions closed or sold after purchase are not tracked (show $0 for that ticker).
 
+### Phase 25 — Ticker Asset-Class Classification (Complete)
+
+**Goal:** Inject a derived concentration block into the Claude prompt so it knows the user's existing portfolio breakdown by asset class — including individual tickers — before recommending today's allocation.
+
+**MongoDB collection: `ticker_classifications`**
+- Fields: `ticker` (unique index), `asset_class`, `approved`, `suggested_by_claude`, `first_seen_at`
+- 29 tickers seeded at startup via `$setOnInsert` BulkWrite — restart-safe, never overwrites existing records
+- US Equity (13): VTI, SPY, QQQ, XLK, XLF, XLE, XLV, XLI, AAPL, MSFT, NVDA, AMZN, TSLA
+- International (5): VXUS, EFA, EEM, VEA, VWO
+- Bonds (6): BND, AGG, SGOV, SHV, TLT, IEF
+- Real Estate (2): VNQ, SCHH
+- Commodities (3): GLD, SLV, USO
+
+**In-memory cache (`infrastructure/classification/cache.go`)**
+- `ClassificationCache`: `sync.RWMutex`-protected `map[string]string`
+- `Classify(ticker) → (assetClass, known)` — returns `("Other", false)` for unknowns; zero Mongo reads per request
+- `RefreshCache(ctx, repo)` — called once at startup after seeding
+
+**Startup sequence (main.go)**
+1. Seed `ticker_classifications` (upsert, no overwrites)
+2. Load approved entries → `ClassificationCache`
+3. Server starts accepting requests — fatal if either step fails
+
+**Prompt changes (`infrastructure/advisor/claude.go`)**
+- `buildUserMessage`: new `CURRENT PORTFOLIO CONCENTRATION` block when classifier is non-nil
+  - Groups positions by asset class, sorts classes by % descending, tickers within each class by % descending
+  - Format: `- US Equity: 54% ($6,900) — VTI 25%, QQQ 22%, SPY 7%`
+- `systemPrompt`: CONCENTRATION RULE (don't recommend any allocation that pushes an asset class already >40% higher) + TICKER RULE (prefer tickers not already held unless position <5%)
+- Output contract: `asset_class` field added to allocation JSON; Claude labels each recommendation
+
+**Unknown ticker handling**
+- `Classify()` returns `known=false` → goroutine fires `QueueUnknown(ticker, suggestedClass)` — fire-and-forget, never blocks recommendation
+- `QueueUnknown` uses `$setOnInsert` — never downgrades an approved ticker to unapproved
+- `approved:false` entries visible via `cmd/dbcheck`; promoted manually in Mongo + server restart
+
+**New ports (`domain/ports/classification_repository.go`)**
+- `Classifier` interface — `Classify(ticker) (assetClass, known)`
+- `ClassificationRepository` interface — `Seed`, `LoadApproved`, `QueueUnknown`
+
+**`cmd/dbcheck` diagnostic tool**
+- `go run ./cmd/dbcheck` — inspect any Mongo collection without installing mongosh
+- Reads `.env`, defaults to `localhost:27017`, prints up to 200 docs as pretty-printed JSON
+- Full docs in `backend/cmd/dbcheck/README.md`
+
+**4 new prompt tests** — absent without classifier, groups by asset class, sorts by % descending, unknown ticker → Other class
+
 ---
 
 ### Phase 17 — Alpaca Real Trading (Planned)
@@ -894,27 +947,24 @@ VERDICT_MIN_AGE=0s     # dev (stamp immediately); 24h prod
 - SVG only — no charting library
 - No new UI component libraries
 
-### Phase 24 — Feedback Loop
+### Phase 24 — Feedback Loop (Complete)
 
-**Goal:** Claude receives its own performance history in every prompt. Recommendations get smarter over time.
-
-**Depends on:** Phase 23 — eval data must be real and meaningful before injecting it.
+**Goal:** Claude receives its own performance history in every prompt so recommendations improve over time.
 
 **How it works:**
-- `RecommendationService` fetches eval summary for the user before building the Claude prompt
-- Injects a performance block into the system prompt:
-  > "Your past recommendations: 14 decisions, 71% beat SPY, avg +2.3% vs SPY +1.1%. Top performer: VTI (+8.2%). Worst: ARKK (-4.1%). Aggressive risk configs outperformed conservative configs."
-- Claude reasons with this context — can adjust conviction, avoid repeat losers, double down on winners
-- Performance block uses `cache_control: ephemeral` — same pattern as existing prompt caching
+- `RecommendationService` calls `GetEvalSummary` before building the prompt; injects result only when `VerdictedDecisions >= 5` (new users and early accounts get no change)
+- `InvestmentRequest` gains `PerformanceSummary *EvalSummary` (nil when below threshold — never persisted)
+- `buildUserMessage`: new `PAST PERFORMANCE` section — win rate vs SPY, avg return, best/worst decision, "context only — do not override risk tolerance" guard
 
-**Domain changes:**
-- `InvestmentRequest` gains `PerformanceSummary *EvalSummary` (optional) — injected by service, never persisted
-- `buildSystemPrompt` updated to include performance block when summary is non-nil
+**Verdict stamping redesign (also Phase 24):**
+- `VerdictJob` background goroutine deleted entirely
+- `VERDICT_JOB_TICK` and `VERDICT_MIN_AGE` env vars removed
+- Verdict stamping moved inline: goroutine fired inside `GetDailyRecommendation` concurrent with tax doc fetch
+- Every path that produces a decision (manual + auto-invest) triggers stamping on the next call — zero polling, zero env vars
 
-**Constraints:**
-- Performance block is informational only — Claude still respects user risk tolerance and amount
-- If eval data is empty (new user), prompt is unchanged — no regression
-- No new external dependencies
+**Tests:**
+- 6 new prompt test cases for performance block (total 26 cases at end of phase including Phase 25)
+- `verdict_stamper_test.go` and `eval_handler_test.go` added (were absent in Phase 22 — the gap that caused 5 runtime bugs)
 
 ---
 
@@ -936,16 +986,13 @@ Features defined but not yet scheduled. Reviewed after each phase — promoted w
 |------|-------|
 | Macro indicators (Fed rate, inflation) | News context covers this for now |
 | Earnings calendar | Adds complexity, marginal value at current scale |
-| Per-user scheduler interval | Complete — Phase 14 |
-| Multiple auto-invest configs per user | Complete — Phase 16c |
 | Redis for Plaid balance cache | In-memory is fine until scale demands it |
 | Finnhub news + sentiment scores | Revisit when individual stock recommendations make per-ticker sentiment worth a new dependency; structured sentiment ("2 bearish") is stronger signal than Claude inferring from text, but not worth the extra key at current ETF-only scope |
-| Refactor: single app shell | Complete — Phase 15b |
-| Household/family accounts | Phase 13+ |
-| Portfolio P&L dashboard | Gains per stock, total return — Phase 11 |
+| Household/family accounts | Multi-user households sharing one financial picture |
 | Tax optimization | Tax-loss harvesting, asset location strategy |
-| Rebalancing alerts | — |
-| SMS notifications via Twilio | `Phone` field already stored on UserProfile and populated into `NotificationTarget`. Needs: `infrastructure/notifications/twilio.go` implementing `NotificationProvider`, factory wired on `NOTIFICATION_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` env vars. Consider a multi-channel provider that wraps both Resend + Twilio so email and SMS fire together. |
+| Rebalancing alerts | Notify when portfolio drifts past target allocation |
+| SMS notifications via Twilio | `Phone` field already stored on UserProfile. Needs: `infrastructure/notifications/twilio.go` implementing `NotificationProvider`, factory wired on `NOTIFICATION_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` env vars. Consider a multi-channel provider wrapping both Resend + Twilio. |
+| Classification cache refresh without restart | `POST /admin/classifications/refresh` endpoint or periodic ticker — currently requires restart after approving new tickers in Mongo |
 | Atlas IP allowlist | Replace 0.0.0.0/0 with Railway static IP when on Pro plan |
 | LLC formation | Required before signing Alpaca Broker API or SnapTrade commercial agreements |
 
@@ -1048,6 +1095,9 @@ Background data access is legitimate when:
 | Split age gate in `ListUnverdicted` | Original design: top-level `"timestamp": {$lt: now-minAge}` applied to ALL filter conditions, blocking re-stamp of today's bad-verdict decisions. Fix: move age gate inside the "no verdict yet" branch only (`noVerdictYet` map with conditional timestamp field); bad-verdict conditions have no timestamp constraint. |
 | Merged Activity + Eval into single "Activity" page | Two separate tabs (Activity = timeline, Eval = performance) would require users to switch between them to see related data. Merging into one page (three parallel API calls on mount) gives a single unified view: invested amount, verdict stats, and decision history with verdicts overlaid. |
 | `config_id = ""` normalized to `"manual"` in MongoDB aggregation | Legacy decisions (pre-Phase 19) have no `config_id` field — reads as `""` in Go. MongoDB `$group` on raw `config_id` creates a `""` bucket separate from the `"manual"` bucket. Fix: `$addFields` + `$cond` in aggregation pipeline normalizes both to `"manual"` before grouping. Frontend also merges same-display-name configs via weighted average for configs with different IDs but identical user-facing names. |
+| Mongo as single source of truth for ticker classifications | Static maps rot. DB-backed seed with `$setOnInsert` lets the classification set grow without code changes. `QueueUnknown` lets Claude suggest new tickers for human review without blocking recommendations. |
+| In-memory cache for classifier, zero Mongo reads per request | Classification is called in the hot path (every recommendation, every position). DB reads per request would add latency and Mongo load for a dataset that changes at most once per session. Cache hydrated at startup, refreshed only on restart. |
+| `cmd/dbcheck` over mongosh for diagnostics | `mongosh` requires a separate install (not bundled with the driver). A Go script using the existing `go.mongodb.org/mongo-driver` runs immediately with `go run ./cmd/dbcheck`, lives in the repo, and is available to any team member without setup. |
 
 ---
 
@@ -1056,22 +1106,18 @@ Background data access is legitimate when:
 | Shortcut | Future fix |
 |----------|-----------|
 | Polygon market data is previous-day close | `/prev` endpoint always gives yesterday's prices — Claude recommends based on stale data if the market moves overnight. Acceptable for personal/dev use; becomes misleading in volatile sessions. Real-time quotes (e.g. Finnhub) fix this but add a new dependency — deferred until this meaningfully hurts recommendation quality |
-| Paper trading only | Swap ALPACA_BASE_URL + keys for live |
-| Log provider for notifications | Real push (FCM or APNs) |
-| Per-user interval not supported | Wishlist — user sets own interval from settings |
-| Market holiday awareness | Complete — Phase 15a |
-| Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale (Wishlist) |
-| Encrypted Mongo for Plaid tokens | Vault / AWS Secrets Manager — Phase 9 deployment |
-| Receipt shows PENDING NEW | Fixed in Phase 7 — polls until terminal status; per-order max-attempts and after-hours stop added later |
+| Paper trading only | Swap `ALPACA_BASE_URL` + keys for live. Per-user credentials already wired — no code change, just a UI account type selector + real keys |
+| Log provider for notifications | Real push (FCM or APNs) for mobile; Resend covers email |
+| Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale |
+| Encrypted Mongo for Plaid tokens | Move to Vault / AWS Secrets Manager before go-live |
 | `[8a-debug]` log lines in `recommendation_service.go` | Remove after Phase 8a testing is verified; grep `[8a-debug]` |
 | `[8b-debug]` log lines in `recommendation_service.go` | Remove after Phase 8b testing is verified; grep `[8b-debug]` |
 | `[8c-debug]` log lines in `recommendation_service.go` | Remove after Phase 8c testing is verified; grep `[8c-debug]` |
 | `[8ca-debug]` log lines in `recommendation_service.go` | Remove after Phase 8ca testing is verified; grep `[8ca-debug]` |
 | `CashContext.UserOverride` field is dead | Field exists in the model but is never set; was part of the original Phase 8ca design before the redesign removed per-session override. Remove when cleaning up. |
 | Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |
-| Alpaca still paper trading only | Per-user credentials are wired — switching to live is a UI change (user selects "Live trading" account type) + using real Alpaca keys. No code change needed. |
-| Verdict entry price uses Polygon proxy | When `FilledPrice = 0` (async Alpaca order), Polygon prev-day close is used as entry price. This understates or overstates return vs the actual fill price. When Alpaca eventually updates the order to `filled` with a real `filled_avg_price`, the verdict is not re-computed. True fix: re-fetch Alpaca order status after a delay and re-stamp with real fill price. |
-| ~~Verdict job runs unconditionally on holidays~~ | Resolved — verdict job deleted; stamping is inline per user, not a batch job |
+| Verdict entry price uses Polygon proxy | When `FilledPrice = 0` (async Alpaca order), Polygon prev-day close is used as entry price. Understates/overstates return vs actual fill. True fix: re-fetch Alpaca order after a delay and re-stamp with real fill price |
+| Ticker classification cache refreshes only at startup | `RefreshCache` called once; `approved:false` entries promoted in Mongo require a server restart to take effect. Fix: add a periodic refresh or a `POST /admin/classifications/refresh` endpoint |
 
 ---
 

@@ -1,6 +1,6 @@
 # InvestIQ
 
-Mood-driven daily investment advisor powered by Claude.
+Personal financial operating system — daily investment decisions powered by Claude.
 
 ---
 
@@ -31,6 +31,9 @@ MONGODB_URI=mongodb://localhost:27017
 # Scheduler
 AUTO_INVEST_INTERVAL=24h
 NOTIFICATION_PROVIDER=log
+
+# Verdict stamping (MOCK_ALL sets these automatically)
+VERDICT_MIN_AGE=0s        # 0s = stamp immediately in dev; 24h in prod
 ```
 
 To use real Claude recommendations but keep everything else mocked, drop `MOCK_ALL` and add:
@@ -57,6 +60,17 @@ npm run dev
 
 Open http://localhost:5173
 
+### 5. Inspect the database (no mongosh needed)
+
+```
+cd backend
+go run ./cmd/dbcheck                # ticker_classifications (default)
+go run ./cmd/dbcheck decisions      # investment decisions
+go run ./cmd/dbcheck profiles       # user profiles
+```
+
+See `backend/cmd/dbcheck/README.md` for full usage.
+
 ---
 
 ## Switching to real providers
@@ -82,6 +96,20 @@ PLAID_TOKEN_ENCRYPTION_KEY= # generate with: openssl rand -base64 32
 ### Alpaca-specific
 
 Use `https://paper-api.alpaca.markets` as `ALPACA_BASE_URL` for paper trading.
+
+### Notifications (email via Resend)
+
+```env
+NOTIFICATION_PROVIDER=resend
+RESEND_API_KEY=re_...
+RESEND_FROM=InvestIQ <noreply@investiq.fit>
+```
+
+### Document extraction
+
+```env
+DOCUMENT_EXTRACTOR=claude   # claude | mock
+```
 
 ### Frontend
 
