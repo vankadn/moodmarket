@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-19 (Phases 22–25 complete; Phase 26 next)
+> Last updated: 2026-05-19 (Phases 22–26a complete; Phase 26b next)
 
 ---
 
@@ -862,6 +862,21 @@ No code changes. Infrastructure and configuration only.
 
 **4 new prompt tests** — absent without classifier, groups by asset class, sorts by % descending, unknown ticker → Other class
 
+### Phase 26a — Live Claude Classification (Complete)
+
+**Goal:** Remove all static seed logic from code. Claude classifies unknown tickers at recommendation time and the result is immediately usable — no restart, no approval queue.
+
+**What changed:**
+- `seed.go` deleted — the 29 base tickers already live in Mongo from Phase 25; no code needs to know about them
+- Startup `Seed()` call removed from `main.go`; startup now only calls `LoadAll` to hydrate the cache
+- `LoadApproved` → `LoadAll`: cache loads every ticker in the collection, `approved` field is preserved but not used as a filter
+- `QueueUnknown` (approved:false, wait for review) replaced by `StoreClassification`: Claude's suggested `asset_class` is written to Mongo as-is and immediately pushed into the in-memory map via `classifier.Store()`
+- New tickers are live in the cache within the same goroutine that processes the recommendation — zero restart needed
+- Alert log on every new classification: `[classification] NEW: GOOGL → US Equity (Claude-classified)`
+
+**`approved` field — kept, not yet used**
+The field exists on every document (seed tickers have `approved:true`, Claude-classified tickers also get `approved:true` now). There is a possible future use: an admin UI where a human reviews Claude's classifications before they propagate. In practice the value of that review loop is unclear — Claude's asset class suggestions have been accurate on the tickers seen so far, and adding a manual approval step would add friction without obvious payoff. Keeping the field costs nothing. If a bad classification ever surfaces, the fix is one Mongo update. No plan to build the admin UI.
+
 ---
 
 ### Phase 17 — Alpaca Real Trading (Planned)
@@ -992,7 +1007,6 @@ Features defined but not yet scheduled. Reviewed after each phase — promoted w
 | Tax optimization | Tax-loss harvesting, asset location strategy |
 | Rebalancing alerts | Notify when portfolio drifts past target allocation |
 | SMS notifications via Twilio | `Phone` field already stored on UserProfile. Needs: `infrastructure/notifications/twilio.go` implementing `NotificationProvider`, factory wired on `NOTIFICATION_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` env vars. Consider a multi-channel provider wrapping both Resend + Twilio. |
-| Classification cache refresh without restart | `POST /admin/classifications/refresh` endpoint or periodic ticker — currently requires restart after approving new tickers in Mongo |
 | Atlas IP allowlist | Replace 0.0.0.0/0 with Railway static IP when on Pro plan |
 | LLC formation | Required before signing Alpaca Broker API or SnapTrade commercial agreements |
 
@@ -1117,7 +1131,7 @@ Background data access is legitimate when:
 | `CashContext.UserOverride` field is dead | Field exists in the model but is never set; was part of the original Phase 8ca design before the redesign removed per-session override. Remove when cleaning up. |
 | Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |
 | Verdict entry price uses Polygon proxy | When `FilledPrice = 0` (async Alpaca order), Polygon prev-day close is used as entry price. Understates/overstates return vs actual fill. True fix: re-fetch Alpaca order after a delay and re-stamp with real fill price |
-| Ticker classification cache refreshes only at startup | `RefreshCache` called once; `approved:false` entries promoted in Mongo require a server restart to take effect. Fix: add a periodic refresh or a `POST /admin/classifications/refresh` endpoint |
+| Classification bad data has no correction UI | If Claude mis-classifies a ticker (e.g. calls a bond ETF "US Equity"), the fix is a manual Mongo update. Acceptable for now — `cmd/dbcheck` makes it easy to spot. No admin UI planned until mis-classifications become a real pattern |
 
 ---
 
