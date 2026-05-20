@@ -10,6 +10,7 @@ import { AutoInvestList } from "./pages/AutoInvestList";
 import { AutoInvestSettings } from "./pages/AutoInvestSettings";
 import { Portfolio } from "./pages/Portfolio";
 import { BrokerageConnect } from "./components/BrokerageConnect";
+import { PortfolioAggregatorConnect } from "./components/PortfolioAggregatorConnect";
 import { Documents } from "./pages/Documents";
 import { NotificationSettingsPage } from "./pages/NotificationSettingsPage";
 import { AutoInvestConfig, getAutoInvestConfigs, getProfile, UserProfile } from "./services/api";
@@ -25,6 +26,7 @@ export type AppState =
   | "notifications"
   | "portfolio"
   | "brokerage"
+  | "portfolio-connect"
   | "documents"
   | "eval";
 
@@ -133,6 +135,16 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
     );
   }
 
+  if (state === "portfolio-connect") {
+    return (
+      <PortfolioAggregatorConnect
+        status={profile?.portfolio_aggregator}
+        onBack={() => setState("home")}
+        onChanged={() => refreshAndReturn("portfolio-connect")}
+      />
+    );
+  }
+
   if (state === "documents") {
     return <Documents onBack={() => setState("home")} />;
   }
@@ -151,6 +163,7 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
       onNotificationSettings={() => setState("notifications")}
       onPortfolio={() => setState("portfolio")}
       onBrokerage={() => setState("brokerage")}
+      onPortfolioConnect={() => setState("portfolio-connect")}
       onDocuments={() => setState("documents")}
       onEval={() => setState("eval")}
     />

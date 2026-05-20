@@ -21,6 +21,12 @@ export interface BrokerageStatus {
   connected_at?: string;
 }
 
+export interface PortfolioConnectionStatus {
+  provider: string;
+  connected: boolean;
+  connected_at?: string;
+}
+
 export interface UserProfile {
   user_id?: string;
   full_name: string;
@@ -38,6 +44,7 @@ export interface UserProfile {
   phone?: string;
   brokerages?: BrokerageStatus[];
   connected_accounts?: PlaidConnectionSummary[];
+  portfolio_aggregator?: PortfolioConnectionStatus;
 }
 
 export type StrategyType = "long_term" | "short_term";
@@ -357,6 +364,23 @@ export async function addBrokerageConnection(req: AddBrokerageConnectionRequest)
     throw new Error(text || `API error: ${res.status}`);
   }
   return res.json();
+}
+
+export async function connectPortfolioAggregator(): Promise<{ redirect_url: string }> {
+  const res = await fetch(`${API_BASE}/portfolio/connect`, {
+    method: "POST",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function disconnectPortfolioAggregator(): Promise<void> {
+  const res = await fetch(`${API_BASE}/portfolio/connect`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
 
 export async function removeBrokerageConnection(connectionID: string): Promise<void> {

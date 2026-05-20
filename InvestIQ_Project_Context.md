@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-19 — full feature set built and live; see **What's built** for capabilities and **What's next** for the roadmap
+> Last updated: 2026-05-20 — SnapTrade portfolio aggregation added; external holdings now merged into Claude prompt; see **What's built** for capabilities and **What's next** for the roadmap
 
 ---
 
@@ -82,6 +82,8 @@ Key interfaces:
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
 - `Classifier` — in-memory ticker→asset-class lookup; `ClassificationCache` implements this; never hits Mongo during a recommendation
 - `ClassificationRepository` — ticker classification persistence: `LoadAll`, `StoreClassification`
+- `PortfolioAggregator` — read-only external holdings: `GetHoldings(ctx, providerUserID, providerUserSecret) []Position`; SnapTrade implements this
+- `PortfolioConnector` — OAuth lifecycle for external broker linking: `RegisterUser`, `GenerateConnectURL`, `DeleteUser`; SnapTrade implements this
 
 ### DEV_MODE pattern
 `DEV_MODE=true` in `.env` auto-logs in as the hardcoded dev user. Zero login required during development. This logic lives in exactly ONE place — `infrastructure/auth/factory.go`. No DEV_MODE checks anywhere else.
@@ -98,7 +100,7 @@ Three providers, three distinct roles — never conflated:
 | Provider | Role | Auth | Status |
 |----------|------|------|--------|
 | **Alpaca** | Trade execution — stocks, options, crypto subset | Per-user API key + secret (AES-256-GCM encrypted in Mongo) | Active (paper → live is a config change) |
-| **SnapTrade** | Portfolio aggregation — read positions, balances, holdings from Robinhood and Fidelity | OAuth, per-user token | Planned — see What's next |
+| **SnapTrade** | Portfolio aggregation — read positions from Robinhood, Fidelity, and other linked brokers | OAuth; per-user `providerUserID` + `providerUserSecret` (AES-256-GCM encrypted in Mongo) | Active — read-only; execution only after SnapTrade confirms Robinhood write access |
 | **Coinbase Advanced Trade** | Crypto execution | API key auth (per-user, encrypted at rest) | Planned — see What's next |
 
 **SnapTrade trade execution via Robinhood:** Do not build this path until SnapTrade's Robinhood integration explicitly confirms write/order access. Read-only aggregation first — execution only after verified.
@@ -169,6 +171,8 @@ See README.md for the full env var reference and provider swap table.
 | `NotificationTarget` | Delivery target for one notification: UserID, Email, Phone, Source (`"manual"` or `"auto"`) |
 | `HistoryPoint` | One data point in a portfolio value time series: Timestamp (Unix epoch seconds), Equity, ProfitLoss, ProfitLossPct |
 | `NewsItem` | One market headline: Headline, Summary, Source, PublishedAt |
+| `PortfolioConnection` | Per-user SnapTrade credential record: Provider, ProviderUserID, ProviderUserSecret (both AES-256-GCM encrypted), ConnectedAt — never serialized to JSON; never logged |
+| `PortfolioConnectionStatus` | Safe API subset returned to callers: Provider, Connected, ConnectedAt — secrets never included |
 | `TransactionSummary` | Aggregated spending signals: SpendLast7Days, SpendLast30Days, LargestPendingAmount, LargestPendingName, PulledAt |
 | `DecisionVerdict` | Performance result stamped on a decision: StampedAt, OverallReturnPct, SPYReturnPct, BeatMarket, TickerVerdicts |
 | `TickerVerdict` | Per-ticker performance: Ticker, EntryPrice, PrevDayPrice, PrevDayTimestamp, CurrentPrice, CurrentTimestamp, ReturnPct, TodayChangePct |
@@ -193,6 +197,7 @@ See README.md for the full env var reference and provider swap table.
 - `notification_email` string (optional) — email address for post-invest notifications; empty = no email sent
 - `phone` string (optional) — E.164 phone number for SMS notifications; stored but SMS not yet implemented (Twilio backlogged)
 - `brokerage_connection` embedded doc (in `users` collection) — encrypted APIKey, SecretKey, BaseURL, ConnectedAt; never serialized to JSON; exposed only as `BrokerageStatus` in profile response
+- `portfolio_connection` embedded doc (in `users` collection) — encrypted ProviderUserID, ProviderUserSecret, Provider, ConnectedAt; never serialized to JSON; exposed only as `PortfolioConnectionStatus` in profile response
 
 Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its own collection, not on UserProfile.
 
@@ -235,6 +240,17 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Portfolio history chart: 1D/5D/1M/1Y/5Y period selector, SVG polyline (no charting library)
 - `GET /portfolio`, `GET /portfolio/history`, `POST/DELETE /brokerage/connections`
 - `ErrBrokerageNotConnected` sentinel: fatal for invest (400), non-fatal for recommend (skip positions), clean skip in scheduler
+
+### External portfolio aggregation (SnapTrade)
+- `POST /portfolio/connect` — registers user with SnapTrade, returns broker OAuth redirect URL; idempotent (re-uses existing registration for a fresh URL)
+- `DELETE /portfolio/connect` — de-registers user from SnapTrade; best-effort (local clear proceeds even if provider call fails)
+- Credentials (`providerUserID`, `providerUserSecret`) stored AES-256-GCM encrypted in `users.portfolio_connection`; never logged
+- `PortfolioConnector` interface: `RegisterUser`, `GenerateConnectURL`, `DeleteUser` — lifecycle for linking external brokers
+- `PortfolioAggregator` interface: `GetHoldings` — fetches all positions from linked external brokers (two-step: list accounts → positions per account)
+- HMAC-SHA256 signed SnapTrade API client in `infrastructure/portfolio/snaptrade.go`; per-call credentials, no state stored on client
+- `RecommendationService` step 5b: external holdings fetched and merged into `InvestmentRequest.Positions`; Alpaca positions take precedence (first-seen-wins deduplication by ticker)
+- `UserProfile.PortfolioAggregator` field: `PortfolioConnectionStatus` (provider + connected + connected_at) returned in profile response
+- Frontend: `PortfolioAggregatorConnect` component; "Ext. accounts" nav button; `portfolio-connect` app state; `connectPortfolioAggregator` / `disconnectPortfolioAggregator` API functions
 
 ### Banking & spending
 - Plaid (production, 10 free connections) — balance + transaction history; `PLAID_CACHE_TTL` (default 5m) reduces API calls
@@ -283,7 +299,6 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 | Item | Notes |
 |------|-------|
-| SnapTrade portfolio read | Aggregate Robinhood + Fidelity positions read-only via OAuth. Inject aggregated holdings into Claude prompt. Do NOT build trade execution until SnapTrade confirms Robinhood write access |
 | Coinbase Advanced Trade | Crypto execution via official API key auth. Implements `BrokerageProvider` — zero application layer changes. Same per-user AES-256-GCM credential pattern as Alpaca |
 | SMS notifications via Twilio | `Phone` field already on `UserProfile`. Needs `infrastructure/notifications/twilio.go` implementing `NotificationProvider`; factory wired on `NOTIFICATION_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` |
 
@@ -411,6 +426,10 @@ Background data access is legitimate when:
 | Mongo as single source of truth for ticker classifications | Static maps rot. DB-backed seed with `$setOnInsert` lets the classification set grow without code changes. `StoreClassification` writes Claude's suggested class directly as approved — no review queue, no restart needed; the in-memory cache is updated in the same goroutine. |
 | In-memory cache for classifier, zero Mongo reads per request | Classification is called in the hot path (every recommendation, every position). DB reads per request would add latency and Mongo load for a dataset that changes at most once per session. Cache hydrated at startup, refreshed only on restart. |
 | `cmd/dbcheck` over mongosh for diagnostics | `mongosh` requires a separate install. A Go script using the existing `go.mongodb.org/mongo-driver` runs immediately with `go run ./cmd/dbcheck`, lives in the repo, and is available to any team member without setup. |
+| Two separate SnapTrade ports (`PortfolioAggregator` + `PortfolioConnector`) | A single combined interface would force every caller to implement or mock methods it doesn't use. `RecommendationService` depends only on `PortfolioAggregator`; the handler depends only on `PortfolioConnector`. `SnapTradeClient` implements both in one struct — one file, one HTTP client. |
+| Save-before-URL-generate in portfolio connect flow | If credentials are persisted after URL generation, a URL-step failure leaves a registered SnapTrade user with no local record — orphaned forever. Persist first; rollback with `DeleteUser` + `ClearPortfolioConnection` if the URL step fails. |
+| Best-effort disconnect for SnapTrade | Failing the `DeleteUser` provider call and returning 500 would leave the user stuck in "connected" UI state. Local clear proceeds regardless; provider-side cleanup is logged and monitored but not user-blocking. |
+| Alpaca positions take precedence over SnapTrade in deduplication | Alpaca positions are held and traded in this app — they are the ground truth for cost basis, entry price, and P&L. SnapTrade read-only positions are context for Claude, not authoritative. First-seen-wins with Alpaca fetched first enforces this without special-casing. |
 
 ---
 

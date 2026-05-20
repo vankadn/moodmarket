@@ -47,4 +47,15 @@ type ProfileRepository interface {
 	// ClearLegacySingleBrokerageConnection removes the legacy brokerage_connection field.
 	// Used only by the legacy DELETE /brokerage/connect endpoint.
 	ClearLegacySingleBrokerageConnection(ctx context.Context, userID string) error
+
+	// SavePortfolioConnection stores the portfolio aggregator connection for the user.
+	// Encrypts credentials before writing. Replaces any existing connection.
+	SavePortfolioConnection(ctx context.Context, userID string, conn models.PortfolioConnection) error
+
+	// GetPortfolioConnection returns the portfolio aggregator connection with decrypted credentials.
+	// Returns nil, nil when no connection exists.
+	GetPortfolioConnection(ctx context.Context, userID string) (*models.PortfolioConnection, error)
+
+	// ClearPortfolioConnection removes the portfolio_connection field from the user document.
+	ClearPortfolioConnection(ctx context.Context, userID string) error
 }

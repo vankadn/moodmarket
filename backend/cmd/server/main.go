@@ -17,6 +17,7 @@ import (
 	infraauth "github.com/krishnarajivvns/investiq/internal/infrastructure/auth"
 	infrabanking "github.com/krishnarajivvns/investiq/internal/infrastructure/banking"
 	inflabrokerage "github.com/krishnarajivvns/investiq/internal/infrastructure/brokerage"
+	infraportfolio "github.com/krishnarajivvns/investiq/internal/infrastructure/portfolio"
 	infraclassification "github.com/krishnarajivvns/investiq/internal/infrastructure/classification"
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
 	infracalendar "github.com/krishnarajivvns/investiq/internal/infrastructure/calendar"
@@ -63,6 +64,7 @@ func main() {
 		os.Setenv("NEWS_PROVIDER", "mock")
 		os.Setenv("DOCUMENT_EXTRACTOR", "mock")
 		os.Setenv("MARKET_CALENDAR", "mock")
+		os.Setenv("SNAPTRADE_PROVIDER", "mock")
 		os.Setenv("DEV_MODE", "true")
 	}
 
@@ -107,6 +109,11 @@ func main() {
 		log.Fatalf("brokerage factory init failed: %v", err)
 	}
 
+	portfolioAggregator, portfolioConnector, err := infraportfolio.NewPortfolioProvider()
+	if err != nil {
+		log.Fatalf("portfolio provider init failed: %v", err)
+	}
+
 	financialDataProvider, err := infrabanking.NewFinancialDataProvider()
 	if err != nil {
 		log.Fatalf("financial data provider init failed: %v", err)
@@ -132,7 +139,7 @@ func main() {
 	}
 	documentRepo := infradb.NewMongoDocumentRepository(database)
 
-	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory, documentRepo)
+	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory, documentRepo, portfolioAggregator)
 	investSvc := services.NewInvestmentService(brokerageFactory, profileRepo, decisionRepo, marketProvider)
 	documentSvc := services.NewDocumentService(documentExtractor, documentRepo)
 	idp := middleware.ContextIdentityProvider{}
@@ -141,6 +148,7 @@ func main() {
 	go autoInvestScheduler.Start(ctx)
 
 	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)
+	portfolioConnectHandler := handlers.NewPortfolioConnectHandler(portfolioConnector, profileRepo, idp)
 	activityHandler := handlers.NewActivityHandler(idp, decisionRepo)
 	evalHandler := handlers.NewEvalHandler(idp, decisionRepo)
 	orderHandler := handlers.NewOrderHandler(idp, profileRepo, brokerageFactory)
@@ -160,6 +168,7 @@ func main() {
 		ActivityStrategyPnL:  handlers.NewStrategyPnLHandler(idp, decisionRepo, profileRepo, brokerageFactory),
 		Brokerage:            handlers.NewBrokerageHandler(profileRepo, idp),
 		BrokerageConnections: handlers.NewBrokerageConnectionsHandler(profileRepo, idp),
+		PortfolioConnect:     portfolioConnectHandler,
 		Notifications:        handlers.NewNotificationSettingsHandler(profileRepo, idp),
 		Portfolio:            handlers.NewPortfolioHandler(profileRepo, brokerageFactory, idp),
 		Order:                http.HandlerFunc(orderHandler.GetOrder),

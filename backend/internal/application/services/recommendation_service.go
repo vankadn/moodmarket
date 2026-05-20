@@ -13,13 +13,14 @@ import (
 )
 
 type RecommendationService struct {
-	advisor          ports.InvestmentAdvisor
-	profileRepo      ports.ProfileRepository
-	marketData       ports.MarketDataProvider
-	decisionRepo     ports.DecisionRepository
-	financialData    ports.FinancialDataProvider
-	brokerageFactory ports.BrokerageProviderFactory
-	documentRepo     ports.DocumentRepository
+	advisor              ports.InvestmentAdvisor
+	profileRepo          ports.ProfileRepository
+	marketData           ports.MarketDataProvider
+	decisionRepo         ports.DecisionRepository
+	financialData        ports.FinancialDataProvider
+	brokerageFactory     ports.BrokerageProviderFactory
+	documentRepo         ports.DocumentRepository
+	portfolioAggregator  ports.PortfolioAggregator
 }
 
 func NewRecommendationService(
@@ -30,15 +31,17 @@ func NewRecommendationService(
 	financialData ports.FinancialDataProvider,
 	brokerageFactory ports.BrokerageProviderFactory,
 	documentRepo ports.DocumentRepository,
+	portfolioAggregator ports.PortfolioAggregator,
 ) *RecommendationService {
 	return &RecommendationService{
-		advisor:          advisor,
-		profileRepo:      profileRepo,
-		marketData:       marketData,
-		decisionRepo:     decisionRepo,
-		financialData:    financialData,
-		brokerageFactory: brokerageFactory,
-		documentRepo:     documentRepo,
+		advisor:             advisor,
+		profileRepo:         profileRepo,
+		marketData:          marketData,
+		decisionRepo:        decisionRepo,
+		financialData:       financialData,
+		brokerageFactory:    brokerageFactory,
+		documentRepo:        documentRepo,
+		portfolioAggregator: portfolioAggregator,
 	}
 }
 
@@ -95,36 +98,68 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 		}
 	}
 
-	// Step 5: current brokerage positions — Claude avoids over-concentrating existing holdings.
-	// Fetches from all connections; deduplicates by ticker (first-seen wins).
+	// Steps 5 & 5b: current positions — Alpaca connections first, then external aggregator.
+	// seen deduplicates by ticker across both sources (first-seen wins).
+	seen := make(map[string]bool)
+
 	brokerageConns, _ := s.profileRepo.GetBrokerageConnections(ctx, userID)
 	if len(brokerageConns) == 0 {
-		log.Printf("[recommend] step 5/8  brokerage not connected — skipping positions")
+		log.Printf("[recommend] step 5/9   brokerage not connected — skipping positions")
 	} else {
-		seen := make(map[string]bool)
-		var allPositions []models.Position
 		for i := range brokerageConns {
 			provider, err := s.brokerageFactory.ForUser(&brokerageConns[i])
 			if err != nil {
-				log.Printf("[recommend] step 5/8  build provider for %s failed (%v) — skipped", brokerageConns[i].ID, err)
+				log.Printf("[recommend] step 5/9   build provider for %s failed (%v) — skipped", brokerageConns[i].ID, err)
 				continue
 			}
 			positions, err := provider.GetPositions(ctx, userID)
 			if err != nil {
-				log.Printf("[recommend] step 5/8  positions fetch from %s failed (%v) — skipped", brokerageConns[i].ID, err)
+				log.Printf("[recommend] step 5/9   positions fetch from %s failed (%v) — skipped", brokerageConns[i].ID, err)
 				continue
 			}
 			for _, p := range positions {
 				if seen[p.Ticker] {
-					log.Printf("[recommend] step 5/8  duplicate ticker %s from %s — skipped", p.Ticker, brokerageConns[i].ID)
+					log.Printf("[recommend] step 5/9   duplicate ticker %s from %s — skipped", p.Ticker, brokerageConns[i].ID)
 					continue
 				}
 				seen[p.Ticker] = true
-				allPositions = append(allPositions, p)
+				req.Positions = append(req.Positions, p)
 			}
 		}
-		req.Positions = allPositions
-		log.Printf("[recommend] step 5/8  %d position(s) loaded across %d connection(s)", len(allPositions), len(brokerageConns))
+		log.Printf("[recommend] step 5/9   %d position(s) loaded across %d connection(s)", len(req.Positions), len(brokerageConns))
+	}
+
+	// Step 5b: external portfolio holdings merged with Alpaca positions; ticker deduplication continues.
+	portfolioConn, _ := s.profileRepo.GetPortfolioConnection(ctx, userID)
+	if portfolioConn == nil {
+		log.Printf("[recommend] step 5b/9  no portfolio aggregator connected — skipping external holdings")
+	} else {
+		log.Printf("[recommend] step 5b/9  fetching external holdings (provider=%s)", portfolioConn.Provider)
+		extPositions, err := s.portfolioAggregator.GetHoldings(ctx, portfolioConn.ProviderUserID, portfolioConn.ProviderUserSecret)
+		if err != nil {
+			log.Printf("[recommend] step 5b/9  external holdings fetch failed (%v) — skipped", err)
+		} else {
+			log.Printf("[recommend] step 5b/9  received %d position(s) from portfolio aggregator", len(extPositions))
+			added := 0
+			var merged, duped []string
+			for _, p := range extPositions {
+				if seen[p.Ticker] {
+					duped = append(duped, p.Ticker)
+					continue
+				}
+				seen[p.Ticker] = true
+				req.Positions = append(req.Positions, p)
+				merged = append(merged, p.Ticker)
+				added++
+			}
+			if len(merged) > 0 {
+				log.Printf("[recommend] step 5b/9  merged tickers: %v", merged)
+			}
+			if len(duped) > 0 {
+				log.Printf("[recommend] step 5b/9  skipped duplicate tickers: %v", duped)
+			}
+			log.Printf("[recommend] step 5b/9  %d external position(s) merged, total positions now %d", added, len(req.Positions))
+		}
 	}
 
 	// Step 6: recent decision history — Claude avoids repeating the same allocation daily

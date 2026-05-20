@@ -86,6 +86,7 @@ type UserProfile struct {
 	IncludeCashContext        bool                     `json:"include_cash_context"`         // user opted in to cash-context signal in Claude prompt
 	NotificationEmail         string                   `json:"notification_email,omitempty"` // optional; empty = no email notifications
 	Phone                     string                   `json:"phone,omitempty"`              // optional; empty = no SMS notifications
-	Brokerages                []BrokerageStatus        `json:"brokerages,omitempty"`         // populated by repository, never written back on save
-	ConnectedAccounts         []PlaidConnectionSummary `json:"connected_accounts,omitempty"` // institution + item_id only; populated by repository, never written back on save
+	Brokerages                []BrokerageStatus          `json:"brokerages,omitempty"`           // populated by repository, never written back on save
+	ConnectedAccounts         []PlaidConnectionSummary   `json:"connected_accounts,omitempty"`   // institution + item_id only; populated by repository, never written back on save
+	PortfolioAggregator       *PortfolioConnectionStatus `json:"portfolio_aggregator,omitempty"` // populated by repository, never written back on save
 }

@@ -36,9 +36,18 @@ type brokerageConnectionDoc struct {
 	ConnectedAt     time.Time `bson:"connected_at"`
 }
 
+// portfolioConnectionDoc stores credentials for an external portfolio aggregator.
+// Both fields are AES-256-GCM encrypted; ProviderUserSecret is a long-lived HMAC signing key — never log it.
+type portfolioConnectionDoc struct {
+	Provider           string    `bson:"provider"`
+	ProviderUserID     string    `bson:"provider_user_id"`     // AES-256-GCM encrypted
+	ProviderUserSecret string    `bson:"provider_user_secret"` // AES-256-GCM encrypted HMAC key; never log
+	ConnectedAt        time.Time `bson:"connected_at"`
+}
+
 // profileDocument is the MongoDB-specific representation.
 // bson tags are intentionally isolated here and never appear in domain models.
-// PlaidConnections, BrokerageConn, and BrokerageConns use omitempty so fromProfile ($set) never touches them.
+// PlaidConnections, BrokerageConn, BrokerageConns, and PortfolioConn use omitempty so fromProfile ($set) never touches them.
 type profileDocument struct {
 	UserID                    string                   `bson:"user_id"`
 	FullName                  string                   `bson:"full_name"`
@@ -57,6 +66,7 @@ type profileDocument struct {
 	PlaidConnections          []plaidConnectionDoc     `bson:"plaid_connections,omitempty"`
 	BrokerageConn             *brokerageConnectionDoc  `bson:"brokerage_connection,omitempty"`  // legacy single-connection field
 	BrokerageConns            []brokerageConnectionDoc `bson:"brokerage_connections,omitempty"` // multi-connection array
+	PortfolioConn             *portfolioConnectionDoc  `bson:"portfolio_connection,omitempty"`
 }
 
 type MongoProfileRepository struct {
@@ -348,6 +358,85 @@ func (r *MongoProfileRepository) RemovePlaidConnection(ctx context.Context, user
 	return nil
 }
 
+// SavePortfolioConnection stores the encrypted portfolio aggregator credentials for the user.
+// Uses $set to replace any existing portfolio_connection — one aggregator per user.
+func (r *MongoProfileRepository) SavePortfolioConnection(ctx context.Context, userID string, conn models.PortfolioConnection) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	encUserID, err := EncryptToken(conn.ProviderUserID)
+	if err != nil {
+		return fmt.Errorf("mongo profile repo: encrypt portfolio provider user id: %w", err)
+	}
+	encSecret, err := EncryptToken(conn.ProviderUserSecret)
+	if err != nil {
+		return fmt.Errorf("mongo profile repo: encrypt portfolio provider user secret: %w", err)
+	}
+
+	doc := portfolioConnectionDoc{
+		Provider:           conn.Provider,
+		ProviderUserID:     encUserID,
+		ProviderUserSecret: encSecret,
+		ConnectedAt:        conn.ConnectedAt,
+	}
+
+	filter := bson.M{"user_id": userID}
+	update := bson.M{"$set": bson.M{"portfolio_connection": doc}}
+	opts := options.Update().SetUpsert(true)
+	if _, err := r.collection.UpdateOne(ctx, filter, update, opts); err != nil {
+		return fmt.Errorf("mongo profile repo: save portfolio connection: %w", err)
+	}
+	return nil
+}
+
+// GetPortfolioConnection returns the portfolio aggregator connection with decrypted credentials.
+// Returns nil, nil when no connection exists.
+func (r *MongoProfileRepository) GetPortfolioConnection(ctx context.Context, userID string) (*models.PortfolioConnection, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var doc profileDocument
+	err := r.collection.FindOne(ctx, bson.M{"user_id": userID}).Decode(&doc)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("mongo profile repo: get portfolio connection: %w", err)
+	}
+	if doc.PortfolioConn == nil {
+		return nil, nil
+	}
+
+	providerUserID, err := DecryptToken(doc.PortfolioConn.ProviderUserID)
+	if err != nil {
+		return nil, fmt.Errorf("mongo profile repo: decrypt portfolio provider user id: %w", err)
+	}
+	providerUserSecret, err := DecryptToken(doc.PortfolioConn.ProviderUserSecret)
+	if err != nil {
+		return nil, fmt.Errorf("mongo profile repo: decrypt portfolio provider user secret: %w", err)
+	}
+
+	return &models.PortfolioConnection{
+		Provider:           doc.PortfolioConn.Provider,
+		ProviderUserID:     providerUserID,
+		ProviderUserSecret: providerUserSecret,
+		ConnectedAt:        doc.PortfolioConn.ConnectedAt,
+	}, nil
+}
+
+// ClearPortfolioConnection removes the portfolio_connection field from the user document.
+func (r *MongoProfileRepository) ClearPortfolioConnection(ctx context.Context, userID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	filter := bson.M{"user_id": userID}
+	update := bson.M{"$unset": bson.M{"portfolio_connection": ""}}
+	if _, err := r.collection.UpdateOne(ctx, filter, update); err != nil {
+		return fmt.Errorf("mongo profile repo: clear portfolio connection: %w", err)
+	}
+	return nil
+}
+
 func toProfile(doc *profileDocument) *models.UserProfile {
 	profile := &models.UserProfile{
 		UserID:                    doc.UserID,
@@ -403,6 +492,14 @@ func toProfile(doc *profileDocument) *models.UserProfile {
 			BaseURL:         doc.BrokerageConn.BaseURL,
 			ConnectedAt:     doc.BrokerageConn.ConnectedAt.Format(time.RFC3339),
 		}}
+	}
+
+	if doc.PortfolioConn != nil {
+		profile.PortfolioAggregator = &models.PortfolioConnectionStatus{
+			Provider:    doc.PortfolioConn.Provider,
+			Connected:   true,
+			ConnectedAt: doc.PortfolioConn.ConnectedAt.Format(time.RFC3339),
+		}
 	}
 	return profile
 }

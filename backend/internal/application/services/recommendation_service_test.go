@@ -108,6 +108,13 @@ func (r *stubProfileRepo) SaveLegacySingleBrokerageConnection(_ context.Context,
 func (r *stubProfileRepo) ClearLegacySingleBrokerageConnection(_ context.Context, _ string) error {
 	return nil
 }
+func (r *stubProfileRepo) SavePortfolioConnection(_ context.Context, _ string, _ models.PortfolioConnection) error {
+	return nil
+}
+func (r *stubProfileRepo) GetPortfolioConnection(_ context.Context, _ string) (*models.PortfolioConnection, error) {
+	return nil, nil
+}
+func (r *stubProfileRepo) ClearPortfolioConnection(_ context.Context, _ string) error { return nil }
 
 // stubMarketData returns an error so the snapshot is skipped (non-fatal path).
 type stubMarketData struct{}
@@ -146,6 +153,13 @@ func (b *stubBrokerageFactory) ForUser(_ *models.BrokerageConnection) (ports.Bro
 	return nil, errors.New("brokerage factory stub: not configured")
 }
 
+// stubPortfolioAggregator is never reached because stubProfileRepo returns no portfolio connection.
+type stubPortfolioAggregator struct{}
+
+func (p *stubPortfolioAggregator) GetHoldings(_ context.Context, _, _ string) ([]models.Position, error) {
+	return nil, nil
+}
+
 // stubDocumentRepo returns no tax documents.
 type stubDocumentRepo struct{}
 
@@ -173,6 +187,7 @@ func newServiceWithDecisionRepo(decisionRepo ports.DecisionRepository) (*Recomme
 		&stubFinancialData{},
 		&stubBrokerageFactory{},
 		&stubDocumentRepo{},
+		&stubPortfolioAggregator{},
 	)
 	return svc, advisor
 }

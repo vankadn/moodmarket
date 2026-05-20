@@ -12,6 +12,7 @@ interface Props {
   onAutoInvestSettings?: () => void;
   onNotificationSettings?: () => void;
   onBrokerage?: () => void;
+  onPortfolioConnect?: () => void;
   onDocuments?: () => void;
   onPortfolio?: () => void;
   onEval?: () => void;
@@ -36,7 +37,7 @@ type HomeState = "idle" | "confirming" | "investing" | "receipt";
 const brokerageIsConnected = (brokerages: BrokerageStatus[] | undefined) =>
   (brokerages?.length ?? 0) > 0;
 
-export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, onAutoInvestSettings, onNotificationSettings, onBrokerage, onDocuments, onPortfolio, onEval }: Props) {
+export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, onAutoInvestSettings, onNotificationSettings, onBrokerage, onPortfolioConnect, onDocuments, onPortfolio, onEval }: Props) {
   const [amount, setAmount] = useState<number>(100);
   const [perAllocBrokerage, setPerAllocBrokerage] = useState<Record<string, string>>({});
   const [cashCtx, setCashCtx] = useState<CashContext | null>(null);
@@ -167,6 +168,14 @@ export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, 
               style={{ background: "none", border: "none", color: connected ? "#999" : "#c0392b", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
             >
               Brokerage
+            </button>
+          )}
+          {onPortfolioConnect && (
+            <button
+              onClick={onPortfolioConnect}
+              style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
+            >
+              Ext. accounts
             </button>
           )}
           {onDocuments && (
