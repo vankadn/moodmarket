@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-19 (Phases 22–26a complete; Phase 26b next)
+> Last updated: 2026-05-19 — full feature set built and live; see **What's built** for capabilities and **What's next** for the roadmap
 
 ---
 
@@ -81,7 +81,7 @@ Key interfaces:
 - `NotificationProvider` — post-invest notifications; `SendInvestmentSummary`, `SendInvestmentFailure`, `SendMarketClosed`; log provider (dev), Resend email provider (prod)
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
 - `Classifier` — in-memory ticker→asset-class lookup; `ClassificationCache` implements this; never hits Mongo during a recommendation
-- `ClassificationRepository` — ticker classification persistence: `Seed`, `LoadApproved`, `QueueUnknown`
+- `ClassificationRepository` — ticker classification persistence: `LoadAll`, `StoreClassification`
 
 ### DEV_MODE pattern
 `DEV_MODE=true` in `.env` auto-logs in as the hardcoded dev user. Zero login required during development. This logic lives in exactly ONE place — `infrastructure/auth/factory.go`. No DEV_MODE checks anywhere else.
@@ -98,8 +98,8 @@ Three providers, three distinct roles — never conflated:
 | Provider | Role | Auth | Status |
 |----------|------|------|--------|
 | **Alpaca** | Trade execution — stocks, options, crypto subset | Per-user API key + secret (AES-256-GCM encrypted in Mongo) | Active (paper → live is a config change) |
-| **SnapTrade** | Portfolio aggregation — read positions, balances, holdings from Robinhood and Fidelity | OAuth, per-user token | Planned (Phase 16) |
-| **Coinbase Advanced Trade** | Crypto execution | API key auth (per-user, encrypted at rest) | Planned (Phase 17) |
+| **SnapTrade** | Portfolio aggregation — read positions, balances, holdings from Robinhood and Fidelity | OAuth, per-user token | Planned — see What's next |
+| **Coinbase Advanced Trade** | Crypto execution | API key auth (per-user, encrypted at rest) | Planned — see What's next |
 
 **SnapTrade trade execution via Robinhood:** Do not build this path until SnapTrade's Robinhood integration explicitly confirms write/order access. Read-only aggregation first — execution only after verified.
 
@@ -206,780 +206,99 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 | `auto_invest_configs` | One document per user: enabled, amount, risk, EnabledAt, UpdatedAt |
 | `decisions` | Every daily investment decision: userId, timestamp, market snapshot, allocations, receipts, Plaid snapshot |
 | `scheduler_runs` | One document per autonomous cycle: runID, timestamp, users processed, total invested, errors |
-| `ticker_classifications` | Ticker→asset-class map; approved entries loaded into memory at startup via ClassificationCache |
+| `ticker_classifications` | Ticker→asset-class map; all entries loaded into memory at startup via ClassificationCache regardless of approved field |
 | `tax_documents` | Extracted tax form fields (W2/1099/1098); form-specific upsert keys |
 
 ---
 
-## Phase completion log
+## What's built
 
-### Phase 1 — Complete
-- Go backend with `/recommend` endpoint calling Claude API
-- React + TypeScript frontend with Vite
-- `InvestmentAdvisor` interface with Claude implementation
-- Provider abstraction pattern established
-- App renamed from MoodMarket (mood-based concept scrapped)
-- CLAUDE.md created in repo root
+### Core investment loop
+- `/recommend` — Claude generates a structured allocation (ticker, amount, %, asset_class) using: user profile, live market snapshot, current positions, recent decision history, market news (via tool use), tax documents, spending context (opt-in), and portfolio concentration by asset class
+- `/invest` — places Alpaca market orders (notional dollar-based), routes by asset category across multiple brokerage accounts, logs full decision + receipts to MongoDB
+- Advisor overload fallback: on HTTP 529, returns last decision rescaled to today's budget (`FromCache: true`) — no hard error
+- Claude prompt retries: 3 attempts, exponential backoff; parse errors get a correction turn, API errors get a clean retry
 
-### Phase 2 — Complete
-- MongoDB connected, `.env` auto-loaded at startup
-- Full `UserProfile` schema with 10 fields
-- `POST /users/profile` and `GET /users/profile` endpoints
-- `ProfileRepository` interface with MongoDB implementation
-- `IdentityProvider` interface — userId from context only, never hardcoded
-- `AuthProvider` interface with `DevAuthProvider` and `ClerkAuthProvider` stub
-- `DEV_MODE=true` auto-logins as dev user — logic only in `factory.go`
-- Frontend login skeleton with dev login button
+### Auth & dev tooling
+- Clerk (email + Google SSO) in production; `DEV_MODE=true` bypass lives only in `infrastructure/auth/factory.go`
+- `MOCK_ALL=true` overrides all providers to mock + sets `DEV_MODE=true` — MongoDB is the only external dependency in dev
+- `cmd/dbcheck` — Go CLI to inspect any Mongo collection without mongosh; `go run ./cmd/dbcheck [collection]`
+- OpenAPI 3.0.3 spec + Swagger UI served at `/docs/` (embedded at compile time)
+- Postman collection with all endpoints + environment files for local and production
 
-### Phase 3 — Complete
-- `MarketDataProvider` interface in `domain/ports/`
-- Polygon.io implementation using `/v2/aggs/ticker/{ticker}/prev` (free tier)
-- Sector ETF coverage: SPY, QQQ, XLE, XLF, XLV, XLI
-- Market sentiment from SPY % change: bullish / neutral / bearish
-- Daily in-memory cache on Polygon provider — one fetch per day
-- Mock provider (`MARKET_PROVIDER=mock`) — zero API calls in dev
-- `DecisionRepository` — every recommendation persisted with full context
-- Claude hardened: prompt caching + 3-attempt retry + 5s/10s exponential backoff for 529 errors
-- Retry split: parse errors get correction prompt, API errors get clean retry
-- Claude prompt enriched with full market context + user profile
+### Brokerage & portfolio
+- Alpaca paper trading; per-user AES-256-GCM encrypted credentials; paper → live is a config change
+- Multi-brokerage: connect multiple accounts by name + asset category; allocations routed by category with default fallback
+- `TradeReceipt` stamps `brokerage_id` + `brokerage_name` for full audit trail
+- Per-allocation brokerage override on `/invest` (frontend confirm screen)
+- Portfolio P&L: positions with cost basis, unrealized P&L, per-account + combined totals
+- Portfolio history chart: 1D/5D/1M/1Y/5Y period selector, SVG polyline (no charting library)
+- `GET /portfolio`, `GET /portfolio/history`, `POST/DELETE /brokerage/connections`
+- `ErrBrokerageNotConnected` sentinel: fatal for invest (400), non-fatal for recommend (skip positions), clean skip in scheduler
 
-### Phase 4 — Complete
+### Banking & spending
+- Plaid (production, 10 free connections) — balance + transaction history; `PLAID_CACHE_TTL` (default 5m) reduces API calls
+- Spending context (opt-in via `UserProfile.IncludeCashContext`): 7d + 30d spend, cash runway, largest pending charge — injected as background context only, never overrides risk tolerance
+- `GET /users/cash-context`, `POST /plaid/link-token`, `POST /plaid/exchange`, `DELETE /plaid/accounts/{item_id}`
+- Token revocation calls Plaid `/item/remove` before MongoDB delete
 
-**Phase 4a — Clerk Auth**
-- `ClerkAuthProvider` filled in — JWT verification via Clerk backend API (Go stdlib only)
-- Frontend: `@clerk/clerk-react`, app wrapped in `<ClerkProvider>`
-- Login: email + password and Google SSO
-- All API requests attach Clerk session JWT as `Authorization: Bearer`
+### Autonomous investing
+- Scheduler: per-user `isDue()` check on hourly tick; `IntervalDays` controls frequency (0 = daily)
+- Multi-config strategies per user: named, with `long_term` or `short_term` strategy prompt injected before base system prompt; CRUD at `/users/auto-invest/configs`
+- Market holiday awareness: algorithmic NYSE calendar (no external API); `MARKET_CALENDAR=nyse|mock`
+- Per-strategy activity: decision count, total invested, last run — `GET /users/activity/by-strategy`
+- Per-strategy P&L: proportional attribution of live Alpaca unrealized P&L by ticker cost basis — `GET /users/activity/by-strategy/pnl`
+- All auto-invest decisions tagged with `config_id`; manual invest tagged `"manual"`
 
-**Phase 4b — Alpaca Paper Trading**
-- `BrokerageProvider` interface — `PlaceMarketOrder`, `GetPositions`
-- `TradeOrder` + `TradeReceipt` + `Position` value objects
-- Alpaca implementation — notional (dollar-based) market orders via paper API
-- Mock provider — zero API calls, hardcoded receipts
-- `application/services/investment_service.go` — orchestrates allocations → orders → persist
-- `POST /invest` handler — returns receipts + decisionId
-- Frontend: `ConfirmScreen.tsx`, `ReceiptScreen.tsx`, Home state machine: idle → confirming → investing → receipt
+### Intelligence & context
+- Claude tool use: fetches market news itself via `get_market_news` (Polygon) — app never pre-fetches or injects headlines
+- Tax document intelligence: PDF upload → Claude extracts structured fields (W2/1099/1098) → injected into every recommendation; `POST /documents/upload`, `GET /documents`, `DELETE /documents/:id`
+- Portfolio concentration block: positions grouped by asset class, sorted by %, injected into Claude prompt; CONCENTRATION RULE + TICKER RULE in system prompt
+- Ticker classification: 29 base tickers seeded in `ticker_classifications`; unknown tickers classified by Claude at recommendation time and stored immediately via `StoreClassification`; in-memory `ClassificationCache` means zero Mongo reads per request
+- Decision verdicts: stamped inline (goroutine per recommendation); `OverallReturnPct`, `SPYReturnPct`, `BeatMarket`, per-ticker verdicts
+- Feedback loop: when `VerdictedDecisions ≥ 5`, Claude receives its own win rate + avg return vs SPY in every prompt (`PAST PERFORMANCE` section)
+- Activity dashboard: total invested, verdict stats, win rate vs SPY, best/worst decision, per-strategy breakdown, full decision history with verdicts overlaid — `GET /users/activity`, `/eval/summary`, `/eval/decisions`
 
-### Phase 5 — Complete
-- `FinancialDataProvider` interface in `domain/ports/`
-- Plaid REST client — net/http only, no SDK
-- `PlaidConnection`, `BankAccount`, `BalanceSummary` value objects
-- Per-user `plaid_connections` array on user document; AES-256-GCM encryption on access_token
-- `GET /users/profile` returns institution + item_id only — access token never exposed to frontend
-- `RecommendationService` fetches live balances before every recommendation — fetch failure is non-fatal
-- Claude prompt enriched with cash position, total investments, institution summary
-- `POST /plaid/link-token`, `POST /plaid/exchange`, `DELETE /plaid/accounts/{item_id}` handlers
-- Token revocation calls Plaid `/item/remove` before removing from Mongo
-- Frontend: `Profile.tsx` with connected account management, Plaid Link popup
-- Plaid product: `transactions` (not `auth` — auth requires separate Plaid approval)
-- `PLAID_ENV=production` — 10 free real connections
-
-### Phase 6 — Complete
-
-**Goal:** Fully autonomous investment agent running on a configurable interval without user interaction.
-
-**Scheduler:**
-- `application/scheduler/auto_invest_scheduler.go` — `time.Ticker` loop, concurrent user fan-out with `sync.WaitGroup`
-- `application/scheduler/auto_invest_runner.go` — single-user pipeline reusing existing services
-- `AUTO_INVEST_INTERVAL` env var parsed via `time.ParseDuration` — any valid duration, no code change needed
-- Started as goroutine in `main.go` alongside HTTP server
-
-**Failure handling:**
-- Plaid fetch fails → log and skip user for this cycle
-- Claude fails → 3 retries, then skip
-- Alpaca order fails → log partial failure, continue other tickers
-- One user's failure never blocks others
-
-**Infrastructure:**
-- `domain/ports/notification_provider.go` — `NotificationProvider` interface
-- `infrastructure/notifications/log_provider.go` — logs to stdout (dev); factory routes via `NOTIFICATION_PROVIDER`
-- `infrastructure/db/mongo_scheduler_repository.go` — `scheduler_runs` collection
-- CORS moved to outermost `middleware.CORS()` wrapper in `main.go` — covers all routes universally
-
-### Phase 6b — Complete
-
-**Goal:** Promote AutoInvestConfig to a first-class domain model with its own collection and a dedicated settings screen.
-
-**Why:** Auto-invest needs its own amount and risk (separate from profile defaults). Own collection scales to multiple configs per user in Phase 9.
-
-**Backend:**
-- `domain/models/auto_invest_config.go` — Enabled, Amount (float64), Risk (RiskTolerance), EnabledAt, UpdatedAt
-- `domain/ports/auto_invest_repository.go` — GetByUserID, Upsert, GetAllEnabled
-- `infrastructure/db/mongo_auto_invest_repository.go` — `auto_invest_configs` collection; GetByUserID returns safe default (disabled, $100, moderate) if no doc exists — never errors on not-found
-- Scheduler updated: uses `AutoInvestRepository.GetAllEnabled()` + passes `config.Amount` and `config.Risk` into runner
-- `api/handlers/auto_invest_config_handler.go` — `GET /users/auto-invest/config`, `PUT /users/auto-invest/config`
-- Removed `auto_invest_enabled` / `auto_invest_enabled_at` from `UserProfile`
-- Removed `SetAutoInvest` / `GetAutoInvestUsers` from `ProfileRepository`
-
-**Frontend:**
-- `AutoInvestSettings.tsx` — toggle, dollar amount input, risk pill selector (3 buttons), save button
-- `Home.tsx` — auto-invest row navigates to settings; shows "Enabled — $X/day" or "Off"
-- `api.ts` — `AutoInvestConfig` type, `getAutoInvestConfig()`, `saveAutoInvestConfig()`
-- Home layout: Auto-invest row → Today's investment input + Get recommendation (inline, same row)
-
-### Phase 6 infra cleanup — Complete
-
-- Mock advisor (`AI_PROVIDER=mock`) — fixed three-fund portfolio (VTI 60% / VXUS 30% / BND 10%), no Anthropic key needed
-- `MOCK_ALL=true` — single flag overrides all providers to mock + sets DEV_MODE=true; processed in `main.go` before factories
-- `PLAID_CACHE_TTL` env var (default `5m`) — caches `GetBalanceSummary` result to reduce Plaid API calls during development
-- Skills system: logging rules, React rules, new-feature checklist, pre-commit checklist moved to `skills/` files — loaded on demand to save tokens
-- README rewritten: zero-external-calls setup, provider swap table, Plaid and Alpaca config sections
-
-### Phase 7 — Complete
-
-**Goal:** Activity dashboard showing what the user has done through InvestIQ. No profit/loss — activity only.
-
-**Dashboard:**
-- Total decisions made + total dollars invested — both filtered by selected time range
-- Time range filter: three numeric inputs (hours / days / months) — hours accepts decimals (e.g. 0.5 = 30 min), useful for local scheduler testing; user fills any combination, app combines into a date range; includes a reset button that defaults back to 30 days
-- Investment timeline: list of decisions within selected period showing date + amount invested
-- All data aggregated from `decisions` collection
-- `GET /users/activity?since=<RFC3339>` endpoint; `ListByUserSince` on `DecisionRepository`
-- Frontend: `Activity.tsx` with stats cards + timeline list
-
-**Receipt screen:**
-- Polls Alpaca every 3s for non-terminal orders; terminal set: filled, canceled, expired, rejected, replaced
-- Per-order polling with two stop conditions (independent per order):
-  - After-hours: 5 consecutive `accepted` polls → stop, show "Orders accepted. Will fill when market opens (Mon–Fri 9:30am–4pm ET)."
-  - Max attempts: 20 polls (~60 s) → stop, show "Market may be closed — check back when market opens."
-- Stop state tracked via refs (readable in closure) + `stopNotes` state (drives UI and `allSettled`)
-- Next poll scheduled inside `.then()` — prevents request pile-up on slow connections
-- "polling for fill…" indicator only visible while at least one order is still actively polling
-
-### Phase 8 — Complete
-
-**Goal:** Make the Claude prompt as strong as possible with maximum real context. Sub-phases ordered by benefit — do 8a before touching news or Plaid.
+### Infrastructure & deployment
+- www.investiq.fit (Vercel), api.investiq.fit (Railway); TLS via Let's Encrypt; DNS on Namecheap
+- Docker: two-stage distroless image (`golang:1.23-alpine` builder → `gcr.io/distroless/static-debian12` runner); static binary required
+- Email notifications via Resend (`NOTIFICATION_PROVIDER=resend`); source-aware copy (manual vs auto-invest); `GET/PATCH /users/notifications`
+- `GET /health` on top-level mux (no auth) for Railway/Docker healthchecks
 
 ---
 
-### Phase 8a — Complete
-
-**Prompt strengthening with existing data (zero new APIs)**
-
-- `RecommendationService` now has 6 steps: profile → market snapshot → Plaid balances → Alpaca positions → decision history → Claude
-- `BrokerageProvider.GetPositions()` called before building prompt; injected as `req.Positions`
-- `DecisionRepository.ListByUser(ctx, userID, 10)` called; last 5 decisions injected as `req.RecentDecisions`
-- Concentration rule: any position at ≥ 40% of portfolio value gets "← already at concentration limit, do not add more" appended to its line; system prompt instructs Claude not to push any ticker above 40%
-- Diversity rule: last 5 decision allocations shown in prompt with "Vary today's allocation — do not repeat the exact same split as yesterday"
-- `[8a-debug]` temporary logs added with `// TODO: remove after 8a testing` markers — grep for `[8a-debug]` to find them
-- System prompt rewritten: numbered rules, explicit output contract, tighter rationale constraint (under 12 words)
-- Prompt caching: system prompt sent as `[]claudeSystemBlock` with `cache_control: ephemeral`; `anthropic-beta: prompt-caching-2024-07-31` header added
-- Retry: 3 attempts, 5s/10s exponential backoff; parse errors get correction turn, API errors get clean retry
-- Basic prompt tests: `infrastructure/advisor/prompt_test.go` — 12 table-driven cases covering concentration warning boundary, history section presence, balance fallback, profile inclusion, budget math; marked as tech debt for LLM-level assertion tests
-
-**Concentration boundary (documented from test writing):** The `>= 40` check fires at exactly 40%, consistent with the rule "do not push above 40%" — any addition to a position already at 40% would exceed the limit. Test data for the "no warning" case must use positions where all are strictly under 40%.
-
----
-
-### Phase 8b — Complete
-
-**Polygon news — zero new dependencies, existing key**
-
-**Why Polygon over Finnhub:** Already using Polygon for market data (same free-tier key). Adding Finnhub would be a new key, new dependency, new failure surface. Claude infers sentiment from headline text well enough at this stage. Finnhub backlogged for when per-ticker sentiment on individual stocks becomes genuinely valuable.
-
-- `domain/models/news.go` — `NewsItem`: Headline, Summary, Source, PublishedAt
-- `domain/ports/news.go` — `NewsProvider.GetDailyNews(ctx) ([]NewsItem, error)`
-- `infrastructure/news/polygon.go` — Polygon `/v2/reference/news?ticker=SPY&limit=10`; daily cache; reuses `POLYGON_API_KEY`
-- `infrastructure/news/mock.go` — 3 hardcoded headlines (Fed, S&P, Oil)
-- `infrastructure/news/factory.go` — `NEWS_PROVIDER=polygon|mock`; defaults to mock
-- `MOCK_ALL=true` sets `NEWS_PROVIDER=mock`
-- `RecommendationService` now 7 steps: profile → market → Plaid → positions → decisions → news → Claude
-- News failure is non-fatal — recommendation proceeds without headlines
-- Claude prompt: `TODAY'S MARKET NEWS` section (top 5) with source + headline; instruction to factor in macro events
-- New env var: `NEWS_PROVIDER=polygon` (POLYGON_API_KEY already required by market data)
-- Prompt tests updated: 3 new cases added (`no_news_omits_section`, `news_present_shows_section_and_macro_instruction`, `news_capped_at_five_headlines`) — total now 15 cases
-- `[8b-debug]` temporary logs added with `// TODO: remove after 8b testing` markers — grep `[8b-debug]` to find them
-
----
-
-### Phase 8c + 8ca — Complete
-
-**Plaid transaction history**
-
-- `domain/models/banking.go` — `TransactionSummary`: SpendLast7Days, SpendLast30Days, LargestPendingAmount, LargestPendingName, PulledAt
-- `domain/ports/financial_data_provider.go` — `GetTransactionSummary(ctx, connections) (TransactionSummary, error)` added to existing interface
-- `infrastructure/banking/plaid.go` — `/transactions/get` with 30-day window; sums positive amounts (debits only, skip credits/refunds); tracks largest pending charge
-- `infrastructure/banking/mock.go` — realistic fixture: $342.50/7d, $1240/30d, $189 Netflix pending
-- `RecommendationService` now 8 steps — transactions (step 4) inserted right after balances (step 3); both Plaid, failures non-fatal
-- Claude prompt: `SPENDING HISTORY` section — 7d spend, 30d spend, largest pending charge, estimated cash runway (TotalCash ÷ daily avg); instruction to consider smaller investment if runway is short
-- Cash runway computed in `buildUserMessage` using `req.BalanceSummary.TotalCash` ÷ `(SpendLast30Days/30)` — requires both sections present
-- `[8c-debug]` temporary log added — grep to remove after testing
-- Prompt tests: 4 new cases (absent, spend figures, pending charge, runway calculation) — total now 19
-
-**Phase 8ca — Cash context surface (redesign: preference-gated, FYI-only)**
-
-**Why redesigned:** Original implementation sent per-session cash directives to Claude ("Factor this into allocation — consider more conservative positions"). This caused Claude to override the user's stated risk tolerance even when the user had confirmed the amount. Root cause was the conditional directive logic in `buildUserMessage`, not the data itself.
-
-**What was removed:**
-- `CashOverride bool` from `InvestmentRequest` — per-session override gone entirely
-- "Invest anyway" and "Adjust amount" buttons from `CashContextCard`
-- `cashOverride` state and `amountInputRef` from `Home.tsx`
-- The three-way directive conditional from `buildUserMessage` ("Respect this decision" / "Factor into allocation" / silent)
-
-**What was added / kept:**
-- `domain/models/cash_context.go` — `CashContext`: HasData, RunwayDays, RunwayLabel, SpendLast7D, SpendLast30D, LargestPendingAmount, LargestPendingName, Message (kept; UserOverride field is dead code — never set)
-- `domain/models/user_profile.go` — `IncludeCashContext bool` (`json:"include_cash_context"`) — stored opt-in preference, default false; no DB migration needed
-- `application/services/recommendation_service.go` — `GetCashContext(ctx, userID)` method unchanged; `runwayLabelAndMessage`: >30d=healthy, 14-30d=moderate, <14d=tight
-- `infrastructure/advisor/claude.go` — `buildUserMessage` SPENDING HISTORY section replaced with SPENDING CONTEXT; gated on `profile != nil && profile.IncludeCashContext && req.TransactionSummary != nil`; if true: emits 7d spend, 30d spend, cash runway (if BalanceSummary present), and "Use as background context only — do not override the user's stated risk tolerance or investment amount."; if false: section omitted entirely
-- `api/handlers/cash_context_handler.go` — `GET /users/cash-context` unchanged
-- `frontend/src/components/CashContextCard.tsx` — redesigned: FYI-only, no buttons, auto-dismiss after 5s or tap; amber tint only (tight runway only)
-- `frontend/src/pages/Home.tsx` — localStorage daily gate on mount (`cash_card_shown_date` = ISO date string); card only shown when `runway_label === "tight"` AND not already shown today; `handleCashCardDismiss` writes localStorage and clears card; `cash_override` removed from recommendation request
-- `frontend/src/pages/AutoInvestSettings.tsx` — "Include cash balance context" toggle; loads profile on mount alongside auto-invest config; saves both on save button
-- `frontend/src/services/api.ts` — `include_cash_context` added to `UserProfile`; `cash_override` removed from `InvestmentRequest`
-- Prompt tests: replaced 5 old spending/override cases with 5 new opt-in gate cases; total now 20 cases
-  - `no_transactions_omits_section` — mustNotContain SPENDING CONTEXT
-  - `spending_context_omitted_without_opt_in` — TransactionSummary present but IncludeCashContext=false → no section
-  - `spending_context_shown_when_opted_in` — IncludeCashContext=true → SPENDING CONTEXT, "background context only", spend figures
-  - `spending_context_with_runway_when_opted_in` — IncludeCashContext=true + BalanceSummary → Cash runway shown
-  - `spending_context_omitted_no_profile` — nil profile → no section (can't opt in without profile)
-- `[8ca-debug]` temporary log in recommendation_service.go — grep to remove after testing
-
-### Phase 8d — Complete
-
-**Per-user Alpaca brokerage credentials**
-
-**Why:** Every user was sharing a single Alpaca account via env-var keys. Each user must trade their own account. Credential storage follows the same AES-256-GCM pattern established for Plaid access tokens.
-
-**New domain models (`domain/models/user_profile.go`):**
-- `BrokerageConnection` — internal encrypted record (APIKey, SecretKey, BaseURL, Connected, ConnectedAt `time.Time`); no JSON tags; never leaves the backend
-- `BrokerageStatus` — JSON-safe projection (connected, base_url, connected_at); embedded as `Brokerage *BrokerageStatus` in `UserProfile`
-
-**New port (`domain/ports/brokerage_factory.go`):**
-- `BrokerageProviderFactory` interface — `ForUser(conn *models.BrokerageConnection) (BrokerageProvider, error)`
-- `ErrBrokerageNotConnected` sentinel — fatal in InvestmentService (400), non-fatal in RecommendationService (skip positions), clean skip in scheduler
-
-**Profile repository (`domain/ports/profile_repository.go` + `infrastructure/db/mongo_profile_repository.go`):**
-- 3 new repo methods: `GetBrokerageConnection`, `SaveBrokerageConnection`, `ClearBrokerageConnection`
-- `GetBrokerageConnection` decrypts both keys; `SaveBrokerageConnection` encrypts both keys using existing `EncryptToken`/`DecryptToken` from `encryption.go`
-- `ClearBrokerageConnection` uses MongoDB `$unset` to remove the field entirely — mirrors Plaid pattern
-- Bug fix: `include_cash_context` was missing from `profileDocument`, `fromProfile`, and `toProfile` — silently dropped on every profile save; fixed in the same pass
-
-**Factory rewrite (`infrastructure/brokerage/factory.go`):**
-- Replaced `NewBrokerageProvider()` (global, env-var keys) with `NewBrokerageFactory()` returning `BrokerageProviderFactory`
-- Mock implementation: `ForUser` ignores conn, always returns mock provider
-- Alpaca implementation: `ForUser` returns `ErrBrokerageNotConnected` if conn nil or not connected; otherwise constructs `AlpacaProvider` from decrypted per-user keys
-
-**Service changes:**
-- `RecommendationService` — `brokerageFactory` replaces `brokerageProvider`; loads connection from repo per request; missing brokerage = skip positions (non-fatal, logs)
-- `InvestmentService` — `profileRepo` added; loads connection per request; missing brokerage = fatal 400
-- `auto_invest_runner.go` — `errors.Is(err, ErrBrokerageNotConnected)` check added; clean skip with log instead of error
-
-**New endpoints:**
-- `POST /brokerage/connect` — validates non-empty keys, defaults base_url to paper, calls `SaveBrokerageConnection`; never logs credentials
-- `DELETE /brokerage/connect` — calls `ClearBrokerageConnection`
-
-**Handler update (`api/handlers/order_handler.go`):**
-- Changed from injected `BrokerageProvider` to `profileRepo + brokerageFactory`; per-request credential load; returns 400 for `ErrBrokerageNotConnected`
-
-**Frontend (`BrokerageConnect.tsx` new, `Home.tsx`, `App.tsx`, `api.ts`):**
-- `BrokerageConnect.tsx` — full-page component; connected state: green card + disconnect; not-connected: API key input, secret key (password type), account type pill selector (Paper / Live)
-- `Home.tsx` — "Brokerage" nav button (red when not connected); invest button disabled when not connected; red nudge banner with "Set up now →" link
-- `App.tsx` — `"brokerage"` state added to `DevAppState`; routing to `BrokerageConnect` component
-- `api.ts` — `BrokerageStatus` interface; `brokerage?: BrokerageStatus` on `UserProfile`; `connectBrokerage()` and `disconnectBrokerage()`
-
-**Credential storage skill (`skills/credential-storage-rules.md`):**
-- Per-user vs per-app credential table with enforcement rule
-- Anti-pattern callout: "That Alpaca key is in `.env` — every user trades against the same account."
-- Wired into `CLAUDE.md` under Skills — loads when integrating any third-party service
-
----
-
-### Phase 9 — Complete
-
-- Railway backend deployed: ~~moodmarket-production.up.railway.app~~ → now api.investiq.fit (see Phase 16b)
-- Vercel frontend deployed: ~~moodmarket-mu.vercel.app~~ → now www.investiq.fit (see Phase 16b)
-- MongoDB Atlas free tier connected
-- Per-user Alpaca credentials (encrypted, per-user in Mongo)
-- CORS fixed via ALLOWED_ORIGIN env var
-- BrokerageConnect reachable in production (ClerkApp.tsx fix)
-- Real trades placing on Alpaca live account
-- Atlas IP allowlist: 0.0.0.0/0 (temporary — tighten when Railway Pro)
-- Favicon v1 added (SVG + PNG)
-- Favicon redesigned: purple rounded-square (#7C3AED) with bold white "IQ" text — readable at 16px browser-tab size; old 680px chart SVG was illegible at favicon size
-- Polling fix: stop after 20 attempts or 5 consecutive ACCEPTED (after-hours)
-- Alpaca live account funding pending — support ticket filed
-
----
-
-### Phase 9a — Complete
-
-**Backend containerization**
-
-- `Dockerfile` (repo root) — two-stage build: `golang:1.23-alpine` builder → `gcr.io/distroless/static-debian12` runner
-- Builder: copies `go.mod` + `go.sum` first for layer caching, then source; builds with `CGO_ENABLED=0 GOOS=linux` for a fully static binary (required — distroless has no libc)
-- Runner: copies only the binary; no shell, no package manager, minimal attack surface
-- `.dockerignore` (repo root) — excludes `.env`, `.env.*`, `frontend/`, `*.md`, `.git`, `.gitignore`; keeps build context small and prevents secrets from reaching the Docker daemon
-- `GET /health` endpoint added — registered on a top-level mux before the `UserIdentity` middleware so Railway / Docker healthchecks work without a bearer token; all other routes still require auth
-- PORT was already read from `os.Getenv("PORT")` with `"8080"` fallback — no change needed
-
-### Phase 10 — Complete
-
-**Goal:** Claude fetches market news itself via tool use instead of Go pre-fetching and injecting it into the prompt.
-
-- `get_market_news` tool defined in `infrastructure/advisor/claude.go` with Polygon as the backing provider
-- `claudeAdvisor` receives `NewsProvider` via constructor injection — infrastructure imports domain port (correct direction)
-- Tool-use loop in `callClaudeWithTools`: TURN N → Claude API → if `stop_reason=tool_use`, execute tool locally, append result, loop; if `end_turn`, parse JSON
-- Each tool removed from `remainingTools` after first call — prevents Claude requesting the same tool twice (nil-slice-in-interface → JSON null bug fixed)
-- `doAPICall` uses `context.WithTimeout(context.Background(), 45s)` per call with goroutine propagating parent cancellation — decouples individual Claude calls from short HTTP request deadlines
-- `RecommendationService` drops `news ports.NewsProvider` — 7 steps now (was 8); news owned by advisor
-- Mock guard added to all provider factories: if provider=mock and `DEV_MODE != "true"`, startup fails — production can never silently use mock data
-- Mock defaults removed from all factories — missing env var now fails fast with a helpful message instead of silently using fake data
-- `NEWS_PROVIDER=polygon` added to `.env` (shares existing `POLYGON_API_KEY`)
-- Structured logs tell the agentic story: `TURN N →` / `TURN N ←` / `TOOL name →` / `TOOL name ←` with consistent indentation
-- Prompt tests: 3 old news-in-prompt cases replaced with 1 `news_absent_from_prompt_claude_fetches_via_tool` — 18 cases total, all passing
-
-### Phase 11 — Complete
-
-**Goal:** RAG document intelligence — users upload tax PDFs; Claude extracts structured fields; extracted data is injected into every recommendation prompt.
-
-**Backend:**
-- `domain/models/tax_document.go` — `TaxDocument`: ID, UserID, DocumentType (w2/1099/1098), TaxYear, Fields (map[string]string), Verified, UploadedAt, VerifiedAt
-- `domain/ports/document_extractor.go` — `DocumentExtractor.ExtractTaxDocument(ctx, bytes, type)` interface
-- `domain/ports/document_repository.go` — `DocumentRepository`: Save, GetByUserID, GetByID, DeleteByID
-- `infrastructure/extractor/claude_extractor.go` — Claude document API (base64 PDF); type-specific prompts per form; 3-attempt retry; 60s timeout; no PDF library needed
-- `infrastructure/extractor/mock_extractor.go` — realistic fixtures for W2, 1099, 1098
-- `infrastructure/extractor/factory.go` — `DOCUMENT_EXTRACTOR=claude|mock`
-- `infrastructure/db/mongo_document_repository.go` — `tax_documents` collection; form-specific upsert keys (W2: user+type+year+employer, 1099: user+type+year+payer, 1098: user+type only)
-- `application/services/document_service.go` — orchestrates extract → persist; PDF bytes never stored
-- `api/handlers/document_handler.go` — `POST /documents/upload` (multipart, PDF only, 10MB max), `GET /documents`, `DELETE /documents/:id`
-- `infrastructure/advisor/claude.go` — `buildUserMessage` extended: TAX DOCUMENTS section injected if docs exist; per-type field display (employer+wages+withholding, payer+income+type, lender+interest+principal)
-- `RecommendationService` extended: `ListDocuments` called before Claude; non-fatal on failure
-
-**Frontend:**
-- `services/api.ts` — `TaxDocument` interface, `DocumentType` type, `listDocuments()`, `uploadDocument(file, type)`, `deleteDocument(id)`
-- `pages/Documents.tsx` — type selector (W2/1099/1098 pills), PDF file picker, upload + extract button with "Claude is reading…" indicator; document list with per-type key field grid; two-step delete confirmation; empty state with explanation
-- `App.tsx` + `ClerkApp.tsx` — `"documents"` state added to both app shells; routed to `<Documents onBack />` component
-- `pages/Home.tsx` — "Tax docs" nav button added; `onDocuments` prop wired through both shells
-
-### Phase 12a — KTLO (Complete)
-
-**Goal:** Make the backend easier to test and maintain before adding new brokerages.
-
-**Router refactor:**
-- `internal/api/router/routes.go` — 17 URI constants (`HealthURI`, `ProfileURI`, `DocumentsUploadURI`, etc.); single source of truth for all paths
-- `internal/api/router/router.go` — `Build(Handlers, AuthProvider) http.Handler`; all `mux.Handle()` calls live here using the URI constants; two-tier mux (health + docs without auth, everything else behind CORS + UserIdentity)
-- `cmd/server/main.go` — now only constructs handlers and calls `router.Build()`; no path strings
-
-**Swagger UI:**
-- `internal/api/handlers/openapi.yaml` — full OpenAPI 3.0.3 spec: all 19 endpoints with schemas, enums, request/response bodies, auth scheme (bearerAuth)
-- `internal/api/handlers/docs_handler.go` — serves Swagger UI (CDN-loaded) at `/docs/` and raw spec at `/docs/openapi.yaml`; spec embedded at compile time via `//go:embed`; no auth required, registered on top-level mux
-
-**Postman collection:**
-- `postman/InvestIQ.postman_collection.json` — v2.1 collection; 20 requests in 7 folders (System, Auth, Users, Investment, Plaid, Brokerage, Documents); Dev Login test script auto-sets `authToken` collection variable
-- `postman/InvestIQ_Local.postman_environment.json` — local dev environment; all variables pre-declared
-- `postman/InvestIQ_Production.postman_environment.json` — production environment pointing at Railway URL
-
-**Skills:**
-- `skills/postman-update-rules.md` — rules for keeping Postman + OpenAPI in sync after any endpoint change; wired into `CLAUDE.md`
-
-### Phase 12b — Multi-Brokerage Routing (Complete)
-
-**Goal:** Connect multiple brokerage accounts and route allocations by asset type (e.g. bonds → one account, stocks → another).
-
-**Domain changes:**
-- `AssetCategory` type + constants (`equity`, `bond`, `default`) in `models/user_profile.go`
-- `BrokerageConnection` gains `ID`, `Name`, `AssetCategories`; `BrokerageStatus` same
-- `UserProfile.Brokerage *BrokerageStatus` → `Brokerages []BrokerageStatus` (breaking — frontend updated simultaneously)
-
-**Application layer:**
-- `services/brokerage_router.go` (new) — `NormalizeAssetCategory()` maps Claude's free-form type strings; `RouteAllocation()` selects connection by asset category with default fallback
-- `services/investment_service.go` — groups allocations by routed connection; per-group provider construction; accepts `perAllocBrokerage map[string]string` (ticker → connectionID) — non-nil map overrides auto-routing per allocation; stamps `BrokerageID` and `BrokerageName` on each `TradeReceipt` after order placement
-- `services/recommendation_service.go` — loops all connections for positions fetch; deduplicates by ticker (first-seen wins)
-
-**Repository:**
-- `ports/profile_repository.go` — replaced `GetBrokerageConnection` with `GetBrokerageConnections`; old save/clear renamed to `SaveLegacySingleBrokerageConnection` / `ClearLegacySingleBrokerageConnection`; added `UpsertBrokerageConnection` (upsert by ID), `RemoveBrokerageConnection`
-- `infrastructure/db/mongo_profile_repository.go` — `brokerage_connections` array field; backward-compat read synthesizes `ID="default"` from legacy `brokerage_connection` field on first read without auto-save
-
-**API:**
-- `POST /brokerage/connections` — add named connection with asset categories; ID auto-generated if omitted
-- `DELETE /brokerage/connections/{id}` — remove by ID; returns 204
-- `POST /invest` body gains optional `per_allocation_brokerage: map[ticker → connectionID]`; nil = full auto-route
-- `TradeReceipt` gains `brokerage_id` and `brokerage_name` (omitempty) — stored in MongoDB `decisions.receipts`
-
-**Frontend:**
-- `BrokerageConnect.tsx` — redesigned: broker dropdown (Alpaca available, Fidelity/Robinhood/Schwab/E*TRADE "(not ready)"), connection list with category pills + two-step remove + credential form
-- `ConfirmScreen.tsx` — gains `brokerages`, `perAllocBrokerage`, `onPerAllocChange` props; always shows "Via" column when `brokerages.length > 0`; single connection: `<select>` pre-selected and disabled; multiple connections: `<select>` with "Auto" + all options, user can change per row
-- `Home.tsx` — `perAllocBrokerage` state (ticker → connID); `handlePerAllocChange`; reset on cancel/done; passes map to `invest()` as `per_allocation_brokerage`; removed global brokerage switcher dropdown (superseded)
-- `api.ts` — `AssetCategory` type, updated `BrokerageStatus` / `UserProfile`, `addBrokerageConnection()`, `removeBrokerageConnection()`, `InvestRequest.per_allocation_brokerage`, `TradeReceipt.brokerage_id` + `brokerage_name`
-
-**Backward compatibility:**
-- Legacy `/brokerage/connect` endpoint still works; writes to old `brokerage_connection` field
-- Users with existing single connection see identical behavior — synthesized `ID="default"` routes all allocations; "Via" column shows the account name pre-selected (non-interactive)
-
-### Phase 12c — Advisor Overload Fallback (Complete)
-
-**Goal:** When Anthropic's API returns HTTP 529 (overloaded), return the user's last recommendation scaled to today's budget instead of surfacing a hard error.
-
-- `domain/ports/advisor.go` — `ErrAdvisorOverloaded` sentinel error
-- `infrastructure/advisor/claude.go` — HTTP 529 response wraps `ErrAdvisorOverloaded` via `fmt.Errorf("%w: ...")` so `errors.Is` works up the call chain
-- `domain/models/investment.go` — `FromCache bool` added to `Recommendation` (json: `from_cache,omitempty`; absent on normal responses)
-- `application/services/recommendation_service.go` — on `ErrAdvisorOverloaded`, calls `decisionRepo.ListByUser(ctx, userID, 1)`; rescales allocation amounts proportionally to today's budget (`amount = pct * budget`); returns `Recommendation{FromCache: true}`; if no prior decision exists, the original error propagates unchanged
-- `frontend/src/services/api.ts` — `from_cache?: boolean` on `Recommendation`
-- `frontend/src/components/ConfirmScreen.tsx` — amber banner when `rec.from_cache` is true: "AI advisor is temporarily unavailable. Showing your last recommendation — amounts scaled to today's budget."
-
-### Phase 13 — Portfolio P&L Dashboard (Complete)
-
-**Goal:** Show users what they own, what it's worth, and whether they're up or down — across all connected brokerage accounts.
-
-**Backend:**
-- `domain/models/trade.go` — `Position` enriched: added `Name`, `CostBasis`, `AvgEntryPrice`, `UnrealizedPL`, `UnrealizedPLPercent`
-- `infrastructure/brokerage/alpaca.go` — `GetPositions` now parses `cost_basis`, `avg_entry_price`, `unrealized_pl`, `unrealized_plpc` from Alpaca's `/v2/positions` response (already returned by the API, just not extracted); `unrealized_plpc` converted from decimal to percent
-- `infrastructure/brokerage/mock.go` — realistic mock positions: VTI +13%, QQQ +8%, BND -2%
-- `api/handlers/portfolio_handler.go` (new) — `GET /portfolio`: fetches positions from all connections via `BrokerageProviderFactory`, groups by brokerage, computes per-account and combined totals (`total_value`, `total_cost`, `total_unrealized_pl`, `total_unrealized_pl_percent`)
-- `api/router/routes.go` + `router.go` — `PortfolioURI = "/portfolio"` registered
-
-**Frontend:**
-- `services/api.ts` — `PortfolioPosition`, `PortfolioAccount`, `Portfolio` interfaces + `getPortfolio()`
-- `pages/Portfolio.tsx` (new) — summary header (value / cost / gain+loss in green/red), per-account sections when multiple brokerages connected, flat list when one; empty state when no brokerage; ← Back nav
-- `pages/Home.tsx` — "Portfolio" nav button + `onPortfolio` prop
-- `App.tsx` + `ClerkApp.tsx` — `"portfolio"` state added, routed to `<Portfolio onBack />`
-
-### Phase 13b — Portfolio History Chart (Complete)
-
-**Goal:** Google Finance-style period selector (1D / 5D / 1M / 1Y / 5Y) with SVG line chart showing portfolio equity over time.
-
-**Backend:**
-- `domain/models/trade.go` — `HistoryPoint` struct: `Timestamp int64`, `Equity`, `ProfitLoss`, `ProfitLossPct float64`
-- `domain/ports/brokerage.go` — `GetPortfolioHistory(ctx, userID, period, timeframe string) ([]HistoryPoint, error)` added to `BrokerageProvider` interface
-- `infrastructure/brokerage/alpaca.go` — `GetPortfolioHistory` calls Alpaca `GET /v2/account/portfolio/history?period=X&timeframe=Y&extended_hours=false`; skips zero-equity points (market-closed nulls); `profit_loss_pct` converted from decimal to percent
-- `infrastructure/brokerage/mock.go` — 30-point sine-wave uptrend with period-appropriate step intervals
-- `api/handlers/portfolio_handler.go` — `GET /portfolio/history?period=1D|5D|1M|1Y|5Y`; maps UI label to Alpaca period+timeframe; aggregates equity across all connections by summing parallel arrays; dispatched via path check in `ServeHTTP`
-- `api/router/routes.go` + `router.go` — `PortfolioHistoryURI = "/portfolio/history"` registered before `PortfolioURI`
-
-**Alpaca period/timeframe mapping:**
-
-| UI | Alpaca period | timeframe |
-|----|--------------|-----------|
-| 1D | 1D | 5Min |
-| 5D | 5D | 1H |
-| 1M | 1M | 1D |
-| 1Y | 1A | 1D |
-| 5Y | 5A | 1D |
-
-**Frontend:**
-- `services/api.ts` — `HistoryPoint`, `PortfolioHistory`, `HistoryPeriod` type + `getPortfolioHistory(period)`
-- `pages/Portfolio.tsx` — `PortfolioChart` SVG component: polyline + filled area, green/red based on first→last direction, 5 X-axis time labels, muted placeholder while loading; period pill selector (active pill = dark, others transparent); history fetches on mount + on period change
-
----
-
-### Phase 14 — Per-User Auto-Invest Frequency (Complete)
-
-- `AutoInvestConfig` gains `IntervalDays int` (0 = daily) and `LastRunAt *time.Time`
-- Scheduler shifts from global env-var clock to hourly tick + per-user `isDue()` check
-- `isDue`: `IntervalDays=0 → 1`; `LastRunAt=nil → run immediately`; backward-compatible — existing docs with missing fields read as zero values and run daily
-- `StampLastRunAt` method added to `AutoInvestRepository` interface + Mongo impl; stamps after each successful user run
-- UI: frequency pill selector (Daily / Every 2 days / Weekly) added to `AutoInvestSettings.tsx`
-- Label "Daily investment amount" → "Investment amount" to match variable frequency
-
-### Phase 15 — Reliability & Maintainability (Complete)
-
-**Phase 15a — Market Holiday Awareness**
-- `domain/ports/market_calendar.go` — `MarketCalendar` interface: `IsTradingDay(t time.Time) bool`
-- `infrastructure/calendar/nyse_calendar.go` — algorithmic NYSE calendar; no external API; all rules: weekends, New Year's (with Sat→Dec 31 edge case), MLK Day, Presidents Day, Good Friday (Easter via Meeus/Jones/Butcher), Memorial Day, Juneteenth (since 2022), Independence Day, Labor Day, Thanksgiving, Christmas; all in America/New_York timezone
-- `infrastructure/calendar/mock_calendar.go` — always returns true; used by MOCK_ALL
-- `infrastructure/calendar/factory.go` — `MARKET_CALENDAR=nyse|mock`
-- Scheduler `runCycle`: early return with log if `!calendar.IsTradingDay(now)`
-- `MOCK_ALL=true` sets `MARKET_CALENDAR=mock`
-
-**Phase 15b — App Shell Unification**
-- `frontend/src/AppShell.tsx` (new) — single source of truth for all 9-state post-auth routing; props: `signOut?: () => void`, `keepPageOnRefresh?: boolean`
-- `keepPageOnRefresh=false` (Dev): account/brokerage change → `setState("loading")` → useEffect → home
-- `keepPageOnRefresh=true` (Clerk): fetch profile inline, stay on current page (no double fetch)
-- `App.tsx` DevApp reduced to ~5 lines: localStorage token check → `<Login />` or `<AppShell />`
-- `ClerkApp.tsx` reduced to ~25 lines: Clerk auth gate + token fetcher wiring → `<AppShell signOut keepPageOnRefresh />`
-- Adding any new page now requires editing only `AppShell.tsx`
-
-### Phase 16 — Email Notifications (Complete)
-
-**Goal:** Send users an email after every investment — both manual and auto-invest — using Resend.
-
-**Domain:**
-- `NotificationTarget` gains `Source string` (`"manual"` | `"auto"`) — used to vary email copy
-- `UserProfile` gains `NotificationEmail string` and `Phone string` — stored in MongoDB `users` collection; both optional, empty = channel skipped
-
-**Backend:**
-- `infrastructure/notifications/resend.go` — Resend HTTP API client; source-aware copy ("Your investment completed." vs "Your auto-invest ran today."); per-position amount backfilled from allocation when `FilledAmount == 0` (Alpaca paper orders are async); recipient + email_id logged on every send
-- `infrastructure/notifications/factory.go` — `NOTIFICATION_PROVIDER=resend` + `RESEND_API_KEY` + `RESEND_FROM` activates Resend; missing keys fall back to log with warning
-- `api/handlers/notification_settings_handler.go` — `GET /users/notifications` + `PATCH /users/notifications`; reads/writes only email + phone; profile-level fields, not a new collection
-- `infrastructure/db/mongo_profile_repository.go` — `notification_email` and `phone` bson fields added to `profileDocument`, `fromProfile`, `toProfile` (were silently dropped before)
-- `api/handlers/invest_handler.go` — `InvestHandler` gains `profileRepo` + `notifications`; fires `sendSummary` in goroutine with `recover()` after successful Execute; backfills `FilledAmount` from allocations before notifying
-- `application/scheduler/auto_invest_scheduler.go` — gains `profileRepo`; loads user profile in `runCycle` to build fully-populated `NotificationTarget` (email + phone) before each user's goroutine
-- `application/scheduler/auto_invest_runner.go` — accepts pre-built `NotificationTarget`; backfills `FilledAmount` from allocations; guards: skips notification when receipts == 0
-- `middleware/auth.go` + `handlers/cors.go` — `PATCH` added to `Access-Control-Allow-Methods` (was missing, caused preflight failure)
-
-**API:**
-- `GET /users/notifications` — returns `{notification_email, phone}`
-- `PATCH /users/notifications` — updates email + phone only; does not touch other profile fields
-
-**Frontend:**
-- `NotificationSettingsPage.tsx` (new) — email + phone inputs; on Save calls `onSaved()` which refreshes profile and returns to home
-- `Home.tsx` — Notifications row below Auto-invest; shows current email or "Not configured"
-- `AppShell.tsx` — `"notifications"` state added; `onSaved` wired to `refreshAndReturn("home")` so home row updates immediately
-- `api.ts` — `notification_email?` + `phone?` on `UserProfile`; `NotificationSettings` interface; `getNotificationSettings()` + `updateNotificationSettings()`
-
-**Env vars:**
-```
-NOTIFICATION_PROVIDER=resend
-RESEND_API_KEY=re_...
-RESEND_FROM=InvestIQ <noreply@investiq.fit>
-```
-
-### Phase 16b — Domain & Deployment (Complete)
-
-No code changes. Infrastructure and configuration only.
-
-**Custom domain — investiq.fit (Namecheap)**
-- Frontend: https://www.investiq.fit (Vercel — was moodmarket-mu.vercel.app)
-- Backend: https://api.investiq.fit (Railway — was moodmarket-production.up.railway.app)
-- DNS records on Namecheap: A record (@) → Vercel, CNAME (www) → Vercel, CNAME (api) → Railway, TXT (_railway-verify.api) for Railway domain verification
-- TLS: Let's Encrypt via Railway (api subdomain), Vercel (apex + www)
-- `VITE_API_URL` updated to https://api.investiq.fit in Vercel env vars
-- `ALLOWED_ORIGIN` updated to https://www.investiq.fit in Railway env vars
-
-**Email sending — Resend domain verified on investiq.fit**
-- DKIM (TXT), SPF (TXT), DMARC (TXT), MX (send → Amazon SES) records added to Namecheap
-- Domain verified in Resend dashboard — real emails can now be sent to any recipient
-- From address in use: `noreply@investiq.fit`
-
-### Phase 16c — Multi-Config Auto-Invest + Named Strategy Prompts (Complete)
-
-**Named strategy prompts**
-- New file `backend/internal/application/advisor/prompts.go` defines `LongTermPrompt` and `ShortTermPrompt` constants
-- `InvestmentRequest` model gains `StrategyPrompt string \`json:"-"\`` field (not persisted)
-- `callClaudeWithTools` / `doAPICall` accept a `strategyPrompt string` parameter
-- Claude system block order: strategy prompt first (dynamic, no cache), base system prompt last (`cache_control: ephemeral`)
-- When `StrategyPrompt` is empty the base prompt is sent alone — no regression for manual invest flow
-
-**Multi-config auto-invest — domain**
-- `AutoInvestConfig` model gains `Name string` and `Strategy string` (`"long_term"` | `"short_term"`)
-- `AutoInvestRepository` port adds four new methods: `GetAllByUserID`, `Create`, `UpdateByID`, `DeleteByID`
-- `StampLastRunAt` signature changed from `(ctx, userID, t)` to `(ctx, configID, t)` — scheduler stamps the correct config, not all configs for a user
-
-**Multi-config auto-invest — infrastructure**
-- `mongoAutoInvestRepository` implements all four new methods
-- `Create`: `insertOne` with new `primitive.NewObjectID()`, normalises `interval_days ≤ 0 → 1`
-- `UpdateByID`: filter `{_id: oid, user_id: userID}`; `$unset enabled_at` when disabling (avoids stale field with `omitempty`)
-- `DeleteByID`: returns error if `DeletedCount == 0` (caller gets 500, prevents silent no-op)
-- `StampLastRunAt`: now filters by `{_id: oid}` — exact per-config stamp
-
-**Multi-config auto-invest — API**
-- New handler file `auto_invest_configs_handler.go` (CRUD for `/users/auto-invest/configs`)
-- Routes: `GET /configs` list, `POST /configs` create (201), `PUT /configs/:id` update, `DELETE /configs/:id` (204)
-- `multiConfigRequest` includes `EnabledAt *time.Time` so the frontend can round-trip an existing timestamp without a DB read
-- Routes registered in router: subtree `/configs/` before exact `/configs`, both before legacy `/config`
-- `main.go` wires `NewAutoInvestConfigsHandler`
-
-**Multi-config auto-invest — frontend**
-- `api.ts`: added `StrategyType`, `name?`/`strategy?` to `AutoInvestConfig`; four clean multi-config functions (`getAutoInvestConfigs`, `createAutoInvestConfig`, `updateAutoInvestConfig`, `deleteAutoInvestConfig`)
-- `AutoInvestList.tsx` (new): fetches all configs, shows name / Active pill / amount / strategy+risk subtitle, chevron navigation; "+ Add strategy" button
-- `AutoInvestSettings.tsx`: unified create/edit form; `isEdit = !!initialConfig?.id`; delete with confirm step; `autoName(strategy, risk)` auto-fills name on selection changes; name field still editable
-- `AppShell.tsx`: `"auto-invest-list"` state added; Auto-invest row navigates to list; list → settings with `selectedAutoInvestConfig` passed through
-- `Home.tsx`: uses `getAutoInvestConfigs()`, derives enabled count from array; label: "Off" / "Enabled — $X/day" / "N active"
-
-**Performance fix — strategies loading (same session)**
-- `NewMongoAutoInvestRepository`: creates `user_id` ascending index on `auto_invest_configs` at startup — eliminates full collection scan on `GetAllByUserID`; idempotent on restart
-- `AppShell.tsx`: fetches `getAutoInvestConfigs()` in parallel with `getProfile()` during initial load screen; `autoInvestConfigs` state lifted to AppShell
-- `AutoInvestList.tsx`: accepts `initialConfigs` prop, renders immediately with no spinner if data present; background re-fetch keeps it fresh and syncs back to AppShell
-- `Home.tsx`: removed own `getAutoInvestConfigs()` fetch — reads from AppShell prop instead
-
-### Phase 19 — Strategy Performance Tracking (Complete)
-
-**Goal:** Show users how each auto-invest strategy has performed over time.
-
-**Step 1 — Tag decisions with config_id (Complete)**
-- `ConfigID string` added to `InvestmentDecision` domain model; `bson:"config_id,omitempty"` in `decisionDocument`
-- Scheduler runner passes `config.ID` into `InvestmentService.Execute` — every auto-invest decision is tagged with the triggering config
-- Manual invest handler passes `"manual"` — explicitly queryable, distinct from legacy docs
-- Legacy docs (pre-Phase 19) have no `config_id` field → reads as `""` — treated as untagged in future aggregations
-- No migration needed — omitempty means absent field reads cleanly as zero value
-- `InvestmentService.Execute` signature gains `configID string` as final param; local `investUseCase` interface in handler updated to match
-
-**Step 2 — Per-strategy activity endpoint (Complete)**
-- `GET /users/activity/by-strategy` — returns array of `StrategyActivity` sorted by `last_run_at` DESC
-- MongoDB `$group` aggregation on `config_id`; returns `total_invested`, `decision_count`, `first_run_at`, `last_run_at` per group
-- `config_id = "manual"` groups all user-initiated investments; `""` groups legacy pre-Phase-19 decisions
-- `StrategyActivity` domain model added to `domain/models/decision.go`; `ActivityByStrategy` method added to `DecisionRepository` port
-- Compound index `(user_id, config_id, timestamp DESC)` created in `NewMongoDecisionRepository` — covers both the aggregation and existing `ListByUser*` queries; idempotent on restart
-- OpenAPI schema `StrategyActivity` added; Postman request added to Users folder
-
-**Step 3 — Strategy list UI enhancement (Complete)**
-- `StrategyActivity` interface + `getActivityByStrategy()` added to `api.ts`
-- `AutoInvestList.tsx`: fetches activity on mount in parallel with configs; builds `Map<configId, StrategyActivity>`; renders "Invested $X.XX across N runs" or "No runs yet" below each card's subtitle
-- Activity fetch is non-fatal — list renders normally if the call fails; row simply shows "No runs yet"
-
-**Step 4 — True P&L per strategy (Complete)**
-- `CostBasisByStrategy(ctx, userID)` added to `DecisionRepository` port and Mongo impl — unwinds `allocations` array, groups by `(config_id, ticker)`, sums `allocations.amount`; returns `map[configID][ticker]amount`
-- `GET /users/activity/by-strategy/pnl` — new `StrategyPnLHandler` with `identity + decisionRepo + profileRepo + brokerageFactory`; fetches live positions across all connections; attributes each strategy's proportional share of each ticker's `unrealized_pl` and `market_value` based on `strategyBasis[ticker] / totalBasis[ticker]`; returns array sorted by `total_invested` DESC
-- `brokerage_connected: false` in response when no brokerage set up — P&L fields are 0, total_invested still shown
-- `StrategyPnL` interface + `getStrategyPnL()` added to `api.ts`
-- `AutoInvestList.tsx`: fetches P&L on mount alongside activity; per-card shows invested amount + run count; when brokerage connected and unrealized_pl ≠ 0, shows P&L in green/red with dollar + percent
-- OpenAPI schema `StrategyPnL` + endpoint spec added; Postman request added to Users folder
-- **Approximation caveat**: P&L attribution is proportional — if two strategies both bought VTI, each gets their fraction of VTI's total position gain. Positions closed or sold after purchase are not tracked (show $0 for that ticker).
-
-### Phase 25 — Ticker Asset-Class Classification (Complete)
-
-**Goal:** Inject a derived concentration block into the Claude prompt so it knows the user's existing portfolio breakdown by asset class — including individual tickers — before recommending today's allocation.
-
-**MongoDB collection: `ticker_classifications`**
-- Fields: `ticker` (unique index), `asset_class`, `approved`, `suggested_by_claude`, `first_seen_at`
-- 29 tickers seeded at startup via `$setOnInsert` BulkWrite — restart-safe, never overwrites existing records
-- US Equity (13): VTI, SPY, QQQ, XLK, XLF, XLE, XLV, XLI, AAPL, MSFT, NVDA, AMZN, TSLA
-- International (5): VXUS, EFA, EEM, VEA, VWO
-- Bonds (6): BND, AGG, SGOV, SHV, TLT, IEF
-- Real Estate (2): VNQ, SCHH
-- Commodities (3): GLD, SLV, USO
-
-**In-memory cache (`infrastructure/classification/cache.go`)**
-- `ClassificationCache`: `sync.RWMutex`-protected `map[string]string`
-- `Classify(ticker) → (assetClass, known)` — returns `("Other", false)` for unknowns; zero Mongo reads per request
-- `RefreshCache(ctx, repo)` — called once at startup after seeding
-
-**Startup sequence (main.go)**
-1. Seed `ticker_classifications` (upsert, no overwrites)
-2. Load approved entries → `ClassificationCache`
-3. Server starts accepting requests — fatal if either step fails
-
-**Prompt changes (`infrastructure/advisor/claude.go`)**
-- `buildUserMessage`: new `CURRENT PORTFOLIO CONCENTRATION` block when classifier is non-nil
-  - Groups positions by asset class, sorts classes by % descending, tickers within each class by % descending
-  - Format: `- US Equity: 54% ($6,900) — VTI 25%, QQQ 22%, SPY 7%`
-- `systemPrompt`: CONCENTRATION RULE (don't recommend any allocation that pushes an asset class already >40% higher) + TICKER RULE (prefer tickers not already held unless position <5%)
-- Output contract: `asset_class` field added to allocation JSON; Claude labels each recommendation
-
-**Unknown ticker handling**
-- `Classify()` returns `known=false` → goroutine fires `QueueUnknown(ticker, suggestedClass)` — fire-and-forget, never blocks recommendation
-- `QueueUnknown` uses `$setOnInsert` — never downgrades an approved ticker to unapproved
-- `approved:false` entries visible via `cmd/dbcheck`; promoted manually in Mongo + server restart
-
-**New ports (`domain/ports/classification_repository.go`)**
-- `Classifier` interface — `Classify(ticker) (assetClass, known)`
-- `ClassificationRepository` interface — `Seed`, `LoadApproved`, `QueueUnknown`
-
-**`cmd/dbcheck` diagnostic tool**
-- `go run ./cmd/dbcheck` — inspect any Mongo collection without installing mongosh
-- Reads `.env`, defaults to `localhost:27017`, prints up to 200 docs as pretty-printed JSON
-- Full docs in `backend/cmd/dbcheck/README.md`
-
-**4 new prompt tests** — absent without classifier, groups by asset class, sorts by % descending, unknown ticker → Other class
-
-### Phase 26a — Live Claude Classification (Complete)
-
-**Goal:** Remove all static seed logic from code. Claude classifies unknown tickers at recommendation time and the result is immediately usable — no restart, no approval queue.
-
-**What changed:**
-- `seed.go` deleted — the 29 base tickers already live in Mongo from Phase 25; no code needs to know about them
-- Startup `Seed()` call removed from `main.go`; startup now only calls `LoadAll` to hydrate the cache
-- `LoadApproved` → `LoadAll`: cache loads every ticker in the collection, `approved` field is preserved but not used as a filter
-- `QueueUnknown` (approved:false, wait for review) replaced by `StoreClassification`: Claude's suggested `asset_class` is written to Mongo as-is and immediately pushed into the in-memory map via `classifier.Store()`
-- New tickers are live in the cache within the same goroutine that processes the recommendation — zero restart needed
-- Alert log on every new classification: `[classification] NEW: GOOGL → US Equity (Claude-classified)`
-
-**`approved` field — kept, not yet used**
-The field exists on every document (seed tickers have `approved:true`, Claude-classified tickers also get `approved:true` now). There is a possible future use: an admin UI where a human reviews Claude's classifications before they propagate. In practice the value of that review loop is unclear — Claude's asset class suggestions have been accurate on the tickers seen so far, and adding a manual approval step would add friction without obvious payoff. Keeping the field costs nothing. If a bad classification ever surfaces, the fix is one Mongo update. No plan to build the admin UI.
-
----
-
-### Phase 17 — Alpaca Real Trading (Planned)
-
-Switch from paper to live Alpaca trading. Per-user credentials already wired (Phase 8d) — this is a UI change (account type selector) + user supplying live keys. No backend code change required. Requires LLC entity before signing Alpaca Broker API agreement.
-
-### Phase 18 — SnapTrade Portfolio Read (Planned)
-
-Connect existing Robinhood and Fidelity accounts read-only via SnapTrade. Goals:
-- Aggregate positions, balances, and holdings from both accounts into a unified portfolio view
-- Inject aggregated holdings context into Claude recommendation prompt
-- OAuth-based connection flow (no copy-paste API keys)
-
-Do not implement SnapTrade trade execution until SnapTrade confirms Robinhood write/order access is supported.
-
-### Phase 20 — Coinbase Advanced Trade (Planned)
-
-Crypto execution via Coinbase Advanced Trade API (official, API key auth). Same per-user encrypted-credential pattern as Alpaca. Implements `BrokerageProvider` interface — zero application layer changes.
-
-### Phase 21 — SnapTrade Trade Execution via Robinhood (Conditional)
-
-Only if Phase 18 SnapTrade integration confirms Robinhood write access. Route crypto/equity allocations to Robinhood via SnapTrade when user has it connected. Falls back to Alpaca if not available.
-
-### Phase 22 — Decision Verdicts (Complete)
-
-**Goal:** Every AI recommendation gets a performance verdict stamped on it automatically.
-
-**How it works:**
-- Background `VerdictJob` runs on `VERDICT_JOB_TICK` interval (10s dev / 24h prod), immediately on startup, then on every tick
-- Finds all decisions without a verdict older than `VERDICT_MIN_AGE` (0s dev / 24h prod) plus decisions with bad verdicts (Inf, 0 return with tickers, empty ticker_verdicts)
-- Age gate applies ONLY to "no verdict yet" — bad-verdict decisions are re-stamped regardless of age
-- Deduplicates tickers across all decisions, fetches each unique ticker from Polygon exactly once per run (avoids 429 on free tier)
-- Per-user Alpaca brokerage provider used for real-time current prices; Polygon prev-day close as fallback when Alpaca unavailable
-- Entry price: `receipt.FilledPrice` when available; Polygon prev-day as proxy when `FilledPrice = 0` (Alpaca async orders are accepted, not filled, at submission time)
-- Equal-weight fallback when `FilledAmount = 0` (async Alpaca orders don't report fill amount at submission)
-- SPY benchmark from `MarketSnapshot.SPYPrice` stored at decision time; decisions predating Phase 19 have no SPY price → benchmark skipped
-
-**Domain changes:**
-- `InvestmentDecision` gains `Verdict *DecisionVerdict` (optional, omitempty) in `domain/models/decision.go`
-- `DecisionVerdict`: StampedAt, OverallReturnPct, SPYReturnPct, BeatMarket, `[]TickerVerdict`
-- `TickerVerdict`: Ticker, EntryPrice, PrevDayPrice, PrevDayTimestamp, CurrentPrice, CurrentTimestamp, ReturnPct, TodayChangePct
-- `DecisionRepository` gains: `StampVerdict(ctx, id, verdict)`, `ListUnverdicted(ctx, userID, minAge)`
-- `BrokerageProvider` interface gains `GetCurrentPrice(ctx, ticker) (float64, error)` — no userID in signature
-
-**Infrastructure:**
-- `application/scheduler/verdict_stamper.go` — `stampVerdicts` (per-user) + `buildVerdict` (per-decision) + `buildPriceCache` (deduped Polygon)
-- `application/scheduler/verdict_job.go` — `VerdictJob`, runs immediately on startup
-- `infrastructure/brokerage/alpaca.go` — `GetCurrentPrice` calls `GET /v2/stocks/{ticker}/quotes/latest`
-- `infrastructure/db/mongo_decision_repository.go` — `StampVerdict` filter allows overwriting bad verdicts; `ListUnverdicted` with split age-gate; `GetEvalSummary` MongoDB aggregation pipeline with `$addFields` to normalize empty `config_id` → `"manual"`
-- `api/handlers/eval_handler.go` — `safeFloat()` sanitizes NaN/Inf stored from old bad verdicts before JSON encoding
-
-**Env vars:**
-```
-VERDICT_JOB_TICK=10s   # dev; 24h prod
-VERDICT_MIN_AGE=0s     # dev (stamp immediately); 24h prod
-```
-
-### Phase 23 — Activity Dashboard (Complete, merged with Phase 7 Activity)
-
-**Goal:** Surface verdict data answering "is the AI actually good?" — unified with the existing Activity tab into a single "Activity" page.
-
-**What was merged:** The old separate `Activity.tsx` page (Phase 7 — total invested, decision timeline) was absorbed into `Eval.tsx`. The "Eval" nav button was renamed "Activity". No separate Activity page or route exists any more.
-
-**Backend — 2 new endpoints:**
-- `GET /users/eval/summary` — win rate (% that beat SPY), avg return vs SPY, best/worst decision, per-strategy breakdown; empty `config_id` and `null` both normalized to `"manual"` in MongoDB aggregation
-- `GET /users/eval/decisions?page=1&limit=500` — paginated list of verdicted decisions with full verdict embedded
-
-**Frontend (`frontend/src/pages/Eval.tsx`):**
-- Parallel fetch of `getEvalSummary()` + `getEvalDecisions(1, 500)` + `getActivity(null)` on mount
-- Total Invested from `activity.total_invested` (Activity API); verdict data from eval endpoints
-- Summary card: Total invested + avg return (or "Verdicts appear after trades settle" when none)
-- Win rate progress bar vs SPY; Best / Worst decision cards
-- By-strategy section — only shown when `>1 distinct display name`; client-side merge: same-name configs (different IDs) are combined with weighted-average win_rate + avg_return_pct
-- Decision history: all decisions from Activity API, verdict overlaid where eval data has a match (by ID); "Pending" label when no verdict yet
-- Per-ticker pill row below each verdicted decision: ticker + return_pct in green/red
-
-**Key implementation details:**
-- `configName()` maps `config_id` → display name: `undefined | null | "manual" | "" → "Manual"`, found ID → config name, missing ID → `"Deleted strategy"`
-- `safeFloat()` in handler prevents `json.Encoder` crash on `+Infinity` (was stored from a bug where `FilledPrice=0` was used as denominator before the entryPrice fallback fix)
-- No new MongoDB collections — verdict stamped directly onto `decisions` documents
-
-**Hard constraints met:**
-- SVG only — no charting library
-- No new UI component libraries
-
-### Phase 24 — Feedback Loop (Complete)
-
-**Goal:** Claude receives its own performance history in every prompt so recommendations improve over time.
-
-**How it works:**
-- `RecommendationService` calls `GetEvalSummary` before building the prompt; injects result only when `VerdictedDecisions >= 5` (new users and early accounts get no change)
-- `InvestmentRequest` gains `PerformanceSummary *EvalSummary` (nil when below threshold — never persisted)
-- `buildUserMessage`: new `PAST PERFORMANCE` section — win rate vs SPY, avg return, best/worst decision, "context only — do not override risk tolerance" guard
-
-**Verdict stamping redesign (also Phase 24):**
-- `VerdictJob` background goroutine deleted entirely
-- `VERDICT_JOB_TICK` and `VERDICT_MIN_AGE` env vars removed
-- Verdict stamping moved inline: goroutine fired inside `GetDailyRecommendation` concurrent with tax doc fetch
-- Every path that produces a decision (manual + auto-invest) triggers stamping on the next call — zero polling, zero env vars
-
-**Tests:**
-- 6 new prompt test cases for performance block (total 26 cases at end of phase including Phase 25)
-- `verdict_stamper_test.go` and `eval_handler_test.go` added (were absent in Phase 22 — the gap that caused 5 runtime bugs)
+## What's next
+
+### P1 — Pre go-live / blockers
+
+| Item | Why |
+|------|-----|
+| LLC formation | Required before signing Alpaca Broker API or SnapTrade commercial agreements; one LLC covers InvestIQ + other ventures |
+| Vault / AWS Secrets Manager for Plaid tokens | Plaid `access_token` values are live credentials — DB compromise must not expose them. Hook is ready: `infrastructure/secrets/vault.go` behind `SecretsProvider` interface |
+| Atlas IP allowlist | Replace 0.0.0.0/0 with Railway static IP; requires Railway Pro plan |
+| Paper → live Alpaca trading | Per-user credentials already wired — UI adds account type selector (Paper/Live); user supplies live keys; no backend code change; requires LLC |
+| Remove debug log lines | `[8a-debug]`, `[8b-debug]`, `[8c-debug]`, `[8ca-debug]` in `recommendation_service.go` — grep each tag; marked with `// TODO: remove` comments |
+
+### P2 — Near-term features
+
+| Item | Notes |
+|------|-------|
+| SnapTrade portfolio read | Aggregate Robinhood + Fidelity positions read-only via OAuth. Inject aggregated holdings into Claude prompt. Do NOT build trade execution until SnapTrade confirms Robinhood write access |
+| Coinbase Advanced Trade | Crypto execution via official API key auth. Implements `BrokerageProvider` — zero application layer changes. Same per-user AES-256-GCM credential pattern as Alpaca |
+| SMS notifications via Twilio | `Phone` field already on `UserProfile`. Needs `infrastructure/notifications/twilio.go` implementing `NotificationProvider`; factory wired on `NOTIFICATION_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` |
+
+### P3 — Longer-term / conditional
+
+| Item | Notes |
+|------|-------|
+| SnapTrade trade execution via Robinhood | Conditional on SnapTrade confirming Robinhood write/order access. Route equity allocations to Robinhood when connected; fallback to Alpaca |
+| Real-time market data | `/prev` endpoint gives yesterday's prices. Real-time (Finnhub) deferred until stale data meaningfully hurts recommendation quality |
+| Verdict entry price accuracy | When `FilledPrice = 0` (async Alpaca), Polygon prev-day close is used as proxy. True fix: re-fetch Alpaca order after a delay and re-stamp with real fill price |
+| Redis for Plaid balance cache | In-memory cache resets on restart. Redis for persistence at scale |
+| Rebalancing alerts | Notify when portfolio drifts past target allocation |
+| Tax optimization | Tax-loss harvesting, asset location strategy |
+| Household / family accounts | Multi-user households sharing one financial picture |
+| Earnings calendar, macro indicators | News context covers macros for now; earnings adds complexity for marginal value at current scale |
 
 ---
 
@@ -990,25 +309,6 @@ VERDICT_MIN_AGE=0s     # dev (stamp immediately); 24h prod
 - Claude making recommendations vs executing trades = compliance distinction
 - One LLC can cover InvestIQ + other business ventures
 - See PERSONAL.md (not committed) for LLC formation and account migration details
-
----
-
-## Backlog
-
-Features defined but not yet scheduled. Reviewed after each phase — promoted when the time is right.
-
-| Item | Notes |
-|------|-------|
-| Macro indicators (Fed rate, inflation) | News context covers this for now |
-| Earnings calendar | Adds complexity, marginal value at current scale |
-| Redis for Plaid balance cache | In-memory is fine until scale demands it |
-| Finnhub news + sentiment scores | Revisit when individual stock recommendations make per-ticker sentiment worth a new dependency; structured sentiment ("2 bearish") is stronger signal than Claude inferring from text, but not worth the extra key at current ETF-only scope |
-| Household/family accounts | Multi-user households sharing one financial picture |
-| Tax optimization | Tax-loss harvesting, asset location strategy |
-| Rebalancing alerts | Notify when portfolio drifts past target allocation |
-| SMS notifications via Twilio | `Phone` field already stored on UserProfile. Needs: `infrastructure/notifications/twilio.go` implementing `NotificationProvider`, factory wired on `NOTIFICATION_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` env vars. Consider a multi-channel provider wrapping both Resend + Twilio. |
-| Atlas IP allowlist | Replace 0.0.0.0/0 with Railway static IP when on Pro plan |
-| LLC formation | Required before signing Alpaca Broker API or SnapTrade commercial agreements |
 
 ---
 
@@ -1063,7 +363,7 @@ Background data access is legitimate when:
 |---------|-----|
 | Scrapped mood-based concept | Mood is a gimmick — financial state drives real decisions |
 | App owns intelligence, AI is swappable | Not locked into Claude — Deepseek, fine-tuned model, or any model works |
-| Onion arch + DDD from Phase 1 | Decisions made in Phase 1 make Phase 5 easy or painful |
+| Onion arch + DDD from day one | Early architecture decisions make later features easy or painful — set them wrong and every new layer pays for it |
 | CLAUDE.md in repo root | Claude Code reads it automatically — consistent engineering rules every session |
 | Skills files for rarely-needed rules | CLAUDE.md loads every session; skills load on demand — saves tokens |
 | Full profile collected upfront | App never asks the same question twice |
@@ -1078,7 +378,7 @@ Background data access is legitimate when:
 | BROKERAGE_PROVIDER mock | Test full invest loop without touching Alpaca during dev |
 | Partial order failure tolerance | One bad ticker shouldn't block the whole investment |
 | Encrypted Mongo for tokens now, Vault before go-live | access_tokens are live credentials — DB compromise must not expose them |
-| AutoInvestConfig as own collection | Decoupled from UserProfile; scales to multiple configs per user in Phase 9 |
+| AutoInvestConfig as own collection | Decoupled from UserProfile; scales to multiple configs per user |
 | GetByUserID returns safe default | Frontend never handles not-found — safe defaults mean no extra error path |
 | MOCK_ALL=true flag | Single env var for zero-external-calls dev setup — no need to set 5 provider vars |
 | Mock advisor | Full end-to-end flow testable without Anthropic key or API calls |
@@ -1091,27 +391,26 @@ Background data access is legitimate when:
 | Git workflow: write → verify → commit | No autonomous pushes — developer reviews before any commit |
 | Polygon over Finnhub for news | Polygon already integrated — no new key, no new dependency. Claude infers sentiment from text. Finnhub backlogged for when individual stocks make per-ticker sentiment worth the extra dependency |
 | Dependency principle: exhaust before adding | Before adding a new API/service, check if an existing one can do the job. New keys = new cost, new failure surface, new rotation burden |
-| Phase 8 ordered 8a → 8b → 8c | 8a: zero risk, wires existing data; 8b: Polygon news, zero new deps; 8c: new Plaid scope, most complex — keep isolated |
-| Cash context as opt-in stored preference (Phase 8ca redesign) | Per-session directives ("Factor this into allocation") caused Claude to override stated risk tolerance regardless of user intent. Fix: gate spending data behind a stored UserProfile preference; when shown, instruction is "background context only — do not override risk tolerance or amount." Removes the cognitive dissonance between user input and AI output. |
-| Per-user Alpaca credentials over env-var keys (Phase 8d) | Single shared env-var key means every user trades the same account — always wrong for financial data or trade execution. Per-user AES-256-GCM encrypted credentials in MongoDB, same pattern as Plaid access tokens. |
-| `BrokerageProviderFactory` interface to avoid arch violation | Spec's approach (services decrypt keys + construct Alpaca client directly) would require application layer importing infrastructure packages. Factory interface in `domain/ports/` inverts the dependency — services never touch encryption or Alpaca constructors. |
+| Cash context as opt-in stored preference | Per-session directives caused Claude to override stated risk tolerance regardless of user intent. Fix: gate spending data behind a stored UserProfile preference; when shown, instruction is "background context only — do not override risk tolerance or amount." |
+| Per-user Alpaca credentials over env-var keys | Single shared env-var key means every user trades the same account — always wrong for financial data or trade execution. Per-user AES-256-GCM encrypted credentials in MongoDB, same pattern as Plaid access tokens. |
+| `BrokerageProviderFactory` interface to avoid arch violation | Services decrypt keys + construct Alpaca client directly would require application layer importing infrastructure packages. Factory interface in `domain/ports/` inverts the dependency. |
 | `ErrBrokerageNotConnected` sentinel error | Allows callers to distinguish "not connected" (user action needed, non-fatal for recommendations) from real errors. RecommendationService skips positions; InvestmentService returns 400; scheduler skips user silently. |
-| distroless runner image | `gcr.io/distroless/static-debian12` has no shell, no libc, no package manager — smaller attack surface and smaller image than alpine. Requires static binary (`CGO_ENABLED=0`). |
-| `/health` on top-level mux, not inside `UserIdentity` | `UserIdentity` blocks all non-`/auth/` routes. A health endpoint inside the mux would require a bearer token, breaking Docker/Railway healthchecks. Top-level mux registers `/health` first; everything else falls through to the protected mux. |
-| Per-allocation brokerage override over global override | Global `brokerage_override_id` was the initial Phase 12b design. Per-allocation `per_allocation_brokerage map[ticker→connID]` is strictly more expressive — you can still route everything to one account (just set all tickers to the same ID) but you can also split individual allocations. Stamped on each `TradeReceipt` so MongoDB has a full audit trail of which account executed each trade. |
-| 529 fallback to cached recommendation | Anthropic occasionally returns HTTP 529 (overloaded). Hard-failing the recommendation with a 500 is a bad UX for a daily-use app. The `decisions` collection already has everything needed — pull the last decision, rescale amounts to today's budget, set `FromCache: true`. If no prior decision exists the original error still propagates. No new storage, no cache layer needed. |
-| P&L data from Alpaca not MongoDB | Alpaca already computes avg_entry_price, cost_basis, unrealized_pl per position. Computing this from MongoDB trade receipts would require reconstructing position state across all historical orders (buys/sells, partial fills, splits). Alpaca's live data is simpler and more accurate. |
-| SVG chart, no charting library | Dependency principle: no charting library added. A plain SVG polyline with filled area is sufficient for a sparkline-style chart. Recharts/Chart.js would add ~100KB+ for a feature that needs one line and a few labels. |
-| Polygon deduplication in verdict job | Naive verdict stamping called Polygon once per decision per ticker — 37 decisions × 5 tickers = 185 calls against a ~5/min free tier → all 429. Fix: collect unique tickers across all decisions for one user, fetch each once (`buildPriceCache`), share cache across all decisions in that run. |
-| Polygon prev-day as entry price fallback | Alpaca market orders are async — `FilledPrice = 0` and status = `"accepted"` at order submission time. Verdict job needs an entry price to compute return. Polygon prev-day close is a reasonable proxy for same-day market orders. Return will be slightly off (vs true fill price) but directionally correct and avoids skipping the decision entirely. |
-| Equal-weight fallback when FilledAmount = 0 | Same Alpaca async issue — `FilledAmount` is 0 at submission. Without a fallback, `totalWeight` never accumulates and `OverallReturnPct` stays 0. Equal weighting (1.0 per ticker) gives a correct unweighted average until Alpaca updates the order. |
-| `safeFloat()` at handler boundary | MongoDB can store `+Infinity` if a bug divides by zero during stamping. `json.Encoder` panics (returns no bytes) on Inf/NaN → "Unexpected end of JSON input" on the frontend. `safeFloat()` converts any non-finite to 0 at the serialization boundary — safe default, never crashes. |
-| Split age gate in `ListUnverdicted` | Original design: top-level `"timestamp": {$lt: now-minAge}` applied to ALL filter conditions, blocking re-stamp of today's bad-verdict decisions. Fix: move age gate inside the "no verdict yet" branch only (`noVerdictYet` map with conditional timestamp field); bad-verdict conditions have no timestamp constraint. |
-| Merged Activity + Eval into single "Activity" page | Two separate tabs (Activity = timeline, Eval = performance) would require users to switch between them to see related data. Merging into one page (three parallel API calls on mount) gives a single unified view: invested amount, verdict stats, and decision history with verdicts overlaid. |
-| `config_id = ""` normalized to `"manual"` in MongoDB aggregation | Legacy decisions (pre-Phase 19) have no `config_id` field — reads as `""` in Go. MongoDB `$group` on raw `config_id` creates a `""` bucket separate from the `"manual"` bucket. Fix: `$addFields` + `$cond` in aggregation pipeline normalizes both to `"manual"` before grouping. Frontend also merges same-display-name configs via weighted average for configs with different IDs but identical user-facing names. |
-| Mongo as single source of truth for ticker classifications | Static maps rot. DB-backed seed with `$setOnInsert` lets the classification set grow without code changes. `QueueUnknown` lets Claude suggest new tickers for human review without blocking recommendations. |
+| distroless runner image | `gcr.io/distroless/static-debian12` has no shell, no libc, no package manager — smaller attack surface. Requires static binary (`CGO_ENABLED=0`). |
+| `/health` on top-level mux, not inside `UserIdentity` | `UserIdentity` blocks all non-`/auth/` routes. Top-level mux registers `/health` first; everything else falls through to the protected mux. |
+| Per-allocation brokerage override over global override | Strictly more expressive than a global override — can still route everything to one account, or split individual allocations. Stamped on each `TradeReceipt` for full audit trail. |
+| 529 fallback to cached recommendation | Hard-failing the recommendation with a 500 is bad UX for a daily-use app. Pull last decision, rescale to today's budget, set `FromCache: true`. No new storage needed. |
+| P&L data from Alpaca not MongoDB | Alpaca already computes avg_entry_price, cost_basis, unrealized_pl per position. Computing from receipts would require reconstructing position state across all historical orders. |
+| SVG chart, no charting library | Dependency principle: a plain SVG polyline is sufficient for a sparkline chart. Recharts/Chart.js would add ~100KB+ for one line and a few labels. |
+| Polygon deduplication in verdict stamping | Naive approach: one Polygon call per decision per ticker = rapid 429 exhaustion on free tier. Fix: collect unique tickers across all decisions for one user, fetch each once, share the price cache. |
+| Polygon prev-day as entry price fallback | Alpaca market orders are async — `FilledPrice = 0` at submission. Polygon prev-day close is a reasonable proxy; return will be slightly off but directionally correct. |
+| Equal-weight fallback when FilledAmount = 0 | Same Alpaca async issue — `FilledAmount` is 0 at submission. Equal weighting (1.0 per ticker) gives a correct unweighted average until Alpaca updates the order. |
+| `safeFloat()` at handler boundary | MongoDB can store `+Infinity` from a divide-by-zero bug. `json.Encoder` panics on Inf/NaN. `safeFloat()` converts non-finite to 0 at the serialization boundary. |
+| Split age gate in `ListUnverdicted` | Age gate applies only to "no verdict yet" branch — bad-verdict decisions are re-stamped regardless of age. |
+| Merged Activity + Eval into single "Activity" page | Two separate tabs require users to switch to see related data. One page with three parallel API calls gives a unified view. |
+| `config_id = ""` normalized to `"manual"` in MongoDB aggregation | Legacy decisions have no `config_id` field — reads as `""`. Fix: `$addFields` + `$cond` normalizes both to `"manual"` before grouping. |
+| Mongo as single source of truth for ticker classifications | Static maps rot. DB-backed seed with `$setOnInsert` lets the classification set grow without code changes. `StoreClassification` writes Claude's suggested class directly as approved — no review queue, no restart needed; the in-memory cache is updated in the same goroutine. |
 | In-memory cache for classifier, zero Mongo reads per request | Classification is called in the hot path (every recommendation, every position). DB reads per request would add latency and Mongo load for a dataset that changes at most once per session. Cache hydrated at startup, refreshed only on restart. |
-| `cmd/dbcheck` over mongosh for diagnostics | `mongosh` requires a separate install (not bundled with the driver). A Go script using the existing `go.mongodb.org/mongo-driver` runs immediately with `go run ./cmd/dbcheck`, lives in the repo, and is available to any team member without setup. |
+| `cmd/dbcheck` over mongosh for diagnostics | `mongosh` requires a separate install. A Go script using the existing `go.mongodb.org/mongo-driver` runs immediately with `go run ./cmd/dbcheck`, lives in the repo, and is available to any team member without setup. |
 
 ---
 
@@ -1124,11 +423,11 @@ Background data access is legitimate when:
 | Log provider for notifications | Real push (FCM or APNs) for mobile; Resend covers email |
 | Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale |
 | Encrypted Mongo for Plaid tokens | Move to Vault / AWS Secrets Manager before go-live |
-| `[8a-debug]` log lines in `recommendation_service.go` | Remove after Phase 8a testing is verified; grep `[8a-debug]` |
-| `[8b-debug]` log lines in `recommendation_service.go` | Remove after Phase 8b testing is verified; grep `[8b-debug]` |
-| `[8c-debug]` log lines in `recommendation_service.go` | Remove after Phase 8c testing is verified; grep `[8c-debug]` |
-| `[8ca-debug]` log lines in `recommendation_service.go` | Remove after Phase 8ca testing is verified; grep `[8ca-debug]` |
-| `CashContext.UserOverride` field is dead | Field exists in the model but is never set; was part of the original Phase 8ca design before the redesign removed per-session override. Remove when cleaning up. |
+| `[8a-debug]` log lines in `recommendation_service.go` | Temporary prompt-debugging logs; remove when no longer needed — grep `[8a-debug]` |
+| `[8b-debug]` log lines in `recommendation_service.go` | Temporary news-debugging logs; remove when no longer needed — grep `[8b-debug]` |
+| `[8c-debug]` log lines in `recommendation_service.go` | Temporary spending-debugging logs; remove when no longer needed — grep `[8c-debug]` |
+| `[8ca-debug]` log lines in `recommendation_service.go` | Temporary cash-context-debugging logs; remove when no longer needed — grep `[8ca-debug]` |
+| `CashContext.UserOverride` field is dead | Field exists in the model but is never set; left over from an abandoned per-session override design. Remove when cleaning up. |
 | Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |
 | Verdict entry price uses Polygon proxy | When `FilledPrice = 0` (async Alpaca order), Polygon prev-day close is used as entry price. Understates/overstates return vs actual fill. True fix: re-fetch Alpaca order after a delay and re-stamp with real fill price |
 | Classification bad data has no correction UI | If Claude mis-classifies a ticker (e.g. calls a bond ETF "US Equity"), the fix is a manual Mongo update. Acceptable for now — `cmd/dbcheck` makes it easy to spot. No admin UI planned until mis-classifications become a real pattern |
@@ -1137,9 +436,9 @@ Background data access is legitimate when:
 
 ## Retrospectives
 
-### Phase 22 → 23: build the pipeline without tests, pay for it in the next phase
+### Build the pipeline without tests, pay for it when you surface it in the UI
 
-Phase 22 added the entire verdict data pipeline (VerdictJob, stampVerdicts, Polygon/Alpaca price fetching, MongoDB stamping) with no unit tests. Every requirement existed only in the code — nothing machine-verifiable. When Phase 23 surfaced verdicts in the Activity UI, five separate bugs appeared that were only visible at runtime:
+The verdict data pipeline (verdict stamping, Polygon/Alpaca price fetching, MongoDB stamping) was built with no unit tests — every requirement existed only in the code, nothing machine-verifiable. When verdict data was surfaced in the Activity UI for the first time, five separate bugs appeared that were only visible at runtime:
 
 | Bug | Root cause | What it cost |
 |-----|------------|-------------|
@@ -1147,38 +446,20 @@ Phase 22 added the entire verdict data pipeline (VerdictJob, stampVerdicts, Poly
 | `FilledPrice = 0` → `Infinity` | Alpaca async orders have `FilledPrice=0` at submission; dividing by zero produced Inf | Extra deploy cycle to add equal-weight fallback |
 | `json.Encoder` crash on Inf/NaN | JSON cannot encode IEEE Infinity; the `/eval/summary` endpoint panicked for affected users | Extra deploy cycle to add `safeFloat()` guard |
 | Age gate blocked re-stamping of bad verdicts | `minAge` cutoff applied to ALL decisions including already-stamped-wrong ones | Extra deploy cycle to split age gate: new decisions only |
-| `config_id = ""` broke strategy grouping | Legacy decisions pre-Phase 19 have no `config_id`; MongoDB `$group` treated `""` and `"manual"` as separate buckets | Extra deploy cycle + frontend merge logic |
+| `config_id = ""` broke strategy grouping | Legacy decisions (before config_id was introduced) have no `config_id`; MongoDB `$group` treated `""` and `"manual"` as separate buckets | Extra deploy cycle + frontend merge logic |
 
-**Rule reinforced:** write unit tests before or alongside the pipeline, not after. The tests added in this session for Phases 22 and 23 (`verdict_stamper_test.go`, `eval_handler_test.go`, `Eval.test.tsx`) make all five bugs machine-verifiable — any regression now fails immediately in CI rather than in the UI.
+**Rule reinforced:** write unit tests before or alongside the pipeline, not after. `verdict_stamper_test.go`, `eval_handler_test.go`, and `Eval.test.tsx` were added retroactively — all five bugs are now machine-verifiable and any regression fails immediately in CI rather than in the UI.
 
 ---
 
-### Verdict job: retry condition too broad → infinite re-queue loop
+### Verdict retry condition too broad → infinite re-queue loop
 
 The `badVerdict` mongo condition `{"verdict.ticker_verdicts": {"$size": 0}}` was added to handle a legitimate case: Alpaca async orders where `FilledPrice=0` at submission get stamped with zero tickers, then corrected when brokerage data arrives. That condition means "empty ticker list = retry later."
 
-Pre-Phase-22 decisions also produce empty ticker lists — but for a permanent reason: no SPY entry price and no brokerage receipts were ever recorded. After being stamped with `tickers=[]`, they matched the same retry condition and were re-queued on every verdict job cycle indefinitely. On a short `VERDICT_JOB_TICK` (e.g. `5m` for local dev) this produced continuous log noise and pointless DB reads.
+Decisions made before the verdict pipeline existed also produce empty ticker lists — but for a permanent reason: no SPY entry price and no brokerage receipts were ever recorded. After being stamped with `tickers=[]`, they matched the same retry condition and were re-queued indefinitely. On a short dev tick (e.g. `5m`) this produced continuous log noise and pointless DB reads.
 
-**Fix:** both `ListUnverdicted` and `GetUsersWithPendingVerdicts` now require `market_snapshot.spy_price > 0`. Pre-Phase-22 decisions have `spy_price=0` (or the field absent) and are permanently excluded from the verdict queue.
+**Fix:** both `ListUnverdicted` and `GetUsersWithPendingVerdicts` now require `market_snapshot.spy_price > 0`. Old decisions with `spy_price=0` (or the field absent) are permanently excluded from the verdict queue.
 
 **Rule reinforced:** when adding a "retry on bad state" condition, enumerate the states that can actually be corrected vs. states that are permanently terminal. Terminal states need a separate filter or a `skipped` flag — otherwise they re-queue forever.
 
 ---
-
-### Verdict job: stop and ask "why a job?" before reaching for a background goroutine
-
-The verdict job (`VerdictJob`) was introduced as the obvious solution to a batch problem: "compute performance scores for all users' decisions once a day." A background goroutine with a ticker felt natural — that's how cron-style work gets done.
-
-But the question was never asked: **who actually needs these verdicts, and when?**
-
-The answer: the user — when they open the Activity page or make a new recommendation. Verdicts are meaningless until someone looks at them. A dormant user has no page to load, so computing their verdicts on a schedule produces work that is immediately thrown away. The job was solving a problem that only exists if you assume verdicts need to be pre-computed for everyone, which they don't.
-
-**What the job cost:**
-- A background goroutine that had to be kept alive, monitored, and configured
-- `VERDICT_JOB_TICK` and `VERDICT_MIN_AGE` env vars that were set to `10s`/`0s` for dev testing and never changed back — causing continuous Polygon API calls and log noise in every dev session
-- Polygon 429 rate limit exhaustion from batch-processing all users simultaneously
-- An infinite re-queue loop when `ticker_verdicts.size=0` decisions matched the retry condition on every cycle
-
-**The fix:** delete the job. Call `stampVerdicts` inline in `GetDailyRecommendation` as a goroutine concurrent with the tax doc fetch. Every path that produces a decision (manual invest, auto-invest) goes through `GetDailyRecommendation`, so every decision gets stamped on the next call — with zero polling, zero separate goroutine, zero env vars.
-
-**Rule:** before introducing a background job, ask: "Is there a natural request-time trigger that covers all the cases?" If the answer is yes, inline it. Jobs are appropriate when work must happen on a fixed schedule regardless of user activity (e.g. sending a daily digest email). They are not appropriate when the work is only meaningful in response to user activity that already provides a trigger.
