@@ -113,6 +113,10 @@ func (s *InvestmentService) Execute(
 			continue
 		}
 		for _, alloc := range g.allocations {
+			if alloc.Amount < 1.00 {
+				log.Printf("[invest] skipping %s — notional %.2f below Alpaca $1.00 minimum", alloc.Ticker, alloc.Amount)
+				continue
+			}
 			tradeOrder := models.TradeOrder{
 				UserID: userID,
 				Ticker: alloc.Ticker,

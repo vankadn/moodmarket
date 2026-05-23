@@ -18,6 +18,7 @@ export function ConfirmScreen({ rec, brokerages, perAllocBrokerage, onPerAllocCh
   const showVia = brokerages.length > 0;
   const multiConn = brokerages.length > 1;
   const colSpanTotal = showVia ? 3 : 2;
+  const hasInvalidAllocation = rec.allocations.some((a) => a.amount < 1.00);
 
   return (
     <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: "12px", padding: "1.25rem 1.5rem" }}>
@@ -91,15 +92,21 @@ export function ConfirmScreen({ rec, brokerages, perAllocBrokerage, onPerAllocCh
         </tfoot>
       </table>
 
+      {hasInvalidAllocation && (
+        <div style={{ fontSize: "13px", color: "#d97706", marginBottom: "12px" }}>
+          One or more allocations is under $1.00 — reduce tickers or increase your investment amount
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: "10px" }}>
         <button
           onClick={onConfirm}
-          disabled={loading || brokerages.length === 0}
+          disabled={loading || brokerages.length === 0 || hasInvalidAllocation}
           style={{
             flex: 1, padding: "12px",
-            background: (loading || brokerages.length === 0) ? "#ccc" : "#1a1a1a",
+            background: (loading || brokerages.length === 0 || hasInvalidAllocation) ? "#ccc" : "#1a1a1a",
             color: "white", border: "none", borderRadius: "8px",
-            fontSize: "14px", fontWeight: 500, cursor: (loading || brokerages.length === 0) ? "not-allowed" : "pointer",
+            fontSize: "14px", fontWeight: 500, cursor: (loading || brokerages.length === 0 || hasInvalidAllocation) ? "not-allowed" : "pointer",
           }}
         >
           {loading ? "Placing orders…" : brokerages.length === 0 ? "Connect a brokerage to invest" : "Confirm & Invest"}
