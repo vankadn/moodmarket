@@ -27,6 +27,11 @@ export interface PortfolioConnectionStatus {
   connected_at?: string;
 }
 
+export interface LinkedAccount {
+  id: string;
+  name: string;
+}
+
 export interface UserProfile {
   user_id?: string;
   full_name: string;
@@ -381,6 +386,14 @@ export async function disconnectPortfolioAggregator(): Promise<void> {
     headers: await authHeaders(),
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
+}
+
+export async function getLinkedAccounts(): Promise<{ accounts: LinkedAccount[] }> {
+  const res = await fetch(`${API_BASE}/portfolio/accounts`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
 }
 
 export async function removeBrokerageConnection(connectionID: string): Promise<void> {

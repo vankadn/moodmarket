@@ -19,3 +19,9 @@ type PortfolioConnectionStatus struct {
 	Connected   bool   `json:"connected"`
 	ConnectedAt string `json:"connected_at,omitempty"`
 }
+
+// LinkedAccount is a single brokerage account linked via a portfolio aggregator (e.g. SnapTrade).
+type LinkedAccount struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}

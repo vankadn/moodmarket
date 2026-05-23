@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { PortfolioConnectionStatus, connectPortfolioAggregator, disconnectPortfolioAggregator } from "../services/api";
+import { useEffect, useState } from "react";
+import { LinkedAccount, PortfolioConnectionStatus, connectPortfolioAggregator, disconnectPortfolioAggregator, getLinkedAccounts } from "../services/api";
 
 interface Props {
   status: PortfolioConnectionStatus | undefined;
@@ -21,8 +21,16 @@ export function PortfolioAggregatorConnect({ status, onBack, onChanged }: Props)
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [portalOpened, setPortalOpened] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
 
   const isConnected = status?.connected === true;
+
+  useEffect(() => {
+    if (!isConnected) return;
+    getLinkedAccounts()
+      .then((res) => setLinkedAccounts(res.accounts))
+      .catch(() => {}); // non-fatal — list just stays empty
+  }, [isConnected]);
 
   async function handleConnect() {
     setConnecting(true);
@@ -92,6 +100,28 @@ export function PortfolioAggregatorConnect({ status, onBack, onChanged }: Props)
               <span style={{ fontSize: "18px" }}>✓</span>
             </div>
           </div>
+
+          {/* Linked broker accounts */}
+          {linkedAccounts.length > 0 && (
+            <div style={{ marginBottom: "2rem" }}>
+              <div style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: "10px" }}>
+                Linked brokers
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {linkedAccounts.map((a) => (
+                  <span
+                    key={a.id}
+                    style={{
+                      fontSize: "12px", padding: "5px 12px", borderRadius: "20px",
+                      border: "1px solid #e0e0e0", background: "#f8f8f8", color: "#555",
+                    }}
+                  >
+                    {a.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Manage brokers */}
           <div style={{ marginBottom: "2rem" }}>

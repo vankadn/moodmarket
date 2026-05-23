@@ -156,6 +156,10 @@ func (b *stubBrokerageFactory) ForUser(_ *models.BrokerageConnection) (ports.Bro
 // stubPortfolioAggregator is never reached because stubProfileRepo returns no portfolio connection.
 type stubPortfolioAggregator struct{}
 
+func (p *stubPortfolioAggregator) ListAccounts(_ context.Context, _, _ string) ([]models.LinkedAccount, error) {
+	return nil, nil
+}
+
 func (p *stubPortfolioAggregator) GetHoldings(_ context.Context, _, _ string) ([]models.Position, error) {
 	return nil, nil
 }

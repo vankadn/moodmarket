@@ -25,6 +25,12 @@ func (m *MockPortfolioProvider) DeleteUser(_ context.Context, _, _ string) error
 	return nil
 }
 
+func (m *MockPortfolioProvider) ListAccounts(_ context.Context, _, _ string) ([]models.LinkedAccount, error) {
+	return []models.LinkedAccount{
+		{ID: "mock-account-1", Name: "Robinhood Individual"},
+	}, nil
+}
+
 func (m *MockPortfolioProvider) GetHoldings(_ context.Context, _, _ string) ([]models.Position, error) {
 	return []models.Position{
 		{Ticker: "AAPL", Name: "Apple Inc", Quantity: 5.0, MarketValue: 875.00, CostBasis: 750.00, AvgEntryPrice: 150.00, UnrealizedPL: 125.00, UnrealizedPLPercent: 16.67},

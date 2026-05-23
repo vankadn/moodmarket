@@ -26,6 +26,7 @@ type Handlers struct {
 	BrokerageConnections  http.Handler
 	Notifications         http.Handler
 	PortfolioConnect      http.Handler
+	PortfolioAccounts     http.Handler
 	Portfolio             http.Handler
 	Order                 http.Handler // wrap with http.HandlerFunc if needed
 	Document              http.Handler
@@ -60,7 +61,8 @@ func Build(h Handlers, authProvider ports.AuthProvider) http.Handler {
 	protected.Handle(BrokerageConnectURI, h.Brokerage)
 	protected.Handle(BrokerageConnectionsURI, h.BrokerageConnections)
 	protected.Handle(BrokerageConnectionByIDURI, h.BrokerageConnections)
-	protected.Handle(PortfolioConnectURI, h.PortfolioConnect) // most specific — register before sibling portfolio routes
+	protected.Handle(PortfolioConnectURI, h.PortfolioConnect)   // most specific — register before sibling portfolio routes
+	protected.Handle(PortfolioAccountsURI, h.PortfolioAccounts) // exact match — register before PortfolioURI
 	protected.Handle(PortfolioHistoryURI, h.Portfolio)
 	protected.Handle(PortfolioURI, h.Portfolio)
 	protected.Handle(OrdersURI, h.Order)

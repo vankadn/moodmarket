@@ -169,6 +169,7 @@ func main() {
 		Brokerage:            handlers.NewBrokerageHandler(profileRepo, idp),
 		BrokerageConnections: handlers.NewBrokerageConnectionsHandler(profileRepo, idp),
 		PortfolioConnect:     portfolioConnectHandler,
+		PortfolioAccounts:    handlers.NewPortfolioAccountsHandler(profileRepo, portfolioAggregator, idp),
 		Notifications:        handlers.NewNotificationSettingsHandler(profileRepo, idp),
 		Portfolio:            handlers.NewPortfolioHandler(profileRepo, brokerageFactory, idp),
 		Order:                http.HandlerFunc(orderHandler.GetOrder),

@@ -16,4 +16,6 @@ var ErrPortfolioNotConnected = errors.New("no portfolio aggregator connected")
 type PortfolioAggregator interface {
 	// GetHoldings returns all external holdings for the user identified by provider credentials.
 	GetHoldings(ctx context.Context, providerUserID, providerUserSecret string) ([]models.Position, error)
+	// ListAccounts returns all brokerage accounts linked via the aggregator for the given user.
+	ListAccounts(ctx context.Context, providerUserID, providerUserSecret string) ([]models.LinkedAccount, error)
 }

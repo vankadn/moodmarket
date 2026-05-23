@@ -128,29 +128,67 @@ func (c *SnapTradeClient) DeleteUser(ctx context.Context, providerUserID, provid
 	return nil
 }
 
+// listAccounts fetches all SnapTrade account metadata for the given user.
+// Shared by GetHoldings and ListAccounts.
+func (c *SnapTradeClient) listAccounts(ctx context.Context, providerUserID, providerUserSecret string) ([]snapTradeAccountMeta, error) {
+	path := "/api/v1/accounts"
+	extra := map[string]string{
+		"userId":     providerUserID,
+		"userSecret": providerUserSecret,
+	}
+	reqURL, queryStr := c.buildURL(path, extra)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("snaptrade: list accounts: build request: %w", err)
+	}
+	if err := c.signRequest(req, path, queryStr, nil); err != nil {
+		return nil, fmt.Errorf("snaptrade: list accounts: sign: %w", err)
+	}
+
+	var accounts []snapTradeAccountMeta
+	if err := c.do(req, &accounts); err != nil {
+		return nil, fmt.Errorf("snaptrade: list accounts: %w", err)
+	}
+	for _, a := range accounts {
+		log.Printf("[snaptrade] account id=%s name=%q institution_name=%q", a.ID, a.Name, a.InstitutionName)
+	}
+	return accounts, nil
+}
+
+// ListAccounts returns all brokerage accounts linked via SnapTrade for the given user.
+func (c *SnapTradeClient) ListAccounts(ctx context.Context, providerUserID, providerUserSecret string) ([]models.LinkedAccount, error) {
+	accounts, err := c.listAccounts(ctx, providerUserID, providerUserSecret)
+	if err != nil {
+		return nil, fmt.Errorf("snaptrade: ListAccounts: %w", err)
+	}
+	out := make([]models.LinkedAccount, len(accounts))
+	for i, a := range accounts {
+		displayName := a.Name
+		if displayName == "" || displayName == "Default" {
+			if a.InstitutionName != "" {
+				displayName = a.InstitutionName
+			} else if displayName == "" {
+				displayName = a.ID
+			}
+		}
+		out[i] = models.LinkedAccount{ID: a.ID, Name: displayName}
+	}
+	return out, nil
+}
+
 // GetHoldings fetches all positions across all linked brokerages for the given user.
 // Uses two-step approach: list accounts, then fetch positions per account.
 // The aggregate /holdings endpoint is not available on all plans.
 func (c *SnapTradeClient) GetHoldings(ctx context.Context, providerUserID, providerUserSecret string) ([]models.Position, error) {
 	// Step 1: list all accounts for this user.
-	accountsPath := "/api/v1/accounts"
 	extra := map[string]string{
 		"userId":     providerUserID,
 		"userSecret": providerUserSecret,
 	}
-	accountsURL, accountsQuery := c.buildURL(accountsPath, extra)
-
-	accountsReq, err := http.NewRequestWithContext(ctx, http.MethodGet, accountsURL, nil)
+	accounts, err := c.listAccounts(ctx, providerUserID, providerUserSecret)
 	if err != nil {
-		return nil, fmt.Errorf("snaptrade: get holdings: list accounts: build request: %w", err)
-	}
-	if err := c.signRequest(accountsReq, accountsPath, accountsQuery, nil); err != nil {
-		return nil, fmt.Errorf("snaptrade: get holdings: list accounts: sign: %w", err)
-	}
-
-	var accounts []snapTradeAccountMeta
-	if err := c.do(accountsReq, &accounts); err != nil {
-		return nil, fmt.Errorf("snaptrade: get holdings: list accounts: %w", err)
+		return nil, fmt.Errorf("snaptrade: get holdings: %w", err)
 	}
 	log.Printf("[snaptrade] get holdings: %d account(s) found", len(accounts))
 
@@ -294,8 +332,9 @@ func (c *SnapTradeClient) do(req *http.Request, dst any) error {
 // SnapTrade response types — internal to this package.
 
 type snapTradeAccountMeta struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	InstitutionName string `json:"institution_name"`
 }
 
 type snapTradePosition struct {

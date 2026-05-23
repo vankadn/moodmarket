@@ -31,9 +31,10 @@ const (
 	BrokerageConnectionsURI   = "/brokerage/connections"
 	BrokerageConnectionByIDURI = "/brokerage/connections/" // subtree — connection_id is path suffix
 
-	PortfolioConnectURI = "/portfolio/connect"
-	PortfolioURI        = "/portfolio"
-	PortfolioHistoryURI = "/portfolio/history"
+	PortfolioConnectURI   = "/portfolio/connect"
+	PortfolioAccountsURI  = "/portfolio/accounts"
+	PortfolioURI          = "/portfolio"
+	PortfolioHistoryURI   = "/portfolio/history"
 
 	OrdersURI = "/orders/" // subtree — order_id is path suffix
 
