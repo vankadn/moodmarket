@@ -290,13 +290,13 @@ export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, 
               </div>
               <button
                 onClick={handleGetRecommendation}
-                disabled={loading || !connected}
+                disabled={loading}
                 style={{
                   flex: 1, padding: "8px 16px",
-                  background: (loading || !connected) ? "#ccc" : "#1a1a1a",
+                  background: loading ? "#ccc" : "#1a1a1a",
                   color: "white", border: "none", borderRadius: "8px",
                   fontSize: "14px", fontWeight: 500,
-                  cursor: (loading || !connected) ? "not-allowed" : "pointer",
+                  cursor: loading ? "not-allowed" : "pointer",
                 }}
               >
                 {loading ? "Generating…" : "Get recommendation"}

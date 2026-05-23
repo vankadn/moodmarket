@@ -94,15 +94,15 @@ export function ConfirmScreen({ rec, brokerages, perAllocBrokerage, onPerAllocCh
       <div style={{ display: "flex", gap: "10px" }}>
         <button
           onClick={onConfirm}
-          disabled={loading}
+          disabled={loading || brokerages.length === 0}
           style={{
             flex: 1, padding: "12px",
-            background: loading ? "#ccc" : "#1a1a1a",
+            background: (loading || brokerages.length === 0) ? "#ccc" : "#1a1a1a",
             color: "white", border: "none", borderRadius: "8px",
-            fontSize: "14px", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer",
+            fontSize: "14px", fontWeight: 500, cursor: (loading || brokerages.length === 0) ? "not-allowed" : "pointer",
           }}
         >
-          {loading ? "Placing orders…" : "Confirm & Invest"}
+          {loading ? "Placing orders…" : brokerages.length === 0 ? "Connect a brokerage to invest" : "Confirm & Invest"}
         </button>
         <button
           onClick={onCancel}
