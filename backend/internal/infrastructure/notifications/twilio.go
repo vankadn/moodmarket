@@ -103,3 +103,15 @@ func (t *twilioProvider) SendSkipSummary(ctx context.Context, to ports.Notificat
 	body := fmt.Sprintf("InvestIQ: auto-invest skipped for %s. Reason: %s", name, reason)
 	return t.send(ctx, to.Phone, body)
 }
+
+func (t *twilioProvider) SendRebalancingAlert(ctx context.Context, to ports.NotificationTarget, drifts []models.TickerDrift) error {
+	if to.Phone == "" {
+		return nil
+	}
+	tickers := make([]string, 0, len(drifts))
+	for _, d := range drifts {
+		tickers = append(tickers, fmt.Sprintf("%s (%+.0fpp)", d.Ticker, d.DriftPct))
+	}
+	body := fmt.Sprintf("InvestIQ: portfolio drift detected — %s. Open the app to review.", strings.Join(tickers, ", "))
+	return t.send(ctx, to.Phone, body)
+}

@@ -121,3 +121,26 @@ func (r *resendEmailProvider) SendSkipSummary(ctx context.Context, to ports.Noti
 	html := fmt.Sprintf(`<p>Auto-invest skipped this run for <strong>%s</strong>.</p><p>Reason: %s</p><p>Open InvestIQ to review your settings.</p>`, name, reason)
 	return r.send(ctx, to.Email, "InvestIQ: auto-invest skipped", html)
 }
+
+func (r *resendEmailProvider) SendRebalancingAlert(ctx context.Context, to ports.NotificationTarget, drifts []models.TickerDrift) error {
+	if to.Email == "" {
+		log.Printf("[notify] user=%s rebalancing alert skipped — no email configured", to.UserID)
+		return nil
+	}
+	var rows []string
+	for _, d := range drifts {
+		direction := "overweight"
+		if d.DriftPct < 0 {
+			direction = "underweight"
+		}
+		rows = append(rows, fmt.Sprintf(
+			`<li><strong>%s</strong> — target %.0f%%, actual %.0f%% (%+.1fpp %s)</li>`,
+			d.Ticker, d.TargetPct, d.ActualPct, d.DriftPct, direction,
+		))
+	}
+	html := fmt.Sprintf(
+		`<p>Your portfolio has drifted from Claude's last recommendation. The following positions are outside your target allocation:</p><ul>%s</ul><p>Open InvestIQ to review and rebalance.</p>`,
+		strings.Join(rows, ""),
+	)
+	return r.send(ctx, to.Email, "InvestIQ: portfolio rebalancing alert", html)
+}
