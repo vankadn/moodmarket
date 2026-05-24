@@ -27,13 +27,15 @@ type Allocation struct {
 	Amount     float64 `json:"amount"`
 	Percentage float64 `json:"percentage"`
 	Rationale  string  `json:"rationale"`
+	Reasoning  string  `json:"reasoning,omitempty"` // one-sentence per-ticker reasoning from Claude; omitempty — old allocations unaffected
 }
 
 type Recommendation struct {
-	TotalBudget float64      `json:"total_budget"`
-	Allocations []Allocation `json:"allocations"`
-	Summary     string       `json:"summary"`
-	RiskLevel   string       `json:"risk_level"`
-	SkipReason  string       `json:"skip_reason,omitempty"` // set by Claude when total_budget == 0 in agentic mode
-	FromCache   bool         `json:"from_cache,omitempty"`
+	TotalBudget      float64      `json:"total_budget"`
+	Allocations      []Allocation `json:"allocations"`
+	Summary          string       `json:"summary"`
+	RiskLevel        string       `json:"risk_level"`
+	SkipReason       string       `json:"skip_reason,omitempty"`        // set by Claude when total_budget == 0 in agentic mode
+	OverallReasoning string       `json:"overall_reasoning,omitempty"` // 1-2 sentence investment thesis from Claude
+	FromCache        bool         `json:"from_cache,omitempty"`
 }

@@ -21,7 +21,7 @@ type NotificationTarget struct {
 // Implementations must be non-fatal: channel failures are logged and swallowed,
 // never propagated to the investment pipeline.
 type NotificationProvider interface {
-	SendInvestmentSummary(ctx context.Context, to NotificationTarget, receipts []models.TradeReceipt, totalInvested float64) error
+	SendInvestmentSummary(ctx context.Context, to NotificationTarget, receipts []models.TradeReceipt, totalInvested float64, overallReasoning string) error
 	SendInvestmentFailure(ctx context.Context, to NotificationTarget, reason string) error
 	SendMarketClosed(ctx context.Context, to NotificationTarget, date string) error
 	SendSkipSummary(ctx context.Context, to NotificationTarget, configName, reason string) error

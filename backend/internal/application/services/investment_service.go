@@ -42,12 +42,13 @@ func NewInvestmentService(
 // perAllocBrokerage: map of ticker → connectionID for manual per-allocation overrides;
 // nil or missing ticker falls back to asset-category auto-routing.
 // configID: the AutoInvestConfig.ID that triggered this execution; "manual" for user-initiated invest.
+// overallReasoning: Claude's 1-2 sentence investment thesis; "" for manual invest.
 func (s *InvestmentService) Execute(
 	ctx context.Context,
 	userID string,
 	allocations []models.Allocation,
 	totalAmount float64,
-	riskLevel, summary string,
+	riskLevel, summary, overallReasoning string,
 	perAllocBrokerage map[string]string,
 	configID string,
 ) ([]models.TradeReceipt, string, error) {
@@ -133,17 +134,29 @@ func (s *InvestmentService) Execute(
 		}
 	}
 
+	tickerReasoning := make(map[string]string, len(allocations))
+	for _, a := range allocations {
+		if a.Reasoning != "" {
+			tickerReasoning[a.Ticker] = a.Reasoning
+		}
+	}
+	if len(tickerReasoning) == 0 {
+		tickerReasoning = nil
+	}
+
 	decision := &models.InvestmentDecision{
-		UserID:         userID,
-		ConfigID:       configID,
-		Timestamp:      time.Now(),
-		MarketSnapshot: snapshot,
-		Allocations:    allocations,
-		Receipts:       receipts,
-		TotalAmount:    totalAmount,
-		RiskLevel:      riskLevel,
-		Summary:        summary,
-		DecisionType:   "invest",
+		UserID:           userID,
+		ConfigID:         configID,
+		Timestamp:        time.Now(),
+		MarketSnapshot:   snapshot,
+		Allocations:      allocations,
+		Receipts:         receipts,
+		TotalAmount:      totalAmount,
+		RiskLevel:        riskLevel,
+		Summary:          summary,
+		DecisionType:     "invest",
+		OverallReasoning: overallReasoning,
+		TickerReasoning:  tickerReasoning,
 	}
 	if err := s.decisionRepo.Save(ctx, decision); err != nil {
 		log.Printf("investment service: save decision: %v", err)

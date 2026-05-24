@@ -81,7 +81,7 @@ func runForUser(
 		}
 	}
 
-	receipts, _, err := investSvc.Execute(ctx, config.UserID, rec.Allocations, rec.TotalBudget, rec.RiskLevel, rec.Summary, nil, config.ID)
+	receipts, _, err := investSvc.Execute(ctx, config.UserID, rec.Allocations, rec.TotalBudget, rec.RiskLevel, rec.Summary, rec.OverallReasoning, nil, config.ID)
 	if err != nil {
 		if errors.Is(err, ports.ErrBrokerageNotConnected) {
 			log.Printf("[scheduler] user=%s skipping — no brokerage connected", config.UserID)
@@ -111,7 +111,7 @@ func runForUser(
 		totalFilled = config.Amount
 	}
 
-	if err := notifications.SendInvestmentSummary(ctx, target, receipts, totalFilled); err != nil {
+	if err := notifications.SendInvestmentSummary(ctx, target, receipts, totalFilled, rec.OverallReasoning); err != nil {
 		log.Printf("[scheduler] user=%s notification failed: %v", config.UserID, err)
 	}
 

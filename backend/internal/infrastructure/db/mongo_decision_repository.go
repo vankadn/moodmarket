@@ -17,19 +17,21 @@ import (
 // --- MongoDB document types (bson tags isolated here, never in domain models) ---
 
 type decisionDocument struct {
-	ID             primitive.ObjectID  `bson:"_id"`
-	UserID         string              `bson:"user_id"`
-	ConfigID       string              `bson:"config_id,omitempty"`
-	Timestamp      time.Time           `bson:"timestamp"`
-	MarketSnapshot *marketSnapshotDoc  `bson:"market_snapshot,omitempty"`
-	Allocations    []allocationDoc     `bson:"allocations"`
-	Receipts       []tradeReceiptDoc   `bson:"receipts,omitempty"`
-	TotalAmount    float64             `bson:"total_amount"`
-	RiskLevel      string              `bson:"risk_level"`
-	Summary        string              `bson:"summary"`
-	DecisionType   string              `bson:"decision_type,omitempty"` // "invest" | "skip"; omitted for legacy records
-	SkipReason     string              `bson:"skip_reason,omitempty"`
-	Verdict        *decisionVerdictDoc `bson:"verdict,omitempty"`
+	ID               primitive.ObjectID  `bson:"_id"`
+	UserID           string              `bson:"user_id"`
+	ConfigID         string              `bson:"config_id,omitempty"`
+	Timestamp        time.Time           `bson:"timestamp"`
+	MarketSnapshot   *marketSnapshotDoc  `bson:"market_snapshot,omitempty"`
+	Allocations      []allocationDoc     `bson:"allocations"`
+	Receipts         []tradeReceiptDoc   `bson:"receipts,omitempty"`
+	TotalAmount      float64             `bson:"total_amount"`
+	RiskLevel        string              `bson:"risk_level"`
+	Summary          string              `bson:"summary"`
+	DecisionType     string              `bson:"decision_type,omitempty"` // "invest" | "skip"; omitted for legacy records
+	SkipReason       string              `bson:"skip_reason,omitempty"`
+	OverallReasoning string              `bson:"overall_reasoning,omitempty"`
+	TickerReasoning  map[string]string   `bson:"ticker_reasoning,omitempty"`
+	Verdict          *decisionVerdictDoc `bson:"verdict,omitempty"`
 }
 
 type decisionVerdictDoc struct {
@@ -83,6 +85,7 @@ type allocationDoc struct {
 	Amount     float64 `bson:"amount"`
 	Percentage float64 `bson:"percentage"`
 	Rationale  string  `bson:"rationale"`
+	Reasoning  string  `bson:"reasoning,omitempty"`
 }
 
 // --- Repository ---
@@ -583,17 +586,19 @@ func (r *MongoDecisionRepository) SumInvestedToday(ctx context.Context, userID, 
 
 func fromDecision(d *models.InvestmentDecision) *decisionDocument {
 	doc := &decisionDocument{
-		ID:           primitive.NewObjectID(),
-		UserID:       d.UserID,
-		ConfigID:     d.ConfigID,
-		Timestamp:    d.Timestamp,
-		Allocations:  fromAllocations(d.Allocations),
-		Receipts:     fromReceipts(d.Receipts),
-		TotalAmount:  d.TotalAmount,
-		RiskLevel:    d.RiskLevel,
-		Summary:      d.Summary,
-		DecisionType: d.DecisionType,
-		SkipReason:   d.SkipReason,
+		ID:               primitive.NewObjectID(),
+		UserID:           d.UserID,
+		ConfigID:         d.ConfigID,
+		Timestamp:        d.Timestamp,
+		Allocations:      fromAllocations(d.Allocations),
+		Receipts:         fromReceipts(d.Receipts),
+		TotalAmount:      d.TotalAmount,
+		RiskLevel:        d.RiskLevel,
+		Summary:          d.Summary,
+		DecisionType:     d.DecisionType,
+		SkipReason:       d.SkipReason,
+		OverallReasoning: d.OverallReasoning,
+		TickerReasoning:  d.TickerReasoning,
 	}
 	if d.MarketSnapshot != nil {
 		doc.MarketSnapshot = fromMarketSnapshot(d.MarketSnapshot)
@@ -606,17 +611,19 @@ func fromDecision(d *models.InvestmentDecision) *decisionDocument {
 
 func toDecision(doc *decisionDocument) models.InvestmentDecision {
 	d := models.InvestmentDecision{
-		ID:           doc.ID.Hex(),
-		UserID:       doc.UserID,
-		ConfigID:     doc.ConfigID,
-		Timestamp:    doc.Timestamp,
-		Allocations:  toAllocations(doc.Allocations),
-		Receipts:     toReceipts(doc.Receipts),
-		TotalAmount:  doc.TotalAmount,
-		RiskLevel:    doc.RiskLevel,
-		Summary:      doc.Summary,
-		DecisionType: doc.DecisionType,
-		SkipReason:   doc.SkipReason,
+		ID:               doc.ID.Hex(),
+		UserID:           doc.UserID,
+		ConfigID:         doc.ConfigID,
+		Timestamp:        doc.Timestamp,
+		Allocations:      toAllocations(doc.Allocations),
+		Receipts:         toReceipts(doc.Receipts),
+		TotalAmount:      doc.TotalAmount,
+		RiskLevel:        doc.RiskLevel,
+		Summary:          doc.Summary,
+		DecisionType:     doc.DecisionType,
+		SkipReason:       doc.SkipReason,
+		OverallReasoning: doc.OverallReasoning,
+		TickerReasoning:  doc.TickerReasoning,
 	}
 	if doc.MarketSnapshot != nil {
 		d.MarketSnapshot = toMarketSnapshot(doc.MarketSnapshot)
@@ -715,6 +722,7 @@ func fromAllocations(allocations []models.Allocation) []allocationDoc {
 			Amount:     a.Amount,
 			Percentage: a.Percentage,
 			Rationale:  a.Rationale,
+			Reasoning:  a.Reasoning,
 		}
 	}
 	return docs
@@ -730,6 +738,7 @@ func toAllocations(docs []allocationDoc) []models.Allocation {
 			Amount:     d.Amount,
 			Percentage: d.Percentage,
 			Rationale:  d.Rationale,
+			Reasoning:  d.Reasoning,
 		}
 	}
 	return allocations

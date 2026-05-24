@@ -59,7 +59,7 @@ func (t *twilioProvider) send(ctx context.Context, to, body string) error {
 	return nil
 }
 
-func (t *twilioProvider) SendInvestmentSummary(ctx context.Context, to ports.NotificationTarget, receipts []models.TradeReceipt, totalInvested float64) error {
+func (t *twilioProvider) SendInvestmentSummary(ctx context.Context, to ports.NotificationTarget, receipts []models.TradeReceipt, totalInvested float64, _ string) error {
 	if to.Phone == "" {
 		log.Printf("[notify] user=%s investment SMS skipped — no phone configured", to.UserID)
 		return nil

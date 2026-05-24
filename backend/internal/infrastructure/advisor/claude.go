@@ -56,14 +56,16 @@ OUTPUT CONTRACT:
 Return ONLY a raw JSON object. No markdown, no code fences, no text before or after.
 All fields required. Allocations must sum exactly to total_budget.
 
-{"total_budget":100.00,"allocations":[{"ticker":"VTI","asset_class":"US Equity","name":"Vanguard Total Market ETF","type":"etf","amount":60.00,"percentage":60.0,"rationale":"broad US equity exposure"},{"ticker":"BND","asset_class":"Bonds","name":"Vanguard Bond ETF","type":"etf","amount":40.00,"percentage":40.0,"rationale":"fixed income stability"}],"summary":"One sentence describing today's strategy.","risk_level":"medium"}
+{"total_budget":100.00,"allocations":[{"ticker":"VTI","asset_class":"US Equity","name":"Vanguard Total Market ETF","type":"etf","amount":60.00,"percentage":60.0,"rationale":"broad US equity exposure","reasoning":"US equities show resilience amid rate stability; VTI gives broadest market coverage."},{"ticker":"BND","asset_class":"Bonds","name":"Vanguard Bond ETF","type":"etf","amount":40.00,"percentage":40.0,"rationale":"fixed income stability","reasoning":"Bonds hedge equity risk given mixed macro signals today."}],"summary":"One sentence describing today's strategy.","risk_level":"medium","overall_reasoning":"Balanced split captures equity upside while bonds cushion against today's rate uncertainty."}
 
 RULES:
 - 3 to 5 allocations per recommendation
 - real tickers only (SPY, VTI, BND, QQQ, AAPL, MSFT, NVDA, AMZN, SGOV, SHV, VXUS, XLE, XLF, XLV, etc.)
 - asset_class: the asset class of the ticker (US Equity, International, Bonds, Real Estate, Commodities, or Other)
 - risk_level: exactly one of low / medium / high
-- rationale: under 12 words, specific to today's context — not generic`
+- rationale: under 12 words, specific to today's context — not generic
+- reasoning: one sentence per ticker explaining the specific pick in today's market context
+- overall_reasoning: 1-2 sentences explaining why this allocation makes sense right now`
 
 // --- API request types ---
 

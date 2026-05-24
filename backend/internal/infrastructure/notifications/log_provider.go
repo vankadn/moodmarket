@@ -11,8 +11,11 @@ import (
 
 type logNotificationProvider struct{}
 
-func (l *logNotificationProvider) SendInvestmentSummary(_ context.Context, to ports.NotificationTarget, receipts []models.TradeReceipt, total float64) error {
+func (l *logNotificationProvider) SendInvestmentSummary(_ context.Context, to ports.NotificationTarget, receipts []models.TradeReceipt, total float64, overallReasoning string) error {
 	log.Printf("[notify] user=%s investment complete: %d positions, $%.2f", to.UserID, len(receipts), total)
+	if overallReasoning != "" {
+		log.Printf("[notify] user=%s reasoning: %s", to.UserID, overallReasoning)
+	}
 	return nil
 }
 

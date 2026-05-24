@@ -27,9 +27,11 @@ type InvestmentDecision struct {
 	TotalAmount    float64
 	RiskLevel      string
 	Summary        string
-	DecisionType   string // "invest" | "skip"; empty for legacy records
-	SkipReason     string // Claude's one-sentence reason when DecisionType=="skip"; empty otherwise
-	Verdict        *DecisionVerdict // nil until verdict_job stamps it (Phase 22)
+	DecisionType     string            // "invest" | "skip"; empty for legacy records
+	SkipReason       string            // Claude's one-sentence reason when DecisionType=="skip"; empty otherwise
+	OverallReasoning string            // Claude's overall investment reasoning for this decision
+	TickerReasoning  map[string]string // per-ticker reasoning keyed by ticker symbol e.g. {"SPY": "broad market dip, good entry"}
+	Verdict          *DecisionVerdict  // nil until verdict_job stamps it (Phase 22)
 }
 
 // EvalSummary is the aggregate performance summary for a user's verdicted decisions.

@@ -64,7 +64,7 @@ func (r *resendEmailProvider) send(ctx context.Context, to, subject, html string
 	return nil
 }
 
-func (r *resendEmailProvider) SendInvestmentSummary(ctx context.Context, to ports.NotificationTarget, receipts []models.TradeReceipt, totalInvested float64) error {
+func (r *resendEmailProvider) SendInvestmentSummary(ctx context.Context, to ports.NotificationTarget, receipts []models.TradeReceipt, totalInvested float64, overallReasoning string) error {
 	if to.Email == "" {
 		log.Printf("[notify] user=%s investment summary skipped — no email configured", to.UserID)
 		return nil
@@ -78,9 +78,13 @@ func (r *resendEmailProvider) SendInvestmentSummary(ctx context.Context, to port
 	if to.Source == "auto" {
 		intro = "Your auto-invest ran today."
 	}
+	reasoningSection := ""
+	if overallReasoning != "" {
+		reasoningSection = fmt.Sprintf(`<p><strong>Why Claude invested:</strong> %s</p>`, overallReasoning)
+	}
 	html := fmt.Sprintf(
-		`<p>%s</p><p><strong>$%.2f</strong> invested across %d position(s):</p><ul>%s</ul><p>Open InvestIQ to review your portfolio.</p>`,
-		intro, totalInvested, len(receipts), strings.Join(lines, ""),
+		`<p>%s</p><p><strong>$%.2f</strong> invested across %d position(s):</p><ul>%s</ul>%s<p>Open InvestIQ to review your portfolio.</p>`,
+		intro, totalInvested, len(receipts), strings.Join(lines, ""), reasoningSection,
 	)
 	subject := fmt.Sprintf("Your InvestIQ summary — %s", time.Now().Format("January 2, 2006"))
 	return r.send(ctx, to.Email, subject, html)
