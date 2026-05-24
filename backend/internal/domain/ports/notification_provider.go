@@ -25,4 +25,5 @@ type NotificationProvider interface {
 	SendInvestmentFailure(ctx context.Context, to NotificationTarget, reason string) error
 	SendMarketClosed(ctx context.Context, to NotificationTarget, date string) error
 	SendSkipSummary(ctx context.Context, to NotificationTarget, configName, reason string) error
+	SendRebalancingAlert(ctx context.Context, to NotificationTarget, drifts []models.TickerDrift) error
 }

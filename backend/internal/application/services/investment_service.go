@@ -128,6 +128,14 @@ func (s *InvestmentService) Execute(
 				log.Printf("investment service: order %s on %s failed (skipped): %v", alloc.Ticker, id, err)
 				continue
 			}
+			// If the brokerage fills async and returns FilledPrice=0, capture the
+			// live market price at order time as the entry price proxy — far more
+			// accurate than falling back to Polygon prev-day close in the verdict stamper.
+			if receipt.FilledPrice <= 0 {
+				if price, priceErr := brokerage.GetCurrentPrice(ctx, alloc.Ticker); priceErr == nil && price > 0 {
+					receipt.FilledPrice = price
+				}
+			}
 			receipt.BrokerageID = g.conn.ID
 			receipt.BrokerageName = g.conn.Name
 			receipts = append(receipts, *receipt)

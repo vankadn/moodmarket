@@ -557,6 +557,23 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 		msg += fmt.Sprintf("- Risk tolerance: %s\n", profile.RiskTolerance)
 		msg += fmt.Sprintf("- Investment goal: %s\n", profile.InvestmentGoal)
 		msg += fmt.Sprintf("- Has emergency fund: %v\n", profile.HasEmergencyFund)
+
+		if prefs := profile.AllocationPreferences; prefs != nil && (len(prefs.AssetClassLimits) > 0 || prefs.MaxSingleTickerPct > 0) {
+			msg += "\nPORTFOLIO CONSTRAINTS (hard rules — never violate these):\n"
+			for _, l := range prefs.AssetClassLimits {
+				switch {
+				case l.MinPct > 0 && l.MaxPct > 0:
+					msg += fmt.Sprintf("- %s: min %.0f%%, max %.0f%%\n", l.AssetClass, l.MinPct, l.MaxPct)
+				case l.MinPct > 0:
+					msg += fmt.Sprintf("- %s: minimum %.0f%%\n", l.AssetClass, l.MinPct)
+				case l.MaxPct > 0:
+					msg += fmt.Sprintf("- %s: maximum %.0f%%\n", l.AssetClass, l.MaxPct)
+				}
+			}
+			if prefs.MaxSingleTickerPct > 0 {
+				msg += fmt.Sprintf("- Single ticker cap: maximum %.0f%% in any one ticker\n", prefs.MaxSingleTickerPct)
+			}
+		}
 	} else {
 		msg += "No profile on file. Use a balanced moderate strategy.\n"
 	}

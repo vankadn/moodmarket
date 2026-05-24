@@ -142,10 +142,13 @@ func main() {
 	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory, documentRepo, portfolioAggregator)
 	investSvc := services.NewInvestmentService(brokerageFactory, profileRepo, decisionRepo, marketProvider)
 	documentSvc := services.NewDocumentService(documentExtractor, documentRepo)
+	rebalancingSvc := services.NewRebalancingService(decisionRepo, profileRepo, brokerageFactory)
 	idp := middleware.ContextIdentityProvider{}
 
 	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar, decisionRepo)
+	rebalancingScheduler := scheduler.NewRebalancingScheduler(autoInvestRepo, profileRepo, rebalancingSvc, notificationProvider, marketCalendar)
 	go autoInvestScheduler.Start(ctx)
+	go rebalancingScheduler.Start(ctx)
 
 	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)
 	portfolioConnectHandler := handlers.NewPortfolioConnectHandler(portfolioConnector, profileRepo, idp)

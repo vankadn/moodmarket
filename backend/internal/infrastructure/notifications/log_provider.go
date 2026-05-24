@@ -33,3 +33,11 @@ func (l *logNotificationProvider) SendSkipSummary(_ context.Context, to ports.No
 	log.Printf("[notify] user=%s auto-invest skipped: config=%q reason=%s", to.UserID, configName, reason)
 	return nil
 }
+
+func (l *logNotificationProvider) SendRebalancingAlert(_ context.Context, to ports.NotificationTarget, drifts []models.TickerDrift) error {
+	for _, d := range drifts {
+		log.Printf("[notify] user=%s rebalancing alert: %s target=%.1f%% actual=%.1f%% drift=%+.1f%%",
+			to.UserID, d.Ticker, d.TargetPct, d.ActualPct, d.DriftPct)
+	}
+	return nil
+}

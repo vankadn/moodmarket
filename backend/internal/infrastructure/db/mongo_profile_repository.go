@@ -45,28 +45,40 @@ type portfolioConnectionDoc struct {
 	ConnectedAt        time.Time `bson:"connected_at"`
 }
 
+type assetClassLimitDoc struct {
+	AssetClass string  `bson:"asset_class"`
+	MinPct     float64 `bson:"min_pct,omitempty"`
+	MaxPct     float64 `bson:"max_pct,omitempty"`
+}
+
+type allocationPreferencesDoc struct {
+	AssetClassLimits   []assetClassLimitDoc `bson:"asset_class_limits,omitempty"`
+	MaxSingleTickerPct float64              `bson:"max_single_ticker_pct,omitempty"`
+}
+
 // profileDocument is the MongoDB-specific representation.
 // bson tags are intentionally isolated here and never appear in domain models.
 // PlaidConnections, BrokerageConn, BrokerageConns, and PortfolioConn use omitempty so fromProfile ($set) never touches them.
 type profileDocument struct {
-	UserID                    string                   `bson:"user_id"`
-	FullName                  string                   `bson:"full_name"`
-	Salary                    float64                  `bson:"salary"`
-	MonthlySavings            float64                  `bson:"monthly_savings"`
-	RetirementContributionPct float64                  `bson:"retirement_contribution_percent"`
-	ExistingPortfolioValue    float64                  `bson:"existing_portfolio_value"`
-	TimeHorizon               string                   `bson:"time_horizon"`
-	ImmigrationStatus         string                   `bson:"immigration_status"`
-	RiskTolerance             string                   `bson:"risk_tolerance"`
-	InvestmentGoal            string                   `bson:"investment_goal"`
-	HasEmergencyFund          bool                     `bson:"has_emergency_fund"`
-	IncludeCashContext        bool                     `bson:"include_cash_context"`
-	NotificationEmail         string                   `bson:"notification_email,omitempty"`
-	Phone                     string                   `bson:"phone,omitempty"`
-	PlaidConnections          []plaidConnectionDoc     `bson:"plaid_connections,omitempty"`
-	BrokerageConn             *brokerageConnectionDoc  `bson:"brokerage_connection,omitempty"`  // legacy single-connection field
-	BrokerageConns            []brokerageConnectionDoc `bson:"brokerage_connections,omitempty"` // multi-connection array
-	PortfolioConn             *portfolioConnectionDoc  `bson:"portfolio_connection,omitempty"`
+	UserID                    string                    `bson:"user_id"`
+	FullName                  string                    `bson:"full_name"`
+	Salary                    float64                   `bson:"salary"`
+	MonthlySavings            float64                   `bson:"monthly_savings"`
+	RetirementContributionPct float64                   `bson:"retirement_contribution_percent"`
+	ExistingPortfolioValue    float64                   `bson:"existing_portfolio_value"`
+	TimeHorizon               string                    `bson:"time_horizon"`
+	ImmigrationStatus         string                    `bson:"immigration_status"`
+	RiskTolerance             string                    `bson:"risk_tolerance"`
+	InvestmentGoal            string                    `bson:"investment_goal"`
+	HasEmergencyFund          bool                      `bson:"has_emergency_fund"`
+	IncludeCashContext        bool                      `bson:"include_cash_context"`
+	NotificationEmail         string                    `bson:"notification_email,omitempty"`
+	Phone                     string                    `bson:"phone,omitempty"`
+	AllocationPreferences     *allocationPreferencesDoc `bson:"allocation_preferences,omitempty"`
+	PlaidConnections          []plaidConnectionDoc      `bson:"plaid_connections,omitempty"`
+	BrokerageConn             *brokerageConnectionDoc   `bson:"brokerage_connection,omitempty"`
+	BrokerageConns            []brokerageConnectionDoc  `bson:"brokerage_connections,omitempty"`
+	PortfolioConn             *portfolioConnectionDoc   `bson:"portfolio_connection,omitempty"`
 }
 
 type MongoProfileRepository struct {
@@ -455,6 +467,20 @@ func toProfile(doc *profileDocument) *models.UserProfile {
 		Phone:                     doc.Phone,
 	}
 
+	if doc.AllocationPreferences != nil {
+		prefs := &models.AllocationPreferences{
+			MaxSingleTickerPct: doc.AllocationPreferences.MaxSingleTickerPct,
+		}
+		for _, l := range doc.AllocationPreferences.AssetClassLimits {
+			prefs.AssetClassLimits = append(prefs.AssetClassLimits, models.AssetClassLimit{
+				AssetClass: l.AssetClass,
+				MinPct:     l.MinPct,
+				MaxPct:     l.MaxPct,
+			})
+		}
+		profile.AllocationPreferences = prefs
+	}
+
 	// Populate ConnectedAccounts with institution + item_id only; access token is never exposed.
 	if len(doc.PlaidConnections) > 0 {
 		profile.ConnectedAccounts = make([]models.PlaidConnectionSummary, len(doc.PlaidConnections))
@@ -506,7 +532,7 @@ func toProfile(doc *profileDocument) *models.UserProfile {
 
 func fromProfile(p *models.UserProfile) *profileDocument {
 	// PlaidConnections and BrokerageConn are intentionally omitted — $set must never overwrite them.
-	return &profileDocument{
+	doc := &profileDocument{
 		UserID:                    p.UserID,
 		FullName:                  p.FullName,
 		Salary:                    p.Salary,
@@ -522,5 +548,19 @@ func fromProfile(p *models.UserProfile) *profileDocument {
 		NotificationEmail:         p.NotificationEmail,
 		Phone:                     p.Phone,
 	}
+	if p.AllocationPreferences != nil {
+		prefsDoc := &allocationPreferencesDoc{
+			MaxSingleTickerPct: p.AllocationPreferences.MaxSingleTickerPct,
+		}
+		for _, l := range p.AllocationPreferences.AssetClassLimits {
+			prefsDoc.AssetClassLimits = append(prefsDoc.AssetClassLimits, assetClassLimitDoc{
+				AssetClass: l.AssetClass,
+				MinPct:     l.MinPct,
+				MaxPct:     l.MaxPct,
+			})
+		}
+		doc.AllocationPreferences = prefsDoc
+	}
+	return doc
 }
 
