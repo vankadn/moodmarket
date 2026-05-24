@@ -41,8 +41,12 @@ func NewRebalancingService(
 	}
 }
 
-// CheckDrift returns tickers whose actual portfolio weight has drifted past the threshold
-// compared to the target weights in the user's most recent InvestmentDecision.
+// CheckDrift returns positions/asset-classes whose actual portfolio weight has drifted
+// past the threshold. Two checks are combined:
+//  1. Ticker-level drift vs Claude's last recommendation targets.
+//  2. Asset-class drift vs the user's AllocationPreferences (when set) — these check
+//     hard limits the user defined, e.g. "Crypto max 20%".
+//
 // Returns nil, nil when there is no prior decision or no brokerage connection.
 func (s *RebalancingService) CheckDrift(ctx context.Context, userID string) ([]models.TickerDrift, error) {
 	decisions, err := s.decisionRepo.ListByUser(ctx, userID, 1)
@@ -72,20 +76,6 @@ func (s *RebalancingService) CheckDrift(ctx context.Context, userID string) ([]m
 		return nil, nil
 	}
 
-	// Build target weights. If Percentage is unset (legacy decisions), derive from Amount/Total.
-	var totalAllocated float64
-	for _, a := range last.Allocations {
-		totalAllocated += a.Amount
-	}
-	targetPct := make(map[string]float64, len(last.Allocations))
-	for _, a := range last.Allocations {
-		pct := a.Percentage
-		if pct == 0 && totalAllocated > 0 {
-			pct = (a.Amount / totalAllocated) * 100
-		}
-		targetPct[a.Ticker] = pct
-	}
-
 	// Compute actual weights from live market values.
 	var totalValue float64
 	for _, p := range positions {
@@ -94,15 +84,32 @@ func (s *RebalancingService) CheckDrift(ctx context.Context, userID string) ([]m
 	if totalValue <= 0 {
 		return nil, nil
 	}
-	actualPct := make(map[string]float64, len(positions))
+	actualTickerPct := make(map[string]float64, len(positions))
 	for _, p := range positions {
-		actualPct[p.Ticker] = (p.MarketValue / totalValue) * 100
+		actualTickerPct[p.Ticker] = (p.MarketValue / totalValue) * 100
 	}
 
-	// Return tickers whose drift exceeds the threshold.
+	// Build target weights from last decision. If Percentage unset, derive from Amount/Total.
+	var totalAllocated float64
+	for _, a := range last.Allocations {
+		totalAllocated += a.Amount
+	}
+	targetPct := make(map[string]float64, len(last.Allocations))
+	tickerAssetClass := make(map[string]string, len(last.Allocations))
+	for _, a := range last.Allocations {
+		pct := a.Percentage
+		if pct == 0 && totalAllocated > 0 {
+			pct = (a.Amount / totalAllocated) * 100
+		}
+		targetPct[a.Ticker] = pct
+		tickerAssetClass[a.Ticker] = a.AssetClass
+	}
+
 	var drifts []models.TickerDrift
+
+	// 1. Ticker-level drift vs Claude's last recommendation.
 	for ticker, target := range targetPct {
-		actual := actualPct[ticker]
+		actual := actualTickerPct[ticker]
 		drift := actual - target
 		if math.Abs(drift) >= s.threshold {
 			drifts = append(drifts, models.TickerDrift{
@@ -113,5 +120,37 @@ func (s *RebalancingService) CheckDrift(ctx context.Context, userID string) ([]m
 			})
 		}
 	}
+
+	// 2. Asset-class drift vs user's AllocationPreferences (when configured).
+	profile, err := s.profileRepo.GetByUserID(ctx, userID)
+	if err == nil && profile != nil && profile.AllocationPreferences != nil && len(profile.AllocationPreferences.AssetClassLimits) > 0 {
+		// Aggregate actual weights by asset class using the last decision's asset_class mapping.
+		actualByClass := make(map[string]float64)
+		for ticker, pct := range actualTickerPct {
+			if class, ok := tickerAssetClass[ticker]; ok && class != "" {
+				actualByClass[class] += pct
+			}
+		}
+
+		for _, limit := range profile.AllocationPreferences.AssetClassLimits {
+			actual := actualByClass[limit.AssetClass]
+			if limit.MaxPct > 0 && actual > limit.MaxPct {
+				drifts = append(drifts, models.TickerDrift{
+					Ticker:    limit.AssetClass + " (asset class)",
+					TargetPct: limit.MaxPct,
+					ActualPct: actual,
+					DriftPct:  actual - limit.MaxPct,
+				})
+			} else if limit.MinPct > 0 && actual < limit.MinPct {
+				drifts = append(drifts, models.TickerDrift{
+					Ticker:    limit.AssetClass + " (asset class)",
+					TargetPct: limit.MinPct,
+					ActualPct: actual,
+					DriftPct:  actual - limit.MinPct,
+				})
+			}
+		}
+	}
+
 	return drifts, nil
 }

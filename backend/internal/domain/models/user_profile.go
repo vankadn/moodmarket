@@ -71,6 +71,23 @@ type BrokerageStatus struct {
 	ConnectedAt     string          `json:"connected_at,omitempty"`
 }
 
+// AssetClassLimit constrains how much of the portfolio can be allocated to one asset class.
+// AssetClass matches the values Claude uses in Allocation.AssetClass (e.g. "Crypto", "US Equity", "Bonds").
+// Zero MinPct means no floor; zero MaxPct means no ceiling.
+type AssetClassLimit struct {
+	AssetClass string  `json:"asset_class"`
+	MinPct     float64 `json:"min_pct,omitempty"`
+	MaxPct     float64 `json:"max_pct,omitempty"`
+}
+
+// AllocationPreferences are the user's hard constraints on portfolio composition.
+// Passed to Claude as rules it must not violate, and used by the rebalancing checker
+// to detect when actual weights have drifted outside the user's defined bounds.
+type AllocationPreferences struct {
+	AssetClassLimits   []AssetClassLimit `json:"asset_class_limits,omitempty"`
+	MaxSingleTickerPct float64           `json:"max_single_ticker_pct,omitempty"` // e.g. 15 = no ticker >15% of portfolio
+}
+
 type UserProfile struct {
 	UserID                    string                   `json:"user_id"`
 	FullName                  string                   `json:"full_name"`
@@ -83,10 +100,11 @@ type UserProfile struct {
 	RiskTolerance             RiskTolerance            `json:"risk_tolerance"`
 	InvestmentGoal            InvestmentGoal           `json:"investment_goal"`
 	HasEmergencyFund          bool                     `json:"has_emergency_fund"`
-	IncludeCashContext        bool                     `json:"include_cash_context"`         // user opted in to cash-context signal in Claude prompt
-	NotificationEmail         string                   `json:"notification_email,omitempty"` // optional; empty = no email notifications
-	Phone                     string                   `json:"phone,omitempty"`              // optional; empty = no SMS notifications
-	Brokerages                []BrokerageStatus          `json:"brokerages,omitempty"`           // populated by repository, never written back on save
-	ConnectedAccounts         []PlaidConnectionSummary   `json:"connected_accounts,omitempty"`   // institution + item_id only; populated by repository, never written back on save
-	PortfolioAggregator       *PortfolioConnectionStatus `json:"portfolio_aggregator,omitempty"` // populated by repository, never written back on save
+	IncludeCashContext        bool                     `json:"include_cash_context"`
+	NotificationEmail         string                   `json:"notification_email,omitempty"`
+	Phone                     string                   `json:"phone,omitempty"`
+	AllocationPreferences     *AllocationPreferences   `json:"allocation_preferences,omitempty"`
+	Brokerages                []BrokerageStatus          `json:"brokerages,omitempty"`
+	ConnectedAccounts         []PlaidConnectionSummary   `json:"connected_accounts,omitempty"`
+	PortfolioAggregator       *PortfolioConnectionStatus `json:"portfolio_aggregator,omitempty"`
 }
