@@ -25,9 +25,20 @@ func NewBrokerageFactory() (ports.BrokerageProviderFactory, error) {
 		return &mockProviderFactory{mock: NewMockBrokerageProvider()}, nil
 	case "alpaca":
 		return &alpacaProviderFactory{}, nil
+	case "coinbase":
+		return &coinbaseProviderFactory{}, nil
 	default:
-		return nil, fmt.Errorf("brokerage factory: unknown provider %q (set BROKERAGE_PROVIDER=alpaca or use MOCK_ALL=true for local dev)", provider)
+		return nil, fmt.Errorf("brokerage factory: unknown provider %q (set BROKERAGE_PROVIDER=alpaca|coinbase or use MOCK_ALL=true for local dev)", provider)
 	}
+}
+
+type coinbaseProviderFactory struct{}
+
+func (f *coinbaseProviderFactory) ForUser(conn *models.BrokerageConnection) (ports.BrokerageProvider, error) {
+	if conn == nil || !conn.Connected {
+		return nil, ports.ErrBrokerageNotConnected
+	}
+	return NewCoinbaseProvider(conn.APIKey, conn.SecretKey), nil
 }
 
 // mockProviderFactory always returns the single mock instance — user credentials are ignored.
