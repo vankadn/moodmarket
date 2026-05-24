@@ -32,6 +32,17 @@ export interface LinkedAccount {
   name: string;
 }
 
+export interface AssetClassLimit {
+  asset_class: string;
+  min_pct?: number;
+  max_pct?: number;
+}
+
+export interface AllocationPreferences {
+  asset_class_limits?: AssetClassLimit[];
+  max_single_ticker_pct?: number;
+}
+
 export interface UserProfile {
   user_id?: string;
   full_name: string;
@@ -47,6 +58,7 @@ export interface UserProfile {
   include_cash_context: boolean;
   notification_email?: string;
   phone?: string;
+  allocation_preferences?: AllocationPreferences;
   brokerages?: BrokerageStatus[];
   connected_accounts?: PlaidConnectionSummary[];
   portfolio_aggregator?: PortfolioConnectionStatus;

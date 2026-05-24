@@ -15,6 +15,7 @@ import { Documents } from "./pages/Documents";
 import { NotificationSettingsPage } from "./pages/NotificationSettingsPage";
 import { AutoInvestConfig, getAutoInvestConfigs, getProfile, UserProfile } from "./services/api";
 import { Eval } from "./pages/Eval";
+import { AllocationPreferencesPage } from "./pages/AllocationPreferencesPage";
 
 export type AppState =
   | "loading"
@@ -24,6 +25,7 @@ export type AppState =
   | "auto-invest-list"
   | "auto-invest-settings"
   | "notifications"
+  | "allocation-preferences"
   | "portfolio"
   | "brokerage"
   | "portfolio-connect"
@@ -121,6 +123,15 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
     );
   }
 
+  if (state === "allocation-preferences") {
+    return (
+      <AllocationPreferencesPage
+        onBack={() => setState("home")}
+        onSaved={() => refreshAndReturn("home")}
+      />
+    );
+  }
+
   if (state === "portfolio") {
     return <Portfolio onBack={() => setState("home")} />;
   }
@@ -166,6 +177,7 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
       onPortfolioConnect={() => setState("portfolio-connect")}
       onDocuments={() => setState("documents")}
       onEval={() => setState("eval")}
+      onAllocationPreferences={() => setState("allocation-preferences")}
     />
   );
 }
