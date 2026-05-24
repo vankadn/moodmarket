@@ -192,7 +192,7 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	}
 	log.Printf("[recommend] Claude returned %d allocation(s) (risk=%s)", len(rec.Allocations), rec.RiskLevel)
 
-	// Persist decision
+	// Persist decision asynchronously so the response is not gated on the DB write.
 	decision := &models.InvestmentDecision{
 		UserID:         userID,
 		Timestamp:      time.Now(),
@@ -202,11 +202,13 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 		RiskLevel:      rec.RiskLevel,
 		Summary:        rec.Summary,
 	}
-	if err := s.decisionRepo.Save(ctx, decision); err != nil {
-		log.Printf("[recommend] save decision failed: %v", err)
-	} else {
-		log.Printf("[recommend] decision saved")
-	}
+	go func(saveCtx context.Context, d *models.InvestmentDecision) {
+		if err := s.decisionRepo.Save(saveCtx, d); err != nil {
+			log.Printf("[recommend] persist  save decision failed: %v", err)
+		} else {
+			log.Printf("[recommend] persist  decision saved to MongoDB")
+		}
+	}(context.WithoutCancel(ctx), decision)
 
 	return rec, nil
 }
