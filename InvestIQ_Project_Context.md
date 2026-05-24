@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-24 — Claude reasoning stored on decisions (OverallReasoning + TickerReasoning); "Why Claude invested" section in email; Allocation.Reasoning + Recommendation.OverallReasoning fields
+> Last updated: 2026-05-24 — Claude reasoning stored on decisions (OverallReasoning + TickerReasoning); "Why Claude invested" in email; Coinbase Advanced Trade, Twilio SMS, rebalancing alerts, allocation preferences (backend + frontend), verdict entry price accuracy, log PII cleanup
 
 ---
 
@@ -101,7 +101,7 @@ Three providers, three distinct roles — never conflated:
 |----------|------|------|--------|
 | **Alpaca** | Trade execution — stocks, options, crypto subset | Per-user API key + secret (AES-256-GCM encrypted in Mongo) | Active (paper → live is a config change) |
 | **SnapTrade** | Portfolio aggregation — read positions from Robinhood, Fidelity, and other linked brokers | OAuth; per-user `providerUserID` + `providerUserSecret` (AES-256-GCM encrypted in Mongo) | Active — read-only; execution only after SnapTrade confirms Robinhood write access |
-| **Coinbase Advanced Trade** | Crypto execution | API key auth (per-user, encrypted at rest) | Planned — see What's next |
+| **Coinbase Advanced Trade** | Crypto execution | HMAC-SHA256 (CB-ACCESS-KEY/SIGN/TIMESTAMP); per-user API key + secret (AES-256-GCM encrypted in Mongo) | Active — `BROKERAGE_PROVIDER=coinbase` |
 
 **SnapTrade trade execution via Robinhood:** Do not build this path until SnapTrade's Robinhood integration explicitly confirms write/order access. Read-only aggregation first — execution only after verified.
 
@@ -128,7 +128,7 @@ Every brokerage provider implements `BrokerageProvider` in `domain/ports/`. No b
 | Banking | Plaid (production, 10 free connections) / mock | Behind FinancialDataProvider interface; 5-min balance cache via PLAID_CACHE_TTL |
 | Secrets | Encrypted Mongo now, Vault pre go-live | Behind SecretsProvider interface |
 | Scheduler | Go time.Ticker | Drives autonomous investment cycle; interval from AUTO_INVEST_INTERVAL env var |
-| Notifications | Log provider (dev) / Resend (prod) | Behind NotificationProvider interface; `NOTIFICATION_PROVIDER=resend` + `RESEND_API_KEY` + `RESEND_FROM` activates email; SMS via Twilio backlogged |
+| Notifications | Log provider (dev) / Resend (prod) / Twilio SMS | Behind NotificationProvider interface; `NOTIFICATION_PROVIDER=resend` + `RESEND_API_KEY` + `RESEND_FROM` activates email; `NOTIFICATION_PROVIDER=twilio` + `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM` activates SMS |
 | News | Polygon.io `/v2/reference/news` / mock | Behind NewsProvider interface; daily cache; top 5 SPY-tagged headlines injected into Claude prompt |
 
 ---
@@ -277,10 +277,25 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Claude reasoning stored on every invest decision: `OverallReasoning` (1-2 sentence thesis) and `TickerReasoning` map (per-ticker explanation); both `omitempty` — old decisions unaffected; system prompt requires `overall_reasoning` + `allocations[].reasoning` in Claude's JSON response
 - Activity dashboard: total invested, verdict stats, win rate vs SPY, best/worst decision, per-strategy breakdown, full decision history with verdicts overlaid — `GET /users/activity`, `/eval/summary`, `/eval/decisions`
 
+### Brokerage providers
+- **Coinbase Advanced Trade** — full `BrokerageProvider` via official REST API; HMAC-SHA256 auth (CB-ACCESS-KEY/SIGN/TIMESTAMP); `market_market_ioc` orders with `quote_size` (USD notional); per-user AES-256-GCM encrypted credentials; `BROKERAGE_PROVIDER=coinbase`
+- Verdict entry price accuracy: if `FilledPrice=0` (async order), live price is fetched immediately via `GetCurrentPrice` at order time — no stale Polygon proxy needed
+
+### Rebalancing
+- Daily drift detection in `application/services/rebalancing_service.go`; ticker-level drift vs Claude's last recommendation targets + asset-class drift vs user's `AllocationPreferences` limits
+- `REBALANCE_DRIFT_THRESHOLD` env (default 10 pp); alerts sent via `NotificationProvider.SendRebalancingAlert`
+- `application/scheduler/rebalancing_scheduler.go` runs on `REBALANCE_TICK` (default 24h), market-calendar-aware
+
+### Allocation preferences
+- Users set per-asset-class min/max % and a single-ticker cap (`AllocationPreferences` on `UserProfile`)
+- Stored in MongoDB; injected into every Claude prompt as hard rules ("PORTFOLIO CONSTRAINTS — never violate")
+- Checked by `RebalancingService` — asset-class drift vs limits fires alerts regardless of ticker-level drift
+- Frontend: `AllocationPreferencesPage` accessible from Home → "Allocation limits" row
+
 ### Infrastructure & deployment
 - www.investiq.fit (Vercel), api.investiq.fit (Railway); TLS via Let's Encrypt; DNS on Namecheap
 - Docker: two-stage distroless image (`golang:1.23-alpine` builder → `gcr.io/distroless/static-debian12` runner); static binary required
-- Email notifications via Resend (`NOTIFICATION_PROVIDER=resend`); source-aware copy (manual vs auto-invest); "Why Claude invested" section included when `OverallReasoning` is non-empty; `GET/PATCH /users/notifications`
+- Email notifications via Resend (`NOTIFICATION_PROVIDER=resend`); SMS via Twilio (`NOTIFICATION_PROVIDER=twilio` + `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM`); source-aware copy (manual vs auto-invest); "Why Claude invested" section included when `OverallReasoning` is non-empty; `GET/PATCH /users/notifications`
 - `GET /health` on top-level mux (no auth) for Railway/Docker healthchecks
 
 ---
@@ -295,14 +310,12 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 | Vault / AWS Secrets Manager for Plaid tokens | Plaid `access_token` values are live credentials — DB compromise must not expose them. Hook is ready: `infrastructure/secrets/vault.go` behind `SecretsProvider` interface |
 | Atlas IP allowlist | Replace 0.0.0.0/0 with Railway static IP; requires Railway Pro plan |
 | Paper → live Alpaca trading | Per-user credentials already wired — UI adds account type selector (Paper/Live); user supplies live keys; no backend code change; requires LLC |
-| Remove debug log lines | `[8a-debug]`, `[8b-debug]`, `[8c-debug]`, `[8ca-debug]` in `recommendation_service.go` — grep each tag; marked with `// TODO: remove` comments |
 
 ### P2 — Near-term features
 
 | Item | Notes |
 |------|-------|
-| Coinbase Advanced Trade | Crypto execution via official API key auth. Implements `BrokerageProvider` — zero application layer changes. Same per-user AES-256-GCM credential pattern as Alpaca |
-| SMS notifications via Twilio | `Phone` field already on `UserProfile`. Needs `infrastructure/notifications/twilio.go` implementing `NotificationProvider`; factory wired on `NOTIFICATION_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` |
+| Paper → live Alpaca trading UI | Add account type selector (Paper/Live) so users can supply live keys without a backend code change |
 
 ### P3 — Longer-term / conditional
 
@@ -310,9 +323,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 |------|-------|
 | SnapTrade trade execution via Robinhood | Conditional on SnapTrade confirming Robinhood write/order access. Route equity allocations to Robinhood when connected; fallback to Alpaca |
 | Real-time market data | `/prev` endpoint gives yesterday's prices. Real-time (Finnhub) deferred until stale data meaningfully hurts recommendation quality |
-| Verdict entry price accuracy | When `FilledPrice = 0` (async Alpaca), Polygon prev-day close is used as proxy. True fix: re-fetch Alpaca order after a delay and re-stamp with real fill price |
 | Redis for Plaid balance cache | In-memory cache resets on restart. Redis for persistence at scale |
-| Rebalancing alerts | Notify when portfolio drifts past target allocation |
 | Tax optimization | Tax-loss harvesting, asset location strategy |
 | Household / family accounts | Multi-user households sharing one financial picture |
 | Earnings calendar, macro indicators | News context covers macros for now; earnings adds complexity for marginal value at current scale |
@@ -444,13 +455,8 @@ Background data access is legitimate when:
 | Log provider for notifications | Real push (FCM or APNs) for mobile; Resend covers email |
 | Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale |
 | Encrypted Mongo for Plaid tokens | Move to Vault / AWS Secrets Manager before go-live |
-| `[8a-debug]` log lines in `recommendation_service.go` | Temporary prompt-debugging logs; remove when no longer needed — grep `[8a-debug]` |
-| `[8b-debug]` log lines in `recommendation_service.go` | Temporary news-debugging logs; remove when no longer needed — grep `[8b-debug]` |
-| `[8c-debug]` log lines in `recommendation_service.go` | Temporary spending-debugging logs; remove when no longer needed — grep `[8c-debug]` |
-| `[8ca-debug]` log lines in `recommendation_service.go` | Temporary cash-context-debugging logs; remove when no longer needed — grep `[8ca-debug]` |
 | `CashContext.UserOverride` field is dead | Field exists in the model but is never set; left over from an abandoned per-session override design. Remove when cleaning up. |
 | Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |
-| Verdict entry price uses Polygon proxy | When `FilledPrice = 0` (async Alpaca order), Polygon prev-day close is used as entry price. Understates/overstates return vs actual fill. True fix: re-fetch Alpaca order after a delay and re-stamp with real fill price |
 | Classification bad data has no correction UI | If Claude mis-classifies a ticker (e.g. calls a bond ETF "US Equity"), the fix is a manual Mongo update. Acceptable for now — `cmd/dbcheck` makes it easy to spot. No admin UI planned until mis-classifications become a real pattern |
 
 ---
