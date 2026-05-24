@@ -143,6 +143,7 @@ func (s *InvestmentService) Execute(
 		TotalAmount:    totalAmount,
 		RiskLevel:      riskLevel,
 		Summary:        summary,
+		DecisionType:   "invest",
 	}
 	if err := s.decisionRepo.Save(ctx, decision); err != nil {
 		log.Printf("investment service: save decision: %v", err)

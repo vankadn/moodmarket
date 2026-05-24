@@ -91,3 +91,15 @@ func (t *twilioProvider) SendMarketClosed(ctx context.Context, to ports.Notifica
 	body := fmt.Sprintf("InvestIQ: market closed today (%s). Auto-invest resumes on the next trading day.", date)
 	return t.send(ctx, to.Phone, body)
 }
+
+func (t *twilioProvider) SendSkipSummary(ctx context.Context, to ports.NotificationTarget, configName, reason string) error {
+	if to.Phone == "" {
+		return nil
+	}
+	name := configName
+	if name == "" {
+		name = "your strategy"
+	}
+	body := fmt.Sprintf("InvestIQ: auto-invest skipped for %s. Reason: %s", name, reason)
+	return t.send(ctx, to.Phone, body)
+}

@@ -27,6 +27,8 @@ type decisionDocument struct {
 	TotalAmount    float64             `bson:"total_amount"`
 	RiskLevel      string              `bson:"risk_level"`
 	Summary        string              `bson:"summary"`
+	DecisionType   string              `bson:"decision_type,omitempty"` // "invest" | "skip"; omitted for legacy records
+	SkipReason     string              `bson:"skip_reason,omitempty"`
 	Verdict        *decisionVerdictDoc `bson:"verdict,omitempty"`
 }
 
@@ -535,19 +537,63 @@ func (r *MongoDecisionRepository) ListVerdictedDecisions(ctx context.Context, us
 	return decisions, nil
 }
 
+func (r *MongoDecisionRepository) SumInvestedToday(ctx context.Context, userID, configID, userTimezone string) (float64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	loc, err := time.LoadLocation(userTimezone)
+	if err != nil || loc == nil {
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{
+			"user_id":       userID,
+			"config_id":     configID,
+			"timestamp":     bson.M{"$gte": todayStart},
+			"decision_type": bson.M{"$ne": "skip"},
+		}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "total", Value: bson.M{"$sum": "$total_amount"}},
+		}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return 0, fmt.Errorf("mongo decision repo: sum invested today: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var result []struct {
+		Total float64 `bson:"total"`
+	}
+	if err := cursor.All(ctx, &result); err != nil {
+		return 0, fmt.Errorf("mongo decision repo: sum invested today decode: %w", err)
+	}
+	if len(result) == 0 {
+		return 0, nil
+	}
+	return result[0].Total, nil
+}
+
 // --- Conversion helpers ---
 
 func fromDecision(d *models.InvestmentDecision) *decisionDocument {
 	doc := &decisionDocument{
-		ID:          primitive.NewObjectID(),
-		UserID:      d.UserID,
-		ConfigID:    d.ConfigID,
-		Timestamp:   d.Timestamp,
-		Allocations: fromAllocations(d.Allocations),
-		Receipts:    fromReceipts(d.Receipts),
-		TotalAmount: d.TotalAmount,
-		RiskLevel:   d.RiskLevel,
-		Summary:     d.Summary,
+		ID:           primitive.NewObjectID(),
+		UserID:       d.UserID,
+		ConfigID:     d.ConfigID,
+		Timestamp:    d.Timestamp,
+		Allocations:  fromAllocations(d.Allocations),
+		Receipts:     fromReceipts(d.Receipts),
+		TotalAmount:  d.TotalAmount,
+		RiskLevel:    d.RiskLevel,
+		Summary:      d.Summary,
+		DecisionType: d.DecisionType,
+		SkipReason:   d.SkipReason,
 	}
 	if d.MarketSnapshot != nil {
 		doc.MarketSnapshot = fromMarketSnapshot(d.MarketSnapshot)
@@ -560,15 +606,17 @@ func fromDecision(d *models.InvestmentDecision) *decisionDocument {
 
 func toDecision(doc *decisionDocument) models.InvestmentDecision {
 	d := models.InvestmentDecision{
-		ID:          doc.ID.Hex(),
-		UserID:      doc.UserID,
-		ConfigID:    doc.ConfigID,
-		Timestamp:   doc.Timestamp,
-		Allocations: toAllocations(doc.Allocations),
-		Receipts:    toReceipts(doc.Receipts),
-		TotalAmount: doc.TotalAmount,
-		RiskLevel:   doc.RiskLevel,
-		Summary:     doc.Summary,
+		ID:           doc.ID.Hex(),
+		UserID:       doc.UserID,
+		ConfigID:     doc.ConfigID,
+		Timestamp:    doc.Timestamp,
+		Allocations:  toAllocations(doc.Allocations),
+		Receipts:     toReceipts(doc.Receipts),
+		TotalAmount:  doc.TotalAmount,
+		RiskLevel:    doc.RiskLevel,
+		Summary:      doc.Summary,
+		DecisionType: doc.DecisionType,
+		SkipReason:   doc.SkipReason,
 	}
 	if doc.MarketSnapshot != nil {
 		d.MarketSnapshot = toMarketSnapshot(doc.MarketSnapshot)

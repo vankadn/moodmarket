@@ -16,18 +16,21 @@ import (
 )
 
 type autoInvestConfigDoc struct {
-	ID           primitive.ObjectID `bson:"_id"`
-	UserID       string             `bson:"user_id"`
-	Name         string             `bson:"name,omitempty"`
-	Enabled      bool               `bson:"enabled"`
-	Amount       float64            `bson:"amount"`
-	Risk         string             `bson:"risk"`
-	Strategy     string             `bson:"strategy,omitempty"`
-	IntervalDays    int                `bson:"interval_days,omitempty"`
+	ID              primitive.ObjectID `bson:"_id"`
+	UserID          string             `bson:"user_id"`
+	Name            string             `bson:"name,omitempty"`
+	Enabled         bool               `bson:"enabled"`
+	Mode            string             `bson:"mode,omitempty"`
+	Amount          float64            `bson:"amount"`
+	DailyBudget     float64            `bson:"daily_budget,omitempty"`
+	Risk            string             `bson:"risk"`
+	Strategy        string             `bson:"strategy,omitempty"`
+	IntervalDays    int                `bson:"interval_days,omitempty"` // legacy — migrated to IntervalHours on read
+	IntervalHours   int                `bson:"interval_hours,omitempty"`
 	IntervalSeconds int                `bson:"interval_seconds,omitempty"`
-	EnabledAt    time.Time          `bson:"enabled_at,omitempty"`
-	UpdatedAt    time.Time          `bson:"updated_at"`
-	LastRunAt    *time.Time         `bson:"last_run_at,omitempty"`
+	EnabledAt       time.Time          `bson:"enabled_at,omitempty"`
+	UpdatedAt       time.Time          `bson:"updated_at"`
+	LastRunAt       *time.Time         `bson:"last_run_at,omitempty"`
 }
 
 type MongoAutoInvestRepository struct {
@@ -74,9 +77,12 @@ func (r *MongoAutoInvestRepository) Upsert(ctx context.Context, config *models.A
 	doc := bson.M{
 		"user_id":          config.UserID,
 		"enabled":          config.Enabled,
+		"mode":             config.Mode,
 		"amount":           config.Amount,
+		"daily_budget":     config.DailyBudget,
 		"risk":             string(config.Risk),
 		"interval_days":    config.IntervalDays,
+		"interval_hours":   config.IntervalHours,
 		"interval_seconds": config.IntervalSeconds,
 		"updated_at":       config.UpdatedAt,
 	}
@@ -120,15 +126,26 @@ func (r *MongoAutoInvestRepository) GetAllEnabled(ctx context.Context) ([]models
 }
 
 func toAutoInvestConfig(doc *autoInvestConfigDoc) *models.AutoInvestConfig {
+	// Migrate legacy interval_days to interval_hours transparently on read.
+	intervalHours := doc.IntervalHours
+	if intervalHours == 0 && doc.IntervalDays > 0 {
+		intervalHours = doc.IntervalDays * 24
+	}
+	if intervalHours == 0 {
+		intervalHours = 24 // default: daily
+	}
 	return &models.AutoInvestConfig{
 		ID:              doc.ID.Hex(),
 		UserID:          doc.UserID,
 		Name:            doc.Name,
 		Enabled:         doc.Enabled,
+		Mode:            doc.Mode,
 		Amount:          doc.Amount,
+		DailyBudget:     doc.DailyBudget,
 		Risk:            models.RiskTolerance(doc.Risk),
 		Strategy:        doc.Strategy,
 		IntervalDays:    doc.IntervalDays,
+		IntervalHours:   intervalHours,
 		IntervalSeconds: doc.IntervalSeconds,
 		EnabledAt:       doc.EnabledAt,
 		UpdatedAt:       doc.UpdatedAt,
@@ -188,10 +205,13 @@ func (r *MongoAutoInvestRepository) Create(ctx context.Context, config *models.A
 		UserID:          config.UserID,
 		Name:            config.Name,
 		Enabled:         config.Enabled,
+		Mode:            config.Mode,
 		Amount:          config.Amount,
+		DailyBudget:     config.DailyBudget,
 		Risk:            string(config.Risk),
 		Strategy:        config.Strategy,
 		IntervalDays:    config.IntervalDays,
+		IntervalHours:   config.IntervalHours,
 		IntervalSeconds: config.IntervalSeconds,
 		EnabledAt:       config.EnabledAt,
 		UpdatedAt:       config.UpdatedAt,
@@ -217,10 +237,13 @@ func (r *MongoAutoInvestRepository) UpdateByID(ctx context.Context, configID, us
 	setFields := bson.M{
 		"name":             config.Name,
 		"enabled":          config.Enabled,
+		"mode":             config.Mode,
 		"amount":           config.Amount,
+		"daily_budget":     config.DailyBudget,
 		"risk":             string(config.Risk),
 		"strategy":         config.Strategy,
 		"interval_days":    config.IntervalDays,
+		"interval_hours":   config.IntervalHours,
 		"interval_seconds": config.IntervalSeconds,
 		"updated_at":       config.UpdatedAt,
 	}

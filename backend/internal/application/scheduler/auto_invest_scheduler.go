@@ -24,6 +24,7 @@ type AutoInvestScheduler struct {
 	schedulerRepo  ports.SchedulerRepository
 	notifications  ports.NotificationProvider
 	calendar       ports.MarketCalendar
+	decisionRepo   ports.DecisionRepository
 }
 
 func NewAutoInvestScheduler(
@@ -34,6 +35,7 @@ func NewAutoInvestScheduler(
 	schedulerRepo ports.SchedulerRepository,
 	notifications ports.NotificationProvider,
 	calendar ports.MarketCalendar,
+	decisionRepo ports.DecisionRepository,
 ) *AutoInvestScheduler {
 	return &AutoInvestScheduler{
 		autoInvestRepo: autoInvestRepo,
@@ -43,6 +45,7 @@ func NewAutoInvestScheduler(
 		schedulerRepo:  schedulerRepo,
 		notifications:  notifications,
 		calendar:       calendar,
+		decisionRepo:   decisionRepo,
 	}
 }
 
@@ -74,13 +77,16 @@ func (s *AutoInvestScheduler) Start(ctx context.Context) {
 }
 
 // isDue returns true when a user's run interval has elapsed.
-// IntervalSeconds takes priority when > 0; falls back to IntervalDays (0 treated as 1 day).
+// Priority: IntervalSeconds > IntervalHours > IntervalDays (0 days treated as 1).
 // LastRunAt == nil means the config has never run — always due immediately.
 func isDue(cfg models.AutoInvestConfig) bool {
 	var interval time.Duration
-	if cfg.IntervalSeconds > 0 {
+	switch {
+	case cfg.IntervalSeconds > 0:
 		interval = time.Duration(cfg.IntervalSeconds) * time.Second
-	} else {
+	case cfg.IntervalHours > 0:
+		interval = time.Duration(cfg.IntervalHours) * time.Hour
+	default:
 		days := cfg.IntervalDays
 		if days <= 0 {
 			days = 1
@@ -146,7 +152,7 @@ func (s *AutoInvestScheduler) runCycle(ctx context.Context) {
 		wg.Add(1)
 		go func(c models.AutoInvestConfig, t ports.NotificationTarget) {
 			defer wg.Done()
-			invested, err := runForUser(ctx, c, t, s.recommendSvc, s.investSvc, s.notifications)
+			invested, err := runForUser(ctx, c, t, s.recommendSvc, s.investSvc, s.notifications, s.decisionRepo)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {

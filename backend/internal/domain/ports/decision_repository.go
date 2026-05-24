@@ -36,4 +36,8 @@ type DecisionRepository interface {
 	// ListVerdictedDecisions returns paginated decisions that have a verdict, newest first.
 	// page is 1-based; limit is the page size.
 	ListVerdictedDecisions(ctx context.Context, userID string, page, limit int) ([]models.InvestmentDecision, error)
+	// SumInvestedToday returns the total amount invested today (in the given IANA timezone) for the given config.
+	// Skip decisions (decision_type="skip") are excluded. Returns 0 when no records exist.
+	// userTimezone should be a valid IANA location string (e.g. "America/New_York"); defaults to UTC on parse error.
+	SumInvestedToday(ctx context.Context, userID, configID, userTimezone string) (float64, error)
 }

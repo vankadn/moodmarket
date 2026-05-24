@@ -71,6 +71,9 @@ func (m *mockDecisionRepoForEval) ListUnverdicted(_ context.Context, _ string, _
 func (m *mockDecisionRepoForEval) GetUsersWithPendingVerdicts(_ context.Context, _ time.Duration) ([]string, error) {
 	panic("not used in eval handler tests")
 }
+func (m *mockDecisionRepoForEval) SumInvestedToday(_ context.Context, _, _, _ string) (float64, error) {
+	panic("not used in eval handler tests")
+}
 
 // mockIdentityProvider returns a fixed user ID for any request.
 type mockIdentityProvider struct{ userID string }

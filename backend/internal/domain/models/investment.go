@@ -12,6 +12,11 @@ type InvestmentRequest struct {
 	TaxDocuments       []*TaxDocument       `json:"-"` // verified tax docs (W2/1099/1098); injected by recommendation service
 	StrategyPrompt     string               `json:"-"` // optional; prepended to Claude system prompt when set
 	PerformanceSummary *EvalSummary         `json:"-"` // injected by recommendation service; nil for new users or when below verdict threshold
+	// Agentic budget fields — set by scheduler when Mode == "agentic"; zero values mean fixed mode.
+	AgenticMode bool    `json:"-"`
+	DailyBudget float64 `json:"-"`
+	SpentToday  float64 `json:"-"`
+	Remaining   float64 `json:"-"`
 }
 
 type Allocation struct {
@@ -29,5 +34,6 @@ type Recommendation struct {
 	Allocations []Allocation `json:"allocations"`
 	Summary     string       `json:"summary"`
 	RiskLevel   string       `json:"risk_level"`
+	SkipReason  string       `json:"skip_reason,omitempty"` // set by Claude when total_budget == 0 in agentic mode
 	FromCache   bool         `json:"from_cache,omitempty"`
 }

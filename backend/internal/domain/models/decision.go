@@ -27,6 +27,8 @@ type InvestmentDecision struct {
 	TotalAmount    float64
 	RiskLevel      string
 	Summary        string
+	DecisionType   string // "invest" | "skip"; empty for legacy records
+	SkipReason     string // Claude's one-sentence reason when DecisionType=="skip"; empty otherwise
 	Verdict        *DecisionVerdict // nil until verdict_job stamps it (Phase 22)
 }
 

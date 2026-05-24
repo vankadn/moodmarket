@@ -17,20 +17,24 @@ const strategyLabel: Record<string, string> = {
 function intervalLabel(config: AutoInvestConfig): string {
   const secs = config.interval_seconds;
   if (secs && secs > 0) {
-    if (secs % 31536000 === 0) return `${secs / 31536000}y`;
-    if (secs % 2592000 === 0)  return `${secs / 2592000}mo`;
-    if (secs % 86400 === 0)    return `${secs / 86400}d`;
-    if (secs % 3600 === 0)     return `${secs / 3600}h`;
-    if (secs % 60 === 0)       return `${secs / 60}m`;
+    if (secs % 3600 === 0) return `${secs / 3600}h`;
+    if (secs % 60 === 0)   return `${secs / 60}m`;
     return `${secs}s`;
+  }
+  const hours = config.interval_hours;
+  if (hours && hours > 0) {
+    if (hours === 24) return "day";
+    return `${hours}h`;
   }
   const days = config.interval_days ?? 1;
   if (days === 1) return "day";
-  if (days === 7) return "week";
   return `${days}d`;
 }
 
 function amountLabel(config: AutoInvestConfig): string {
+  if (config.mode === "agentic") {
+    return `$${config.daily_budget ?? 0}/day (agentic)`;
+  }
   return `$${config.amount}/${intervalLabel(config)}`;
 }
 
@@ -104,7 +108,7 @@ export function AutoInvestList({ initialConfigs, onConfigsChange, onBack, onSele
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px", flexWrap: "wrap" }}>
               <span style={{ fontSize: "14px", fontWeight: 500, color: "#222" }}>
                 {config.name || "Unnamed strategy"}
               </span>
@@ -116,6 +120,14 @@ export function AutoInvestList({ initialConfigs, onConfigsChange, onBack, onSele
               }}>
                 {config.enabled ? "Active" : "Off"}
               </span>
+              {config.mode === "agentic" && (
+                <span style={{
+                  fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "10px",
+                  background: "#1a1a2e", color: "#a78bfa", flexShrink: 0,
+                }}>
+                  Agentic
+                </span>
+              )}
             </div>
             <div style={{ fontSize: "12px", color: "#999" }}>
               {amountLabel(config)}

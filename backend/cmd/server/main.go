@@ -144,7 +144,7 @@ func main() {
 	documentSvc := services.NewDocumentService(documentExtractor, documentRepo)
 	idp := middleware.ContextIdentityProvider{}
 
-	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar)
+	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar, decisionRepo)
 	go autoInvestScheduler.Start(ctx)
 
 	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)

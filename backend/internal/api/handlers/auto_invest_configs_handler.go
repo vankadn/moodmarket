@@ -64,10 +64,13 @@ func (h *autoInvestConfigsHandler) list(w http.ResponseWriter, r *http.Request, 
 type multiConfigRequest struct {
 	Name            string               `json:"name"`
 	Enabled         bool                 `json:"enabled"`
+	Mode            string               `json:"mode,omitempty"`
 	Amount          float64              `json:"amount"`
+	DailyBudget     float64              `json:"daily_budget,omitempty"`
 	Risk            models.RiskTolerance `json:"risk"`
 	Strategy        string               `json:"strategy"`
 	IntervalDays    int                  `json:"interval_days,omitempty"`
+	IntervalHours   int                  `json:"interval_hours,omitempty"`
 	IntervalSeconds int                  `json:"interval_seconds,omitempty"`
 	EnabledAt       *time.Time           `json:"enabled_at,omitempty"`
 }
@@ -87,10 +90,13 @@ func (h *autoInvestConfigsHandler) create(w http.ResponseWriter, r *http.Request
 		UserID:          userID,
 		Name:            req.Name,
 		Enabled:         req.Enabled,
+		Mode:            req.Mode,
 		Amount:          req.Amount,
+		DailyBudget:     req.DailyBudget,
 		Risk:            req.Risk,
 		Strategy:        req.Strategy,
 		IntervalDays:    req.IntervalDays,
+		IntervalHours:   req.IntervalHours,
 		IntervalSeconds: req.IntervalSeconds,
 		EnabledAt:       enabledAt,
 	}
@@ -126,10 +132,13 @@ func (h *autoInvestConfigsHandler) update(w http.ResponseWriter, r *http.Request
 	config := &models.AutoInvestConfig{
 		Name:            req.Name,
 		Enabled:         req.Enabled,
+		Mode:            req.Mode,
 		Amount:          req.Amount,
+		DailyBudget:     req.DailyBudget,
 		Risk:            req.Risk,
 		Strategy:        req.Strategy,
 		IntervalDays:    req.IntervalDays,
+		IntervalHours:   req.IntervalHours,
 		IntervalSeconds: req.IntervalSeconds,
 		EnabledAt:       enabledAt,
 	}

@@ -78,6 +78,9 @@ func (r *stubDecisionRepo) GetEvalSummary(_ context.Context, _ string) (*models.
 func (r *stubDecisionRepo) ListVerdictedDecisions(_ context.Context, _ string, _, _ int) ([]models.InvestmentDecision, error) {
 	return nil, nil
 }
+func (r *stubDecisionRepo) SumInvestedToday(_ context.Context, _, _, _ string) (float64, error) {
+	return 0, nil
+}
 
 // stubProfileRepo returns ErrProfileNotFound for all users (no profile on file).
 type stubProfileRepo struct{}

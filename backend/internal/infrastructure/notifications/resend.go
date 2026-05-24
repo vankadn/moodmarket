@@ -103,3 +103,17 @@ func (r *resendEmailProvider) SendMarketClosed(ctx context.Context, to ports.Not
 	html := fmt.Sprintf(`<p>Auto-invest was skipped today — the market is closed (%s).</p><p>It will resume on the next trading day.</p>`, date)
 	return r.send(ctx, to.Email, "InvestIQ: market closed today", html)
 }
+
+func (r *resendEmailProvider) SendSkipSummary(ctx context.Context, to ports.NotificationTarget, configName, reason string) error {
+	if to.Email == "" {
+		log.Printf("[notify] user=%s skip summary skipped — no email configured", to.UserID)
+		return nil
+	}
+	log.Printf("[notify] user=%s sending skip summary to %s: config=%q reason=%s", to.UserID, to.Email, configName, reason)
+	name := configName
+	if name == "" {
+		name = "your strategy"
+	}
+	html := fmt.Sprintf(`<p>Auto-invest skipped this run for <strong>%s</strong>.</p><p>Reason: %s</p><p>Open InvestIQ to review your settings.</p>`, name, reason)
+	return r.send(ctx, to.Email, "InvestIQ: auto-invest skipped", html)
+}

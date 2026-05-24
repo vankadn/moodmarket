@@ -6,11 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
+	"time"
 
 	"github.com/krishnarajivvns/investiq/internal/application/services"
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
+
+const defaultTimezone = "America/New_York"
 
 // runForUser executes the full investment pipeline for a single user using their config.
 // Returns the total dollar amount invested, or an error if the pipeline fails.
@@ -21,15 +25,60 @@ func runForUser(
 	recommendSvc *services.RecommendationService,
 	investSvc *services.InvestmentService,
 	notifications ports.NotificationProvider,
+	decisionRepo ports.DecisionRepository,
 ) (float64, error) {
-	log.Printf("[scheduler] user=%s pipeline start (amount=%.0f)", config.UserID, config.Amount)
+	isAgentic := config.Mode == "agentic"
+	log.Printf("[scheduler] user=%s pipeline start (mode=%s amount=%.0f dailyBudget=%.0f)", config.UserID, config.Mode, config.Amount, config.DailyBudget)
 
 	req := models.InvestmentRequest{BaseBudget: config.Amount, ExtraMoney: 0}
+
+	if isAgentic {
+		spentToday, err := decisionRepo.SumInvestedToday(ctx, config.UserID, config.ID, defaultTimezone)
+		if err != nil {
+			log.Printf("[scheduler] user=%s daily budget check failed (%v) — proceeding without cap", config.UserID, err)
+		} else {
+			remaining := config.DailyBudget - spentToday
+			if remaining < 1.0 {
+				log.Printf("[scheduler] user=%s daily budget exhausted (budget=%.2f spent=%.2f)", config.UserID, config.DailyBudget, spentToday)
+				saveSkipDecision(ctx, decisionRepo, config, "daily budget exhausted for today")
+				_ = notifications.SendSkipSummary(ctx, target, config.Name, "Daily budget exhausted for today.")
+				return 0, nil
+			}
+			req.AgenticMode = true
+			req.DailyBudget = config.DailyBudget
+			req.SpentToday = spentToday
+			req.Remaining = remaining
+			req.BaseBudget = remaining
+			log.Printf("[scheduler] user=%s agentic context: budget=%.2f spent=%.2f remaining=%.2f", config.UserID, config.DailyBudget, spentToday, remaining)
+		}
+	}
 
 	rec, err := recommendSvc.GetDailyRecommendation(ctx, config.UserID, req)
 	if err != nil {
 		_ = notifications.SendInvestmentFailure(ctx, target, fmt.Sprintf("recommendation failed: %v", err))
 		return 0, fmt.Errorf("recommendation: %w", err)
+	}
+
+	// Claude chose to skip this run ($0 total_budget).
+	if rec.TotalBudget == 0 {
+		reason := rec.SkipReason
+		if reason == "" {
+			reason = rec.Summary
+		}
+		log.Printf("[scheduler] user=%s Claude returned $0 — skipping (reason: %s)", config.UserID, reason)
+		saveSkipDecision(ctx, decisionRepo, config, reason)
+		_ = notifications.SendSkipSummary(ctx, target, config.Name, reason)
+		return 0, nil
+	}
+
+	// Enforce daily budget ceiling in case Claude exceeded the remaining amount.
+	if isAgentic && req.AgenticMode && rec.TotalBudget > req.Remaining {
+		log.Printf("[scheduler] user=%s Claude exceeded remaining (%.2f > %.2f) — capping", config.UserID, rec.TotalBudget, req.Remaining)
+		scale := req.Remaining / rec.TotalBudget
+		rec.TotalBudget = req.Remaining
+		for i := range rec.Allocations {
+			rec.Allocations[i].Amount = math.Round(rec.Allocations[i].Amount*scale*100) / 100
+		}
 	}
 
 	receipts, _, err := investSvc.Execute(ctx, config.UserID, rec.Allocations, rec.TotalBudget, rec.RiskLevel, rec.Summary, nil, config.ID)
@@ -68,4 +117,26 @@ func runForUser(
 
 	log.Printf("[scheduler] user=%s pipeline done — %d positions placed", config.UserID, len(receipts))
 	return totalFilled, nil
+}
+
+func saveSkipDecision(ctx context.Context, repo ports.DecisionRepository, config models.AutoInvestConfig, reason string) {
+	d := &models.InvestmentDecision{
+		UserID:       config.UserID,
+		ConfigID:     config.ID,
+		Timestamp:    time.Now(),
+		DecisionType: "skip",
+		SkipReason:   reason,
+		TotalAmount:  0,
+	}
+	if err := repo.Save(ctx, d); err != nil {
+		log.Printf("[scheduler] user=%s failed to save skip decision: %v", config.UserID, err)
+	}
+}
+
+func currentTimeEST() string {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		return time.Now().UTC().Format("3:04 PM UTC")
+	}
+	return time.Now().In(loc).Format("3:04 PM MST")
 }

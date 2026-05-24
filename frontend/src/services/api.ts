@@ -59,11 +59,14 @@ export interface AutoInvestConfig {
   user_id?: string;
   name?: string;
   enabled: boolean;
-  amount: number;
+  mode?: "fixed" | "agentic"; // default "fixed" when absent
+  amount: number;              // fixed mode: amount per run
+  daily_budget?: number;       // agentic mode: max per calendar day
   risk: RiskTolerance;
   strategy?: StrategyType;
-  interval_days?: number;
-  interval_seconds?: number; // when > 0, overrides interval_days; used for sub-day intervals
+  interval_days?: number;      // deprecated — migrated to interval_hours on read
+  interval_hours?: number;     // 1 | 2 | 4 | 24; agentic hardcodes to 1
+  interval_seconds?: number;   // dev/sub-hour testing only
   enabled_at?: string;
   updated_at?: string;
   last_run_at?: string;

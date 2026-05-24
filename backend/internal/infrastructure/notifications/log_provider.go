@@ -25,3 +25,8 @@ func (l *logNotificationProvider) SendMarketClosed(_ context.Context, to ports.N
 	log.Printf("[notify] user=%s market closed: %s", to.UserID, date)
 	return nil
 }
+
+func (l *logNotificationProvider) SendSkipSummary(_ context.Context, to ports.NotificationTarget, configName, reason string) error {
+	log.Printf("[notify] user=%s auto-invest skipped: config=%q reason=%s", to.UserID, configName, reason)
+	return nil
+}

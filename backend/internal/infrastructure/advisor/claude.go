@@ -420,6 +420,14 @@ func (c *claudeAdvisor) executeTool(ctx context.Context, name, toolUseID string)
 }
 
 // extractJSON strips markdown code fences and trims to the outermost { ... }.
+func currentTimeEST() string {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		return time.Now().UTC().Format("3:04 PM UTC")
+	}
+	return time.Now().In(loc).Format("3:04 PM MST")
+}
+
 func extractJSON(s string) string {
 	s = strings.TrimSpace(s)
 	if strings.HasPrefix(s, "```") {
@@ -665,6 +673,18 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 			msg += fmt.Sprintf("- Best decision: %+.1f%% | Worst: %+.1f%%\n", ps.BestDecision.ReturnPct, ps.WorstDecision.ReturnPct)
 		}
 		msg += "Use as context only — do not override the user's stated risk tolerance or investment amount.\n"
+	}
+
+	if req.AgenticMode {
+		msg += "\nAGENTIC BUDGET CONTEXT\n"
+		msg += fmt.Sprintf("Daily budget: $%.2f\n", req.DailyBudget)
+		msg += fmt.Sprintf("Already invested today: $%.2f\n", req.SpentToday)
+		msg += fmt.Sprintf("Remaining today: $%.2f\n", req.Remaining)
+		msg += fmt.Sprintf("Current time: %s\n\n", currentTimeEST())
+		msg += fmt.Sprintf("You must decide how much of the $%.2f remaining to invest RIGHT NOW based on current market conditions.\n", req.Remaining)
+		msg += fmt.Sprintf("Set total_budget to a value between 0 and %.2f.\n", req.Remaining)
+		msg += "If total_budget is 0 (skip), include a \"skip_reason\" field in your JSON with one sentence explaining why.\n"
+		msg += fmt.Sprintf("Minimum $1 per ticker if investing. Never exceed $%.2f.\n", req.Remaining)
 	}
 
 	msg += "\nGive me today's investment allocation."

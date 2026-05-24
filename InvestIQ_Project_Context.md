@@ -78,7 +78,7 @@ Key interfaces:
 - `BrokerageProvider` — trade execution + position reads + portfolio history (Alpaca or mock)
 - `BrokerageProviderFactory` — constructs a `BrokerageProvider` from a per-user `BrokerageConnection`; decouples application layer from credential decryption and Alpaca constructor details
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
-- `NotificationProvider` — post-invest notifications; `SendInvestmentSummary`, `SendInvestmentFailure`, `SendMarketClosed`; log provider (dev), Resend email provider (prod)
+- `NotificationProvider` — post-invest notifications; `SendInvestmentSummary`, `SendInvestmentFailure`, `SendMarketClosed`, `SendSkipSummary`; log provider (dev), Resend email provider (prod)
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
 - `Classifier` — in-memory ticker→asset-class lookup; `ClassificationCache` implements this; never hits Mongo during a recommendation
 - `ClassificationRepository` — ticker classification persistence: `LoadAll`, `StoreClassification`
@@ -151,7 +151,7 @@ See README.md for the full env var reference and provider swap table.
 | `InvestmentRequest` | Request to generate a daily allocation |
 | `Allocation` | Single position recommendation (ticker, amount, %) |
 | `Recommendation` | Full AI response: allocations + summary + risk level + `FromCache bool` (true when returned from MongoDB fallback due to advisor overload) |
-| `InvestmentDecision` | Persisted record: userId, timestamp, market snapshot, allocations, trade receipts |
+| `InvestmentDecision` | Persisted record: userId, timestamp, market snapshot, allocations, trade receipts, DecisionType ("invest"/"skip"), SkipReason |
 | `MarketSnapshot` | Point-in-time market context: SPY/QQQ trend, sector ETF performance, sentiment |
 | `RiskTolerance` | conservative / moderate / aggressive |
 | `TimeHorizon` | under_1_year / one_to_five / five_to_ten / ten_plus |
@@ -166,7 +166,7 @@ See README.md for the full env var reference and provider swap table.
 | `BrokerageConnection` | Internal per-user Alpaca credential record: ID, Name, AssetCategories, APIKey, SecretKey, BaseURL, Connected, ConnectedAt — encrypted at rest, never exposed to frontend |
 | `BrokerageStatus` | JSON-safe API subset: ID, Name, AssetCategories, connected, base_url, connected_at — returned in `UserProfile.Brokerages` array |
 | `AssetCategory` | `equity` / `bond` / `default` — controls which connection an allocation is routed to |
-| `AutoInvestConfig` | First-class domain model (own collection): Enabled, Amount, Risk, EnabledAt, UpdatedAt |
+| `AutoInvestConfig` | First-class domain model (own collection): Enabled, Amount, DailyBudget, Risk, IntervalHours, EnabledAt, UpdatedAt |
 | `SchedulerRun` | Audit record for one autonomous cycle: RunID, StartedAt, CompletedAt, UsersProcessed, TotalInvested, Errors |
 | `NotificationTarget` | Delivery target for one notification: UserID, Email, Phone, Source (`"manual"` or `"auto"`) |
 | `HistoryPoint` | One data point in a portfolio value time series: Timestamp (Unix epoch seconds), Equity, ProfitLoss, ProfitLossPct |
@@ -259,7 +259,8 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Token revocation calls Plaid `/item/remove` before MongoDB delete
 
 ### Autonomous investing
-- Scheduler: per-user `isDue()` check on hourly tick; `IntervalDays` controls frequency (0 = daily)
+- Scheduler: per-user `isDue()` check on hourly tick; priority: `IntervalSeconds` > `IntervalHours` > `IntervalDays` (0 = daily)
+- Agentic daily budget: when `DailyBudget > 0`, scheduler sums today's spend via `SumTodayByConfig`, injects remaining into Claude prompt; Claude returns `total_budget: 0` to skip or an amount ≤ remaining; budget-exhausted and Claude-skip paths both save a `DecisionType: "skip"` decision and notify via `SendSkipSummary`
 - Multi-config strategies per user: named, with `long_term` or `short_term` strategy prompt injected before base system prompt; CRUD at `/users/auto-invest/configs`
 - Market holiday awareness: algorithmic NYSE calendar (no external API); `MARKET_CALENDAR=nyse|mock`
 - Per-strategy activity: decision count, total invested, last run — `GET /users/activity/by-strategy`
