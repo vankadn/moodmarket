@@ -202,13 +202,15 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 		RiskLevel:      rec.RiskLevel,
 		Summary:        rec.Summary,
 	}
-	go func(saveCtx context.Context, d *models.InvestmentDecision) {
+	go func(d *models.InvestmentDecision) {
+		saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		if err := s.decisionRepo.Save(saveCtx, d); err != nil {
 			log.Printf("[recommend] persist  save decision failed: %v", err)
 		} else {
 			log.Printf("[recommend] persist  decision saved to MongoDB")
 		}
-	}(context.WithoutCancel(ctx), decision)
+	}(decision)
 
 	return rec, nil
 }
