@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-20 — SnapTrade portfolio aggregation added; external holdings now merged into Claude prompt; see **What's built** for capabilities and **What's next** for the roadmap
+> Last updated: 2026-05-24 — Claude reasoning stored on decisions (OverallReasoning + TickerReasoning); "Why Claude invested" section in email; Allocation.Reasoning + Recommendation.OverallReasoning fields
 
 ---
 
@@ -78,7 +78,7 @@ Key interfaces:
 - `BrokerageProvider` — trade execution + position reads + portfolio history (Alpaca or mock)
 - `BrokerageProviderFactory` — constructs a `BrokerageProvider` from a per-user `BrokerageConnection`; decouples application layer from credential decryption and Alpaca constructor details
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
-- `NotificationProvider` — post-invest notifications; `SendInvestmentSummary`, `SendInvestmentFailure`, `SendMarketClosed`, `SendSkipSummary`; log provider (dev), Resend email provider (prod)
+- `NotificationProvider` — post-invest notifications; `SendInvestmentSummary(…, overallReasoning string)`, `SendInvestmentFailure`, `SendMarketClosed`, `SendSkipSummary`; log provider (dev), Resend email provider (prod)
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
 - `Classifier` — in-memory ticker→asset-class lookup; `ClassificationCache` implements this; never hits Mongo during a recommendation
 - `ClassificationRepository` — ticker classification persistence: `LoadAll`, `StoreClassification`
@@ -149,9 +149,9 @@ See README.md for the full env var reference and provider swap table.
 |------|---------|
 | `UserProfile` | Complete financial picture of the user |
 | `InvestmentRequest` | Request to generate a daily allocation |
-| `Allocation` | Single position recommendation (ticker, amount, %) |
-| `Recommendation` | Full AI response: allocations + summary + risk level + `FromCache bool` (true when returned from MongoDB fallback due to advisor overload) |
-| `InvestmentDecision` | Persisted record: userId, timestamp, market snapshot, allocations, trade receipts, DecisionType ("invest"/"skip"), SkipReason |
+| `Allocation` | Single position recommendation (ticker, amount, %, `Reasoning` — one-sentence per-ticker Claude explanation; `omitempty`) |
+| `Recommendation` | Full AI response: allocations + summary + risk level + `OverallReasoning` (1-2 sentence thesis) + `FromCache bool` (true when returned from MongoDB fallback due to advisor overload) |
+| `InvestmentDecision` | Persisted record: userId, timestamp, market snapshot, allocations, trade receipts, DecisionType ("invest"/"skip"), SkipReason, OverallReasoning, TickerReasoning (map[ticker]reason) |
 | `MarketSnapshot` | Point-in-time market context: SPY/QQQ trend, sector ETF performance, sentiment |
 | `RiskTolerance` | conservative / moderate / aggressive |
 | `TimeHorizon` | under_1_year / one_to_five / five_to_ten / ten_plus |
@@ -274,12 +274,13 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Ticker classification: 29 base tickers seeded in `ticker_classifications`; unknown tickers classified by Claude at recommendation time and stored immediately via `StoreClassification`; in-memory `ClassificationCache` means zero Mongo reads per request
 - Decision verdicts: stamped inline (goroutine per recommendation); `OverallReturnPct`, `SPYReturnPct`, `BeatMarket`, per-ticker verdicts
 - Feedback loop: when `VerdictedDecisions ≥ 5`, Claude receives its own win rate + avg return vs SPY in every prompt (`PAST PERFORMANCE` section)
+- Claude reasoning stored on every invest decision: `OverallReasoning` (1-2 sentence thesis) and `TickerReasoning` map (per-ticker explanation); both `omitempty` — old decisions unaffected; system prompt requires `overall_reasoning` + `allocations[].reasoning` in Claude's JSON response
 - Activity dashboard: total invested, verdict stats, win rate vs SPY, best/worst decision, per-strategy breakdown, full decision history with verdicts overlaid — `GET /users/activity`, `/eval/summary`, `/eval/decisions`
 
 ### Infrastructure & deployment
 - www.investiq.fit (Vercel), api.investiq.fit (Railway); TLS via Let's Encrypt; DNS on Namecheap
 - Docker: two-stage distroless image (`golang:1.23-alpine` builder → `gcr.io/distroless/static-debian12` runner); static binary required
-- Email notifications via Resend (`NOTIFICATION_PROVIDER=resend`); source-aware copy (manual vs auto-invest); `GET/PATCH /users/notifications`
+- Email notifications via Resend (`NOTIFICATION_PROVIDER=resend`); source-aware copy (manual vs auto-invest); "Why Claude invested" section included when `OverallReasoning` is non-empty; `GET/PATCH /users/notifications`
 - `GET /health` on top-level mux (no auth) for Railway/Docker healthchecks
 
 ---
