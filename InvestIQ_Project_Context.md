@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-24 — Claude reasoning stored on decisions (OverallReasoning + TickerReasoning); "Why Claude invested" in email; Coinbase Advanced Trade, Twilio SMS, rebalancing alerts, allocation preferences (backend + frontend), verdict entry price accuracy, log PII cleanup
+> Last updated: 2026-05-24 — EMAIL_PROVIDER + SMS_PROVIDER replace single NOTIFICATION_PROVIDER; composite fan-out so both channels active simultaneously; Claude reasoning on decisions
 
 ---
 
@@ -53,7 +53,7 @@ infrastructure/      ← implementations of domain ports
   news/              ← market headlines (Polygon + mock)
   banking/           ← Plaid
   brokerage/         ← Alpaca
-  notifications/     ← log provider (dev), Resend email (prod)
+  notifications/     ← composite fan-out; log (always), Resend email (EMAIL_PROVIDER=resend), Twilio SMS (SMS_PROVIDER=twilio)
   secrets/           ← Vault / secrets manager (pre go-live)
 
 api/                 ← outermost: HTTP handlers, middleware
@@ -78,7 +78,7 @@ Key interfaces:
 - `BrokerageProvider` — trade execution + position reads + portfolio history (Alpaca or mock)
 - `BrokerageProviderFactory` — constructs a `BrokerageProvider` from a per-user `BrokerageConnection`; decouples application layer from credential decryption and Alpaca constructor details
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
-- `NotificationProvider` — post-invest notifications; `SendInvestmentSummary(…, overallReasoning string)`, `SendInvestmentFailure`, `SendMarketClosed`, `SendSkipSummary`; log provider (dev), Resend email provider (prod)
+- `NotificationProvider` — post-invest notifications; `SendInvestmentSummary(…, overallReasoning string)`, `SendInvestmentFailure`, `SendMarketClosed`, `SendSkipSummary`, `SendRebalancingAlert`; composite fan-out: log always active, Resend email via `EMAIL_PROVIDER=resend`, Twilio SMS via `SMS_PROVIDER=twilio` — both channels independent and can run simultaneously
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
 - `Classifier` — in-memory ticker→asset-class lookup; `ClassificationCache` implements this; never hits Mongo during a recommendation
 - `ClassificationRepository` — ticker classification persistence: `LoadAll`, `StoreClassification`
@@ -128,7 +128,7 @@ Every brokerage provider implements `BrokerageProvider` in `domain/ports/`. No b
 | Banking | Plaid (production, 10 free connections) / mock | Behind FinancialDataProvider interface; 5-min balance cache via PLAID_CACHE_TTL |
 | Secrets | Encrypted Mongo now, Vault pre go-live | Behind SecretsProvider interface |
 | Scheduler | Go time.Ticker | Drives autonomous investment cycle; interval from AUTO_INVEST_INTERVAL env var |
-| Notifications | Log provider (dev) / Resend (prod) / Twilio SMS | Behind NotificationProvider interface; `NOTIFICATION_PROVIDER=resend` + `RESEND_API_KEY` + `RESEND_FROM` activates email; `NOTIFICATION_PROVIDER=twilio` + `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM` activates SMS |
+| Notifications | Composite fan-out: log + optional Resend email + optional Twilio SMS | Behind NotificationProvider interface; channels are independent: `EMAIL_PROVIDER=resend` (+ `RESEND_API_KEY` + `RESEND_FROM`) and `SMS_PROVIDER=twilio` (+ Twilio creds) can both be active at once; log provider always runs |
 | News | Polygon.io `/v2/reference/news` / mock | Behind NewsProvider interface; daily cache; top 5 SPY-tagged headlines injected into Claude prompt |
 
 ---
@@ -195,7 +195,7 @@ See README.md for the full env var reference and provider swap table.
 - `has_emergency_fund` boolean
 - `include_cash_context` boolean — opt-in: share spending/runway data with Claude advisor (default false; no migration needed)
 - `notification_email` string (optional) — email address for post-invest notifications; empty = no email sent
-- `phone` string (optional) — E.164 phone number for SMS notifications; stored but SMS not yet implemented (Twilio backlogged)
+- `phone` string (optional) — E.164 phone number for SMS notifications; used by Twilio provider when `SMS_PROVIDER=twilio`
 - `brokerage_connection` embedded doc (in `users` collection) — encrypted APIKey, SecretKey, BaseURL, ConnectedAt; never serialized to JSON; exposed only as `BrokerageStatus` in profile response
 - `portfolio_connection` embedded doc (in `users` collection) — encrypted ProviderUserID, ProviderUserSecret, Provider, ConnectedAt; never serialized to JSON; exposed only as `PortfolioConnectionStatus` in profile response
 
@@ -295,7 +295,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 ### Infrastructure & deployment
 - www.investiq.fit (Vercel), api.investiq.fit (Railway); TLS via Let's Encrypt; DNS on Namecheap
 - Docker: two-stage distroless image (`golang:1.23-alpine` builder → `gcr.io/distroless/static-debian12` runner); static binary required
-- Email notifications via Resend (`NOTIFICATION_PROVIDER=resend`); SMS via Twilio (`NOTIFICATION_PROVIDER=twilio` + `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM`); source-aware copy (manual vs auto-invest); "Why Claude invested" section included when `OverallReasoning` is non-empty; `GET/PATCH /users/notifications`
+- Composite notification provider: log always active; email via `EMAIL_PROVIDER=resend`; SMS via `SMS_PROVIDER=twilio`; both channels independent and simultaneous; source-aware copy (manual vs auto-invest); "Why Claude invested" section in email when `OverallReasoning` is non-empty; `GET/PATCH /users/notifications`
 - `GET /health` on top-level mux (no auth) for Railway/Docker healthchecks
 
 ---
