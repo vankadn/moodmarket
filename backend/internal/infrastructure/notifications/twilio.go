@@ -55,7 +55,7 @@ func (t *twilioProvider) send(ctx context.Context, to, body string) error {
 		return fmt.Errorf("twilio: status %d", resp.StatusCode)
 	}
 
-	log.Printf("[notify] twilio SMS sent to %s", to)
+	log.Printf("[notify] twilio SMS sent to %s", maskPhone(to))
 	return nil
 }
 

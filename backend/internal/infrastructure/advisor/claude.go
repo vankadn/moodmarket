@@ -173,8 +173,7 @@ func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.Invest
 	if req.StrategyPrompt != "" {
 		fullSystem = "[STRATEGY PREFIX]\n" + req.StrategyPrompt + "\n\n[BASE SYSTEM PROMPT]\n" + systemPrompt
 	}
-	log.Printf("[advisor] ── system prompt (%d chars) ───────────────────────────────────\n%s\n[advisor] ── end system prompt ─────────────────────────────────────────────", len(fullSystem), fullSystem)
-	log.Printf("[advisor] ── user message (%d chars) ────────────────────────────────────\n%s\n[advisor] ── end user message ──────────────────────────────────────────────", len(userMsg), userMsg)
+	log.Printf("[advisor] ── prompt sizes: system=%d chars  user=%d chars", len(fullSystem), len(userMsg))
 
 	messages := []claudeMessage{{Role: "user", Content: userMsg}}
 

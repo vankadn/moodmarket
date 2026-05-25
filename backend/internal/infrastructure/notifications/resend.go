@@ -60,7 +60,7 @@ func (r *resendEmailProvider) send(ctx context.Context, to, subject, html string
 		ID string `json:"id"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result) //nolint:errcheck
-	log.Printf("[notify] resend accepted — email_id=%s to=%s subject=%q", result.ID, to, subject)
+	log.Printf("[notify] resend accepted — email_id=%s to=%s subject=%q", result.ID, maskEmail(to), subject)
 	return nil
 }
 
@@ -69,7 +69,7 @@ func (r *resendEmailProvider) SendInvestmentSummary(ctx context.Context, to port
 		log.Printf("[notify] user=%s investment summary skipped — no email configured", to.UserID)
 		return nil
 	}
-	log.Printf("[notify] user=%s sending investment summary to %s (%d positions, $%.2f)", to.UserID, to.Email, len(receipts), totalInvested)
+	log.Printf("[notify] user=%s sending investment summary to %s (%d positions, $%.2f)", to.UserID, maskEmail(to.Email), len(receipts), totalInvested)
 	var lines []string
 	for _, rec := range receipts {
 		lines = append(lines, fmt.Sprintf("<li><strong>%s</strong> — $%.2f</li>", rec.Ticker, rec.FilledAmount))
@@ -95,7 +95,7 @@ func (r *resendEmailProvider) SendInvestmentFailure(ctx context.Context, to port
 		log.Printf("[notify] user=%s investment failure skipped — no email configured", to.UserID)
 		return nil
 	}
-	log.Printf("[notify] user=%s sending investment failure to %s: %s", to.UserID, to.Email, reason)
+	log.Printf("[notify] user=%s sending investment failure to %s: %s", to.UserID, maskEmail(to.Email), reason)
 	html := fmt.Sprintf(`<p>Your auto-invest could not run today.</p><p>Reason: %s</p><p>Open InvestIQ to check your settings.</p>`, reason)
 	return r.send(ctx, to.Email, "InvestIQ: auto-invest could not run", html)
 }
@@ -113,7 +113,7 @@ func (r *resendEmailProvider) SendSkipSummary(ctx context.Context, to ports.Noti
 		log.Printf("[notify] user=%s skip summary skipped — no email configured", to.UserID)
 		return nil
 	}
-	log.Printf("[notify] user=%s sending skip summary to %s: config=%q reason=%s", to.UserID, to.Email, configName, reason)
+	log.Printf("[notify] user=%s sending skip summary to %s: config=%q reason=%s", to.UserID, maskEmail(to.Email), configName, reason)
 	name := configName
 	if name == "" {
 		name = "your strategy"

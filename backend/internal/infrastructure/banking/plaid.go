@@ -77,7 +77,11 @@ func (p *plaidProvider) post(ctx context.Context, path string, body, out any) er
 		return fmt.Errorf("plaid: read response from %s: %w", path, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("plaid: %s returned %d: %s", path, resp.StatusCode, rawBody)
+		snippet := rawBody
+		if len(snippet) > 200 {
+			snippet = snippet[:200]
+		}
+		return fmt.Errorf("plaid: %s returned %d: %s", path, resp.StatusCode, snippet)
 	}
 	if err := json.Unmarshal(rawBody, out); err != nil {
 		return fmt.Errorf("plaid: parse response from %s: %w", path, err)
