@@ -582,6 +582,135 @@ func (r *MongoDecisionRepository) SumInvestedToday(ctx context.Context, userID, 
 	return result[0].Total, nil
 }
 
+func (r *MongoDecisionRepository) WinRateTrend(ctx context.Context, userID string, weeksBack int) ([]models.WinRateTrendPoint, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	since := time.Now().AddDate(0, 0, -(weeksBack * 7))
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{
+			"user_id":   userID,
+			"verdict":   bson.M{"$exists": true},
+			"timestamp": bson.M{"$gte": since},
+		}}},
+		{{Key: "$addFields", Value: bson.M{
+			"week": bson.M{"$dateToString": bson.M{"format": "%G-W%V", "date": "$timestamp"}},
+		}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$week"},
+			{Key: "total", Value: bson.M{"$sum": 1}},
+			{Key: "wins", Value: bson.M{"$sum": bson.M{"$cond": bson.A{"$verdict.beat_market", 1, 0}}}},
+		}}},
+		{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("mongo decision repo: win rate trend: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	type aggResult struct {
+		Week  string `bson:"_id"`
+		Total int    `bson:"total"`
+		Wins  int    `bson:"wins"`
+	}
+	var raw []aggResult
+	if err := cursor.All(ctx, &raw); err != nil {
+		return nil, fmt.Errorf("mongo decision repo: win rate trend decode: %w", err)
+	}
+
+	points := make([]models.WinRateTrendPoint, len(raw))
+	for i, a := range raw {
+		wr := 0.0
+		if a.Total > 0 {
+			wr = float64(a.Wins) / float64(a.Total) * 100
+		}
+		points[i] = models.WinRateTrendPoint{
+			Week:    a.Week,
+			Total:   a.Total,
+			Wins:    a.Wins,
+			WinRate: wr,
+		}
+	}
+	return points, nil
+}
+
+func (r *MongoDecisionRepository) AssetClassBreakdown(ctx context.Context, userID string) ([]models.AssetClassBreakdownItem, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	pipeline := mongo.Pipeline{
+		// Only verdicted decisions for this user
+		{{Key: "$match", Value: bson.M{
+			"user_id": userID,
+			"verdict": bson.M{"$exists": true},
+		}}},
+		// One row per (decision, allocation)
+		{{Key: "$unwind", Value: "$allocations"}},
+		// Join with ticker_classifications on ticker symbol
+		{{Key: "$lookup", Value: bson.D{
+			{Key: "from", Value: "ticker_classifications"},
+			{Key: "localField", Value: "allocations.ticker"},
+			{Key: "foreignField", Value: "ticker"},
+			{Key: "as", Value: "cls"},
+		}}},
+		// Preserve docs where ticker has no classification entry
+		{{Key: "$unwind", Value: bson.M{"path": "$cls", "preserveNullAndEmptyArrays": true}}},
+		// Fall back to "other" when the ticker is unclassified
+		{{Key: "$addFields", Value: bson.M{
+			"asset_class": bson.M{"$ifNull": bson.A{"$cls.asset_class", "other"}},
+		}}},
+		// Deduplicate (decision, asset_class) so a decision with 2 equity tickers
+		// counts as exactly one equity decision
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: bson.D{
+				{Key: "dec_id", Value: "$_id"},
+				{Key: "asset_class", Value: "$asset_class"},
+			}},
+			{Key: "beat_market", Value: bson.M{"$first": "$verdict.beat_market"}},
+		}}},
+		// Aggregate totals per asset class
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$_id.asset_class"},
+			{Key: "total", Value: bson.M{"$sum": 1}},
+			{Key: "wins", Value: bson.M{"$sum": bson.M{"$cond": bson.A{"$beat_market", 1, 0}}}},
+		}}},
+		{{Key: "$sort", Value: bson.D{{Key: "total", Value: -1}}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("mongo decision repo: asset class breakdown: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	type aggResult struct {
+		AssetClass string `bson:"_id"`
+		Total      int    `bson:"total"`
+		Wins       int    `bson:"wins"`
+	}
+	var raw []aggResult
+	if err := cursor.All(ctx, &raw); err != nil {
+		return nil, fmt.Errorf("mongo decision repo: asset class breakdown decode: %w", err)
+	}
+
+	items := make([]models.AssetClassBreakdownItem, len(raw))
+	for i, a := range raw {
+		wr := 0.0
+		if a.Total > 0 {
+			wr = float64(a.Wins) / float64(a.Total) * 100
+		}
+		items[i] = models.AssetClassBreakdownItem{
+			AssetClass: a.AssetClass,
+			Total:      a.Total,
+			Wins:       a.Wins,
+			WinRate:    wr,
+		}
+	}
+	return items, nil
+}
+
 // --- Conversion helpers ---
 
 func fromDecision(d *models.InvestmentDecision) *decisionDocument {

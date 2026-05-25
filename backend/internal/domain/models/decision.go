@@ -85,3 +85,19 @@ type TickerVerdict struct {
 	ReturnPct        float64   // (CurrentPrice - EntryPrice) / EntryPrice * 100; 0 if CurrentPrice == 0
 	TodayChangePct   float64   // (CurrentPrice - PrevDayPrice) / PrevDayPrice * 100; 0 if either == 0
 }
+
+// WinRateTrendPoint is one ISO-week bucket returned by GET /performance/win-rate-trend.
+type WinRateTrendPoint struct {
+	Week    string  // ISO 8601 week label, e.g. "2025-W18"
+	Total   int
+	Wins    int
+	WinRate float64 // 0.0–100.0
+}
+
+// AssetClassBreakdownItem is returned by GET /performance/asset-class-breakdown.
+type AssetClassBreakdownItem struct {
+	AssetClass string
+	Total      int
+	Wins       int
+	WinRate    float64 // 0.0–100.0
+}

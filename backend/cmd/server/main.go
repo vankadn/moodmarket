@@ -154,6 +154,7 @@ func main() {
 	portfolioConnectHandler := handlers.NewPortfolioConnectHandler(portfolioConnector, profileRepo, idp)
 	activityHandler := handlers.NewActivityHandler(idp, decisionRepo)
 	evalHandler := handlers.NewEvalHandler(idp, decisionRepo)
+	performanceHandler := handlers.NewPerformanceHandler(idp, decisionRepo)
 	orderHandler := handlers.NewOrderHandler(idp, profileRepo, brokerageFactory)
 	documentHandler := handlers.NewDocumentHandler(documentSvc, idp)
 
@@ -176,9 +177,11 @@ func main() {
 		Notifications:        handlers.NewNotificationSettingsHandler(profileRepo, idp),
 		Portfolio:            handlers.NewPortfolioHandler(profileRepo, brokerageFactory, idp),
 		Order:                http.HandlerFunc(orderHandler.GetOrder),
-		Document:             documentHandler,
-		Docs:                 handlers.NewDocsHandler(),
-		Eval:                 evalHandler,
+		Document:                       documentHandler,
+		Docs:                           handlers.NewDocsHandler(),
+		Eval:                           evalHandler,
+		PerformanceWinRateTrend:        http.HandlerFunc(performanceHandler.GetWinRateTrend),
+		PerformanceAssetClassBreakdown: http.HandlerFunc(performanceHandler.GetAssetClassBreakdown),
 	}
 
 	port := os.Getenv("PORT")

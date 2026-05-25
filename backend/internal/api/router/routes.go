@@ -44,4 +44,7 @@ const (
 
 	DocsURI      = "/docs"
 	DocsSlashURI = "/docs/" // subtree — covers /docs/ and /docs/openapi.yaml
+
+	PerformanceWinRateTrendURI       = "/performance/win-rate-trend"
+	PerformanceAssetClassBreakdownURI = "/performance/asset-class-breakdown"
 )

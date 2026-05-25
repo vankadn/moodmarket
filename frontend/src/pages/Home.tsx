@@ -160,7 +160,7 @@ export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, 
               onClick={onEval}
               style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
             >
-              Activity
+              Performance
             </button>
           )}
           {onBrokerage && (

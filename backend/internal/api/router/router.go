@@ -32,6 +32,8 @@ type Handlers struct {
 	Document              http.Handler
 	Docs                  http.Handler
 	Eval                  http.Handler
+	PerformanceWinRateTrend        http.Handler
+	PerformanceAssetClassBreakdown http.Handler
 }
 
 // Build returns the top-level http.Handler for the server.
@@ -69,6 +71,8 @@ func Build(h Handlers, authProvider ports.AuthProvider) http.Handler {
 	protected.Handle(DocumentsUploadURI, h.Document) // must be registered before DocumentsByIDURI
 	protected.Handle(DocumentsURI, h.Document)
 	protected.Handle(DocumentsByIDURI, h.Document)
+	protected.Handle(PerformanceWinRateTrendURI, h.PerformanceWinRateTrend)
+	protected.Handle(PerformanceAssetClassBreakdownURI, h.PerformanceAssetClassBreakdown)
 
 	top := http.NewServeMux()
 	top.HandleFunc(HealthURI, func(w http.ResponseWriter, _ *http.Request) {

@@ -623,3 +623,35 @@ export async function saveProfile(profile: UserProfile): Promise<UserProfile> {
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
+
+// --- Performance (Phase 25) ---
+
+export interface WinRateTrendPoint {
+  week: string;     // e.g. "2025-W18"
+  total: number;
+  wins: number;
+  win_rate: number; // 0.0–100.0
+}
+
+export interface AssetClassBreakdownItem {
+  asset_class: string;
+  total: number;
+  wins: number;
+  win_rate: number; // 0.0–100.0
+}
+
+export async function getWinRateTrend(): Promise<WinRateTrendPoint[]> {
+  const res = await fetch(`${API_BASE}/performance/win-rate-trend`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function getAssetClassBreakdown(): Promise<AssetClassBreakdownItem[]> {
+  const res = await fetch(`${API_BASE}/performance/asset-class-breakdown`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}

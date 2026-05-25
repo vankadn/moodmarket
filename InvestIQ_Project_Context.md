@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-24 — EMAIL_PROVIDER + SMS_PROVIDER replace single NOTIFICATION_PROVIDER; composite fan-out so both channels active simultaneously; Claude reasoning on decisions
+> Last updated: 2026-05-25 — Activity page renamed to Performance; two new endpoints `GET /performance/win-rate-trend` and `GET /performance/asset-class-breakdown`; SVG line chart and asset-class win rate added above existing eval content
 
 ---
 
@@ -74,7 +74,7 @@ Key interfaces:
 - `IdentityProvider` — userId in request context
 - `MarketDataProvider` — live prices (Polygon or mock)
 - `NewsProvider` — market headlines (Polygon or mock)
-- `DecisionRepository` — investment decision persistence
+- `DecisionRepository` — investment decision persistence; includes `WinRateTrend` (ISO-week bucketed win rate, last N weeks) and `AssetClassBreakdown` (per-asset-class win/loss counts via `$lookup` on `ticker_classifications`)
 - `BrokerageProvider` — trade execution + position reads + portfolio history (Alpaca or mock)
 - `BrokerageProviderFactory` — constructs a `BrokerageProvider` from a per-user `BrokerageConnection`; decouples application layer from credential decryption and Alpaca constructor details
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
@@ -177,6 +177,8 @@ See README.md for the full env var reference and provider swap table.
 | `DecisionVerdict` | Performance result stamped on a decision: StampedAt, OverallReturnPct, SPYReturnPct, BeatMarket, TickerVerdicts |
 | `TickerVerdict` | Per-ticker performance: Ticker, EntryPrice, PrevDayPrice, PrevDayTimestamp, CurrentPrice, CurrentTimestamp, ReturnPct, TodayChangePct |
 | `EvalSummary` | Aggregated verdict stats: TotalDecisions, VerdictedDecisions, WinRate, AvgReturnPct, AvgSPYReturnPct, BestDecision, WorstDecision, ByStrategy |
+| `WinRateTrendPoint` | One ISO-week bucket: Week (e.g. "2025-W18"), Total, Wins, WinRate (0–100) — returned by `GET /performance/win-rate-trend` |
+| `AssetClassBreakdownItem` | Per-asset-class stats: AssetClass, Total, Wins, WinRate (0–100) — returned by `GET /performance/asset-class-breakdown` |
 | `ClassificationEntry` | One ticker record: ticker, asset_class, approved, suggested_by_claude, first_seen_at |
 | `Allocation.AssetClass` | Asset class on each allocation — returned by Claude in JSON, verified against cache; `omitempty` so old decisions are unaffected |
 
@@ -275,7 +277,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Decision verdicts: stamped inline (goroutine per recommendation); `OverallReturnPct`, `SPYReturnPct`, `BeatMarket`, per-ticker verdicts
 - Feedback loop: when `VerdictedDecisions ≥ 5`, Claude receives its own win rate + avg return vs SPY in every prompt (`PAST PERFORMANCE` section)
 - Claude reasoning stored on every invest decision: `OverallReasoning` (1-2 sentence thesis) and `TickerReasoning` map (per-ticker explanation); both `omitempty` — old decisions unaffected; system prompt requires `overall_reasoning` + `allocations[].reasoning` in Claude's JSON response
-- Activity dashboard: total invested, verdict stats, win rate vs SPY, best/worst decision, per-strategy breakdown, full decision history with verdicts overlaid — `GET /users/activity`, `/eval/summary`, `/eval/decisions`
+- Performance dashboard (formerly Activity): total invested, verdict stats, win rate vs SPY, best/worst decision, per-strategy breakdown, full decision history with verdicts overlaid — `GET /users/activity`, `/eval/summary`, `/eval/decisions`, `/performance/win-rate-trend` (ISO-week bucketed win rate, last 12 weeks, SVG polyline chart), `/performance/asset-class-breakdown` (per-asset-class win rate via `$lookup` on `ticker_classifications`, colored bar per row)
 
 ### Brokerage providers
 - **Coinbase Advanced Trade** — full `BrokerageProvider` via official REST API; HMAC-SHA256 auth (CB-ACCESS-KEY/SIGN/TIMESTAMP); `market_market_ioc` orders with `quote_size` (USD notional); per-user AES-256-GCM encrypted credentials; `BROKERAGE_PROVIDER=coinbase`
@@ -435,6 +437,8 @@ Background data access is legitimate when:
 | `safeFloat()` at handler boundary | MongoDB can store `+Infinity` from a divide-by-zero bug. `json.Encoder` panics on Inf/NaN. `safeFloat()` converts non-finite to 0 at the serialization boundary. |
 | Split age gate in `ListUnverdicted` | Age gate applies only to "no verdict yet" branch — bad-verdict decisions are re-stamped regardless of age. |
 | Merged Activity + Eval into single "Activity" page | Two separate tabs require users to switch to see related data. One page with three parallel API calls gives a unified view. |
+| Renamed "Activity" → "Performance"; added trend + asset-class sections above existing content | Win rate trend and asset-class breakdown are the highest-signal performance views — placing them above the existing eval summary makes them the first thing users see. SVG polyline follows the existing Portfolio chart pattern (no charting library). Soft-failing fetches keep the page usable if the new endpoints are unavailable. |
+| `$lookup` in asset-class breakdown aggregation rather than a separate join in Go | Doing the join in Go requires loading every decision's allocations + the full classification cache into memory and iterating twice. A `$lookup` in the pipeline keeps the join inside Mongo where the data lives, returns only the aggregated result, and adds no new infrastructure dependency. |
 | `config_id = ""` normalized to `"manual"` in MongoDB aggregation | Legacy decisions have no `config_id` field — reads as `""`. Fix: `$addFields` + `$cond` normalizes both to `"manual"` before grouping. |
 | Mongo as single source of truth for ticker classifications | Static maps rot. DB-backed seed with `$setOnInsert` lets the classification set grow without code changes. `StoreClassification` writes Claude's suggested class directly as approved — no review queue, no restart needed; the in-memory cache is updated in the same goroutine. |
 | In-memory cache for classifier, zero Mongo reads per request | Classification is called in the hot path (every recommendation, every position). DB reads per request would add latency and Mongo load for a dataset that changes at most once per session. Cache hydrated at startup, refreshed only on restart. |

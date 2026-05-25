@@ -40,4 +40,12 @@ type DecisionRepository interface {
 	// Skip decisions (decision_type="skip") are excluded. Returns 0 when no records exist.
 	// userTimezone should be a valid IANA location string (e.g. "America/New_York"); defaults to UTC on parse error.
 	SumInvestedToday(ctx context.Context, userID, configID, userTimezone string) (float64, error)
+	// WinRateTrend returns win rate bucketed by ISO calendar week for the last weeksBack weeks.
+	// Only weeks with at least one verdicted decision are returned, sorted oldest-first.
+	WinRateTrend(ctx context.Context, userID string, weeksBack int) ([]models.WinRateTrendPoint, error)
+	// AssetClassBreakdown returns per-asset-class win/loss counts across all verdicted decisions.
+	// Asset classes are resolved via a join on the ticker_classifications collection.
+	// A decision counts as a win for an asset class when beat_market=true and the decision
+	// holds at least one allocation in that class.
+	AssetClassBreakdown(ctx context.Context, userID string) ([]models.AssetClassBreakdownItem, error)
 }

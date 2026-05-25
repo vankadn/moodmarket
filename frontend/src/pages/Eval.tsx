@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import {
   getEvalSummary, getEvalDecisions, getActivity,
+  getWinRateTrend, getAssetClassBreakdown,
   EvalSummary, EvalDecision, ActivityDecision, AutoInvestConfig,
+  WinRateTrendPoint, AssetClassBreakdownItem,
 } from "../services/api";
 
 interface Props {
@@ -29,11 +31,116 @@ export function configName(configId: string | undefined, configs: AutoInvestConf
   return cfg?.name ?? "Deleted strategy";
 }
 
+// --- Win Rate Trend chart ---
+
+function WinRateTrendChart({ points }: { points: WinRateTrendPoint[] }) {
+  const W = 520, H = 120;
+  const PAD = { top: 10, bottom: 28, left: 36, right: 8 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+
+  const toX = (i: number) => PAD.left + (i / (points.length - 1)) * chartW;
+  const toY = (rate: number) => PAD.top + chartH - (rate / 100) * chartH;
+
+  const polyPoints = points.map((p, i) => `${toX(i).toFixed(1)},${toY(p.win_rate).toFixed(1)}`).join(" ");
+
+  const weekLabel = (w: string) => {
+    const parts = w.split("-W");
+    return parts.length === 2 ? `W${parts[1]}` : w;
+  };
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block", overflow: "visible" }}>
+      {/* Reference lines at 0, 50, 100 */}
+      {([0, 50, 100] as const).map(pct => {
+        const y = toY(pct);
+        return (
+          <g key={pct}>
+            <line
+              x1={PAD.left} y1={y} x2={W - PAD.right} y2={y}
+              stroke={pct === 50 ? "#e0e0e0" : "#f4f4f4"}
+              strokeWidth="1"
+              strokeDasharray={pct === 50 ? "4 3" : undefined}
+            />
+            <text x={PAD.left - 4} y={y + 4} fontSize="9" fill="#ccc" textAnchor="end">{pct}%</text>
+          </g>
+        );
+      })}
+
+      {/* Data line */}
+      <polyline points={polyPoints} fill="none" stroke="#27ae60" strokeWidth="2" strokeLinejoin="round" />
+
+      {/* Data points — colored by win rate */}
+      {points.map((p, i) => (
+        <circle
+          key={p.week}
+          cx={toX(i).toFixed(1)}
+          cy={toY(p.win_rate).toFixed(1)}
+          r={3}
+          fill={p.win_rate >= 50 ? "#27ae60" : "#c0392b"}
+        />
+      ))}
+
+      {/* X axis week labels — skip every other when many points */}
+      {points.map((p, i) => {
+        if (points.length > 8 && i % 2 !== 0) return null;
+        return (
+          <text key={p.week} x={toX(i).toFixed(1)} y={H - 4} fontSize="9" fill="#bbb" textAnchor="middle">
+            {weekLabel(p.week)}
+          </text>
+        );
+      })}
+    </svg>
+  );
+}
+
+// --- Asset Class Breakdown section ---
+
+function AssetBreakdown({ items }: { items: AssetClassBreakdownItem[] }) {
+  return (
+    <div style={{ marginBottom: "1.25rem" }}>
+      <div style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "10px" }}>
+        By asset class
+      </div>
+      {items.map(item => {
+        const pct = Math.round(item.win_rate);
+        const isGood = pct >= 50;
+        return (
+          <div key={item.asset_class} style={{ background: "#f8f8f8", borderRadius: "10px", padding: "12px 14px", marginBottom: "8px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <div>
+                <div style={{ fontSize: "14px", fontWeight: 500, textTransform: "capitalize" }}>{item.asset_class}</div>
+                <div style={{ fontSize: "12px", color: "#999" }}>
+                  {item.total} decision{item.total !== 1 ? "s" : ""} · {item.wins} win{item.wins !== 1 ? "s" : ""}
+                </div>
+              </div>
+              <div style={{ fontSize: "16px", fontWeight: 700, color: isGood ? "#27ae60" : "#c0392b" }}>{pct}%</div>
+            </div>
+            <div style={{ height: "5px", background: "#e8e8e8", borderRadius: "3px", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${pct}%`, background: isGood ? "#27ae60" : "#c0392b", borderRadius: "3px" }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// --- Skeleton placeholder ---
+
+function Skeleton({ height }: { height: number }) {
+  return <div style={{ background: "#f4f4f4", borderRadius: "12px", height: `${height}px`, marginBottom: "1.25rem" }} />;
+}
+
+// --- Main page ---
+
 export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
   const [summary, setSummary] = useState<EvalSummary | null>(null);
   const [verdictMap, setVerdictMap] = useState<Map<string, EvalDecision>>(new Map());
   const [allDecisions, setAllDecisions] = useState<ActivityDecision[]>([]);
   const [totalInvested, setTotalInvested] = useState(0);
+  const [winRateTrend, setWinRateTrend] = useState<WinRateTrendPoint[]>([]);
+  const [assetClassBreakdown, setAssetClassBreakdown] = useState<AssetClassBreakdownItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,14 +149,18 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
       getEvalSummary().catch((e: unknown) => { throw new Error(`eval/summary: ${e instanceof Error ? e.message : e}`); }),
       getEvalDecisions(1, 500).catch((e: unknown) => { throw new Error(`eval/decisions: ${e instanceof Error ? e.message : e}`); }),
       getActivity(null).catch((e: unknown) => { throw new Error(`activity: ${e instanceof Error ? e.message : e}`); }),
+      getWinRateTrend().catch(() => [] as WinRateTrendPoint[]),
+      getAssetClassBreakdown().catch(() => [] as AssetClassBreakdownItem[]),
     ])
-      .then(([s, evalDecisions, activity]) => {
+      .then(([s, evalDecisions, activity, trend, breakdown]) => {
         setSummary(s);
         setTotalInvested(activity.total_invested);
         const map = new Map<string, EvalDecision>();
         for (const d of evalDecisions) map.set(d.id, d);
         setVerdictMap(map);
         setAllDecisions(activity.decisions);
+        setWinRateTrend(trend);
+        setAssetClassBreakdown(breakdown);
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to load data"))
       .finally(() => setLoading(false));
@@ -58,7 +169,6 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
   const winPct = summary ? Math.round(summary.win_rate * 100) : 0;
   const hasVerdicts = (summary?.verdicted_decisions ?? 0) > 0;
 
-  // Merge by_strategy rows that map to the same display name (e.g. multiple configs named "Long Term")
   const mergedStrategies = (() => {
     if (!summary?.by_strategy) return [];
     const map = new Map<string, typeof summary.by_strategy[0]>();
@@ -91,11 +201,34 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
         >
           ← Back
         </button>
-        <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 600 }}>Activity</h2>
+        <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 600 }}>Performance</h2>
       </div>
 
       {loading && <p style={{ color: "#999", fontSize: "14px" }}>Loading…</p>}
       {error && <p style={{ color: "#c0392b", fontSize: "14px" }}>{error}</p>}
+
+      {/* Win Rate Trend — always shown after load (placeholder when < 3 weeks) */}
+      {loading && <Skeleton height={148} />}
+      {!loading && !error && (
+        <div style={{ background: "#f8f8f8", borderRadius: "12px", padding: "1.25rem", marginBottom: "1.25rem" }}>
+          <div style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: "12px" }}>
+            Win rate trend · last 12 weeks
+          </div>
+          {winRateTrend.length >= 3 ? (
+            <WinRateTrendChart points={winRateTrend} />
+          ) : (
+            <div style={{ textAlign: "center", padding: "1.5rem 0", color: "#bbb", fontSize: "13px" }}>
+              Not enough data yet
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Asset Class Breakdown — hidden when no data */}
+      {loading && <Skeleton height={80} />}
+      {!loading && !error && assetClassBreakdown.length > 0 && (
+        <AssetBreakdown items={assetClassBreakdown} />
+      )}
 
       {!loading && !error && summary && (
         <>

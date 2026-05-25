@@ -74,6 +74,12 @@ func (m *mockDecisionRepoForEval) GetUsersWithPendingVerdicts(_ context.Context,
 func (m *mockDecisionRepoForEval) SumInvestedToday(_ context.Context, _, _, _ string) (float64, error) {
 	panic("not used in eval handler tests")
 }
+func (m *mockDecisionRepoForEval) WinRateTrend(_ context.Context, _ string, _ int) ([]models.WinRateTrendPoint, error) {
+	panic("not used in eval handler tests")
+}
+func (m *mockDecisionRepoForEval) AssetClassBreakdown(_ context.Context, _ string) ([]models.AssetClassBreakdownItem, error) {
+	panic("not used in eval handler tests")
+}
 
 // mockIdentityProvider returns a fixed user ID for any request.
 type mockIdentityProvider struct{ userID string }
