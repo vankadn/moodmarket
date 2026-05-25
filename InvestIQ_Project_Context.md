@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-25 — Activity page renamed to Performance; two new endpoints `GET /performance/win-rate-trend` and `GET /performance/asset-class-breakdown`; SVG line chart and asset-class win rate added above existing eval content
+> Last updated: 2026-05-25 — Activity page renamed to Performance; two new performance endpoints; Finnhub real-time quote provider added as `MARKET_PROVIDER=finnhub`
 
 ---
 
@@ -72,7 +72,7 @@ Key interfaces:
 - `AutoInvestRepository` — auto-invest config persistence (MongoDB)
 - `AuthProvider` — identity (DevAuth for local dev, Clerk in production)
 - `IdentityProvider` — userId in request context
-- `MarketDataProvider` — live prices (Polygon or mock)
+- `MarketDataProvider` — live prices (Finnhub real-time, Polygon prev-day, or mock); `GetDailySnapshot` builds the full market context; `GetPrice` returns a single ticker price used by the verdict stamper
 - `NewsProvider` — market headlines (Polygon or mock)
 - `DecisionRepository` — investment decision persistence; includes `WinRateTrend` (ISO-week bucketed win rate, last N weeks) and `AssetClassBreakdown` (per-asset-class win/loss counts via `$lookup` on `ticker_classifications`)
 - `BrokerageProvider` — trade execution + position reads + portfolio history (Alpaca or mock)
@@ -123,7 +123,7 @@ Every brokerage provider implements `BrokerageProvider` in `domain/ports/`. No b
 | Database | MongoDB | Behind repository interfaces |
 | AI Provider | Claude / mock | Behind InvestmentAdvisor interface; mock returns fixed three-fund portfolio |
 | Auth | Clerk (email + Google SSO) | Behind AuthProvider interface; DEV_MODE=true bypasses for local dev |
-| Market Data | Polygon.io (previous-day, free tier) / mock | Behind MarketDataProvider interface |
+| Market Data | Finnhub (real-time quotes) / Polygon.io (previous-day, free tier) / mock | Behind MarketDataProvider interface; `MARKET_PROVIDER=finnhub` (default for live) or `polygon` (free-tier) |
 | Brokerage | Alpaca paper trading / mock | Behind BrokerageProvider interface; paper → live is a config change only |
 | Banking | Plaid (production, 10 free connections) / mock | Behind FinancialDataProvider interface; 5-min balance cache via PLAID_CACHE_TTL |
 | Secrets | Encrypted Mongo now, Vault pre go-live | Behind SecretsProvider interface |
@@ -433,6 +433,8 @@ Background data access is legitimate when:
 | SVG chart, no charting library | Dependency principle: a plain SVG polyline is sufficient for a sparkline chart. Recharts/Chart.js would add ~100KB+ for one line and a few labels. |
 | Polygon deduplication in verdict stamping | Naive approach: one Polygon call per decision per ticker = rapid 429 exhaustion on free tier. Fix: collect unique tickers across all decisions for one user, fetch each once, share the price cache. |
 | Polygon prev-day as entry price fallback | Alpaca market orders are async — `FilledPrice = 0` at submission. Polygon prev-day close is a reasonable proxy; return will be slightly off but directionally correct. |
+| Finnhub TTL cache with `sync.RWMutex` over daily date-string cache | Finnhub provides real-time data — a daily cache would serve stale prices for hours. TTL cache (default 5m) keeps data fresh while limiting API calls. Per-ticker `priceCache` map shares the same mutex so `GetPrice` calls from the verdict stamper also benefit. HTTP calls are made outside any lock hold to avoid contention. |
+| Finnhub `c=0` → `pc` fallback | When the market is closed Finnhub returns `c=0`. Treating this as an error would break `GetDailySnapshot` on weekends and after hours. Falling back to previous close (`pc`) with a log warning keeps the snapshot valid; if `pc` is also 0 (bad ticker) we error out properly. |
 | Equal-weight fallback when FilledAmount = 0 | Same Alpaca async issue — `FilledAmount` is 0 at submission. Equal weighting (1.0 per ticker) gives a correct unweighted average until Alpaca updates the order. |
 | `safeFloat()` at handler boundary | MongoDB can store `+Infinity` from a divide-by-zero bug. `json.Encoder` panics on Inf/NaN. `safeFloat()` converts non-finite to 0 at the serialization boundary. |
 | Split age gate in `ListUnverdicted` | Age gate applies only to "no verdict yet" branch — bad-verdict decisions are re-stamped regardless of age. |
@@ -454,7 +456,7 @@ Background data access is legitimate when:
 
 | Shortcut | Future fix |
 |----------|-----------|
-| Polygon market data is previous-day close | `/prev` endpoint always gives yesterday's prices — Claude recommends based on stale data if the market moves overnight. Acceptable for personal/dev use; becomes misleading in volatile sessions. Real-time quotes (e.g. Finnhub) fix this but add a new dependency — deferred until this meaningfully hurts recommendation quality |
+| Polygon market data is previous-day close | `/prev` endpoint always gives yesterday's prices. Use `MARKET_PROVIDER=finnhub` for real-time quotes in production. Polygon remains available for free-tier users who don't need intraday freshness. |
 | Paper trading only | Swap `ALPACA_BASE_URL` + keys for live. Per-user credentials already wired — no code change, just a UI account type selector + real keys |
 | Log provider for notifications | Real push (FCM or APNs) for mobile; Resend covers email |
 | Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale |
