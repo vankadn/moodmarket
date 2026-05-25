@@ -106,7 +106,7 @@ func (h *InvestHandler) sendSummary(userID string, receipts []models.TradeReceip
 	if profile, err := h.profileRepo.GetByUserID(ctx, userID); err == nil {
 		target.Email = profile.NotificationEmail
 		target.Phone = profile.Phone
-		log.Printf("[notify] user=%s profile loaded — email=%q phone=%q", userID, target.Email, target.Phone)
+		log.Printf("[notify] user=%s profile loaded — email configured=%v phone configured=%v", userID, target.Email != "", target.Phone != "")
 	} else {
 		log.Printf("[notify] user=%s profile load failed: %v", userID, err)
 	}
@@ -127,7 +127,7 @@ func (h *InvestHandler) sendSummary(userID string, receipts []models.TradeReceip
 		totalFilled = totalAmount
 	}
 
-	log.Printf("[notify] user=%s firing SendInvestmentSummary — %d positions $%.2f to=%q", userID, len(receipts), totalFilled, target.Email)
+	log.Printf("[notify] user=%s firing SendInvestmentSummary — %d positions $%.2f", userID, len(receipts), totalFilled)
 	if err := h.notifications.SendInvestmentSummary(ctx, target, receipts, totalFilled, ""); err != nil {
 		log.Printf("[notify] user=%s FAILED: %v", userID, err)
 	} else {

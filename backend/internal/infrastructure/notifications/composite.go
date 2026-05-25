@@ -3,6 +3,7 @@ package notifications
 
 import (
 	"context"
+	"log"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
@@ -16,35 +17,45 @@ type compositeNotificationProvider struct {
 
 func (c *compositeNotificationProvider) SendInvestmentSummary(ctx context.Context, to ports.NotificationTarget, receipts []models.TradeReceipt, totalInvested float64, overallReasoning string) error {
 	for _, p := range c.providers {
-		p.SendInvestmentSummary(ctx, to, receipts, totalInvested, overallReasoning) //nolint:errcheck
+		if err := p.SendInvestmentSummary(ctx, to, receipts, totalInvested, overallReasoning); err != nil {
+			log.Printf("[notify] user=%s SendInvestmentSummary provider error: %v", to.UserID, err)
+		}
 	}
 	return nil
 }
 
 func (c *compositeNotificationProvider) SendInvestmentFailure(ctx context.Context, to ports.NotificationTarget, reason string) error {
 	for _, p := range c.providers {
-		p.SendInvestmentFailure(ctx, to, reason) //nolint:errcheck
+		if err := p.SendInvestmentFailure(ctx, to, reason); err != nil {
+			log.Printf("[notify] user=%s SendInvestmentFailure provider error: %v", to.UserID, err)
+		}
 	}
 	return nil
 }
 
 func (c *compositeNotificationProvider) SendMarketClosed(ctx context.Context, to ports.NotificationTarget, date string) error {
 	for _, p := range c.providers {
-		p.SendMarketClosed(ctx, to, date) //nolint:errcheck
+		if err := p.SendMarketClosed(ctx, to, date); err != nil {
+			log.Printf("[notify] user=%s SendMarketClosed provider error: %v", to.UserID, err)
+		}
 	}
 	return nil
 }
 
 func (c *compositeNotificationProvider) SendSkipSummary(ctx context.Context, to ports.NotificationTarget, configName, reason string) error {
 	for _, p := range c.providers {
-		p.SendSkipSummary(ctx, to, configName, reason) //nolint:errcheck
+		if err := p.SendSkipSummary(ctx, to, configName, reason); err != nil {
+			log.Printf("[notify] user=%s SendSkipSummary provider error: %v", to.UserID, err)
+		}
 	}
 	return nil
 }
 
 func (c *compositeNotificationProvider) SendRebalancingAlert(ctx context.Context, to ports.NotificationTarget, drifts []models.TickerDrift) error {
 	for _, p := range c.providers {
-		p.SendRebalancingAlert(ctx, to, drifts) //nolint:errcheck
+		if err := p.SendRebalancingAlert(ctx, to, drifts); err != nil {
+			log.Printf("[notify] user=%s SendRebalancingAlert provider error: %v", to.UserID, err)
+		}
 	}
 	return nil
 }
