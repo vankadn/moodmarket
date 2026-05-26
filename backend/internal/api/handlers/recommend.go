@@ -50,7 +50,7 @@ func (h *RecommendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.BaseBudget = 100
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
 	rec, err := h.service.GetDailyRecommendation(ctx, userID, req)
