@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
@@ -39,6 +40,13 @@ const systemPrompt = `You are InvestIQ, a personal investment advisor. Your job 
 
 AVAILABLE TOOLS:
 - get_market_news: call this before making allocation decisions to retrieve today's top market news headlines.
+- get_earnings_calendar: call this for any individual stock (not ETFs) you are considering to check if it reports earnings in the next 7 days.
+
+EARNINGS AWARENESS:
+- Always call get_earnings_calendar before recommending any individual stock ticker (e.g. AAPL, CRM, NVDA). Never call it for ETFs (SPY, QQQ, VTI, BND, XLE, etc.).
+- If a stock reports earnings within 3 days: reduce its allocation by at least 50% or substitute a sector ETF instead. Add "reports [date]" to its rationale field.
+- If a stock reports earnings 4–7 days out: you may still include it but note the date in the rationale.
+- If no earnings are found in the next 7 days: proceed normally.
 
 ALLOCATION LOGIC (apply in order):
 1. Risk + horizon + goal:
@@ -139,7 +147,30 @@ var marketNewsTools = []claudeTool{
 			Required:   []string{},
 		},
 	},
+	{
+		Name:        "get_earnings_calendar",
+		Description: "Fetch upcoming earnings dates for a specific stock ticker from Finnhub. Call this for any individual stock you are considering recommending (not ETFs) to check if it reports within the next 7 days.",
+		InputSchema: claudeToolSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"ticker": map[string]interface{}{
+					"type":        "string",
+					"description": "The stock ticker symbol to look up, e.g. AAPL, CRM, NVDA.",
+				},
+			},
+			Required: []string{"ticker"},
+		},
+	},
 }
+
+// earningsCacheEntry holds a single ticker's earnings result for up to earningsCacheTTL.
+type earningsCacheEntry struct {
+	result string
+	exp    time.Time
+}
+
+const earningsCacheTTL = 1 * time.Hour
+const finnhubEarningsBaseURL = "https://finnhub.io/api/v1/calendar/earnings"
 
 // --- Advisor ---
 
@@ -149,15 +180,19 @@ type claudeAdvisor struct {
 	newsProvider ports.NewsProvider
 	classifier   ports.Classifier
 	classRepo    ports.ClassificationRepository
+
+	earningsMu    sync.RWMutex
+	earningsCache map[string]earningsCacheEntry
 }
 
 func newClaudeAdvisor(newsProvider ports.NewsProvider, classifier ports.Classifier, classRepo ports.ClassificationRepository) *claudeAdvisor {
 	return &claudeAdvisor{
-		apiKey:       os.Getenv("ANTHROPIC_API_KEY"),
-		httpClient:   &http.Client{},
-		newsProvider: newsProvider,
-		classifier:   classifier,
-		classRepo:    classRepo,
+		apiKey:        os.Getenv("ANTHROPIC_API_KEY"),
+		httpClient:    &http.Client{},
+		newsProvider:  newsProvider,
+		classifier:    classifier,
+		classRepo:     classRepo,
+		earningsCache: make(map[string]earningsCacheEntry),
 	}
 }
 
@@ -256,8 +291,11 @@ func (c *claudeAdvisor) callClaudeWithTools(ctx context.Context, messages []clau
 					continue
 				}
 				log.Printf("[advisor]           Claude wants: %s  (id=%s)", block.Name, block.ID)
-				toolResults = append(toolResults, c.executeTool(ctx, block.Name, block.ID))
-				remainingTools = removeToolByName(remainingTools, block.Name)
+				toolResults = append(toolResults, c.executeTool(ctx, block.Name, block.ID, block.Input))
+				// get_earnings_calendar is multi-use (one call per ticker); only single-use tools are removed.
+				if block.Name != "get_earnings_calendar" {
+					remainingTools = removeToolByName(remainingTools, block.Name)
+				}
 			}
 
 			if len(toolResults) == 0 {
@@ -390,7 +428,7 @@ func (c *claudeAdvisor) doAPICall(parentCtx context.Context, messages []claudeMe
 
 // executeTool dispatches a tool call by name and returns the result block.
 // Logs use the same indentation as callClaudeWithTools so the stream reads as one story.
-func (c *claudeAdvisor) executeTool(ctx context.Context, name, toolUseID string) claudeToolResultBlock {
+func (c *claudeAdvisor) executeTool(ctx context.Context, name, toolUseID string, rawInput json.RawMessage) claudeToolResultBlock {
 	switch name {
 	case "get_market_news":
 		log.Printf("[advisor]           TOOL get_market_news →  fetching from news provider")
@@ -414,10 +452,108 @@ func (c *claudeAdvisor) executeTool(ctx context.Context, name, toolUseID string)
 			log.Printf("[advisor]             [%d] [%s] %s", i+1, item.Source, item.Headline)
 		}
 		return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: sb.String()}
+
+	case "get_earnings_calendar":
+		var input struct {
+			Ticker string `json:"ticker"`
+		}
+		if err := json.Unmarshal(rawInput, &input); err != nil || strings.TrimSpace(input.Ticker) == "" {
+			log.Printf("[advisor]           TOOL get_earnings_calendar ←  missing or invalid ticker")
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: "Error: ticker is required for get_earnings_calendar."}
+		}
+		ticker := strings.ToUpper(strings.TrimSpace(input.Ticker))
+		log.Printf("[advisor]           TOOL get_earnings_calendar →  fetching earnings for %s", ticker)
+		result := c.fetchEarnings(ctx, ticker)
+		log.Printf("[advisor]           TOOL get_earnings_calendar ←  %s", result)
+		return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: result}
+
 	default:
 		log.Printf("[advisor]           TOOL %s →  unknown tool — returning error to Claude", name)
 		return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: fmt.Sprintf("unknown tool: %s", name)}
 	}
+}
+
+// fetchEarnings looks up upcoming earnings for a single ticker via Finnhub,
+// caching results for earningsCacheTTL (1 hour) per ticker.
+func (c *claudeAdvisor) fetchEarnings(ctx context.Context, ticker string) string {
+	apiKey := os.Getenv("FINNHUB_API_KEY")
+	if apiKey == "" {
+		return "Earnings calendar unavailable (FINNHUB_API_KEY not configured)."
+	}
+
+	c.earningsMu.RLock()
+	if entry, ok := c.earningsCache[ticker]; ok && time.Now().Before(entry.exp) {
+		c.earningsMu.RUnlock()
+		log.Printf("[advisor]             earnings cache hit for %s", ticker)
+		return entry.result
+	}
+	c.earningsMu.RUnlock()
+
+	today := time.Now().Format("2006-01-02")
+	toDate := time.Now().AddDate(0, 0, 7).Format("2006-01-02")
+	url := fmt.Sprintf("%s?symbol=%s&from=%s&to=%s&token=%s", finnhubEarningsBaseURL, ticker, today, toDate, apiKey)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Sprintf("Earnings lookup failed for %s.", ticker)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Sprintf("Earnings lookup failed for %s.", ticker)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Sprintf("Earnings lookup failed for %s.", ticker)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Sprintf("Earnings lookup failed for %s (HTTP %d).", ticker, resp.StatusCode)
+	}
+
+	var parsed struct {
+		EarningsCalendar []struct {
+			Date   string `json:"date"`
+			Hour   string `json:"hour"`
+			Symbol string `json:"symbol"`
+		} `json:"earningsCalendar"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fmt.Sprintf("Earnings data parse failed for %s.", ticker)
+	}
+
+	var result string
+	if len(parsed.EarningsCalendar) == 0 {
+		result = fmt.Sprintf("No earnings found for %s in the next 7 days.", ticker)
+	} else {
+		e := parsed.EarningsCalendar[0]
+		timing := "during market hours"
+		switch e.Hour {
+		case "amc":
+			timing = "after market close"
+		case "bmo":
+			timing = "before market open"
+		}
+		daysLabel := ""
+		if earningsDate, err := time.Parse("2006-01-02", e.Date); err == nil {
+			days := int(time.Until(earningsDate).Hours()/24) + 1
+			switch {
+			case days <= 0:
+				daysLabel = " (today)"
+			case days == 1:
+				daysLabel = " (tomorrow)"
+			default:
+				daysLabel = fmt.Sprintf(" (%d days away)", days)
+			}
+		}
+		result = fmt.Sprintf("%s earnings: %s%s (%s).", ticker, e.Date, daysLabel, timing)
+	}
+
+	c.earningsMu.Lock()
+	c.earningsCache[ticker] = earningsCacheEntry{result: result, exp: time.Now().Add(earningsCacheTTL)}
+	c.earningsMu.Unlock()
+
+	return result
 }
 
 // extractJSON strips markdown code fences and trims to the outermost { ... }.

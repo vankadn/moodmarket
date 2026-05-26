@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-25 — Activity page renamed to Performance; two new performance endpoints; Finnhub real-time quote provider added as `MARKET_PROVIDER=finnhub`
+> Last updated: 2026-05-26 — Earnings calendar awareness added: Claude now calls `get_earnings_calendar` (Finnhub) before recommending individual stocks; 50%+ allocation reduction or ETF substitution if earnings ≤3 days out
 
 ---
 
@@ -271,6 +271,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 ### Intelligence & context
 - Claude tool use: fetches market news itself via `get_market_news` (Polygon) — app never pre-fetches or injects headlines
+- Earnings calendar awareness: Claude calls `get_earnings_calendar` (Finnhub) for any individual stock before recommending it (not ETFs); if earnings ≤3 days out: allocation reduced ≥50% or replaced with a sector ETF + date noted in rationale; 4–7 days out: included with date note; 1-hour TTL in-memory cache per ticker with `sync.RWMutex`; uses existing `FINNHUB_API_KEY`; tool is multi-use (not removed from tool list after first call unlike `get_market_news`)
 - Tax document intelligence: PDF upload → Claude extracts structured fields (W2/1099/1098) → injected into every recommendation; `POST /documents/upload`, `GET /documents`, `DELETE /documents/:id`
 - Portfolio concentration block: positions grouped by asset class, sorted by %, injected into Claude prompt; CONCENTRATION RULE + TICKER RULE in system prompt
 - Ticker classification: 29 base tickers seeded in `ticker_classifications`; unknown tickers classified by Claude at recommendation time and stored immediately via `StoreClassification`; in-memory `ClassificationCache` means zero Mongo reads per request
@@ -419,7 +420,8 @@ Background data access is legitimate when:
 | Failure = skip not crash | One user's Plaid/Claude/Alpaca failure must not stop the scheduler for other users |
 | CORS as outermost middleware | No handler can accidentally miss CORS — one place, universal coverage |
 | Git workflow: write → verify → commit | No autonomous pushes — developer reviews before any commit |
-| Polygon over Finnhub for news | Polygon already integrated — no new key, no new dependency. Claude infers sentiment from text. Finnhub backlogged for when individual stocks make per-ticker sentiment worth the extra dependency |
+| Polygon over Finnhub for news | Polygon already integrated — no new key, no new dependency. Claude infers sentiment from text. Finnhub used for real-time quotes (`MARKET_PROVIDER=finnhub`) and earnings calendar; news stays on Polygon |
+| `get_earnings_calendar` multi-use tool | Unlike `get_market_news` (called once per recommendation), earnings lookups are per-ticker — Claude calls it N times, once per stock it is considering. Tool is not removed from the available list after first use. |
 | Dependency principle: exhaust before adding | Before adding a new API/service, check if an existing one can do the job. New keys = new cost, new failure surface, new rotation burden |
 | Cash context as opt-in stored preference | Per-session directives caused Claude to override stated risk tolerance regardless of user intent. Fix: gate spending data behind a stored UserProfile preference; when shown, instruction is "background context only — do not override risk tolerance or amount." |
 | Per-user Alpaca credentials over env-var keys | Single shared env-var key means every user trades the same account — always wrong for financial data or trade execution. Per-user AES-256-GCM encrypted credentials in MongoDB, same pattern as Plaid access tokens. |
