@@ -816,6 +816,51 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 		msg += "Use tax data as additional context for income-adjusted allocation decisions.\n"
 	}
 
+	// PORTFOLIO INTELLIGENCE — injected only when a recent rebalance analysis exists.
+	// Blocked tickers are a hard constraint; underweight tickers are a soft hint.
+	if ra := req.RebalanceAnalysis; ra != nil {
+		var blocked, underweight []string
+		for _, ins := range ra.Insights {
+			switch ins.SuggestedAction {
+			case models.ActionTrim, models.ActionReconsider:
+				blocked = append(blocked, ins.Ticker)
+			case models.ActionAdd:
+				underweight = append(underweight, ins.Ticker)
+			}
+		}
+		if len(blocked) > 0 || len(underweight) > 0 {
+			msg += fmt.Sprintf("\nPORTFOLIO INTELLIGENCE (from latest rebalance analysis, generated %s):\n", ra.GeneratedAt.Format("Jan 2, 2006"))
+			if len(blocked) > 0 {
+				sort.Strings(blocked)
+				msg += fmt.Sprintf("Hard constraint — do not allocate to these tickers today: %s\n", strings.Join(blocked, ", "))
+			}
+			if len(underweight) > 0 {
+				sort.Strings(underweight)
+				msg += fmt.Sprintf("Consider adding to these underweighted positions if thesis is strong: %s\n", strings.Join(underweight, ", "))
+			}
+		}
+	}
+
+	// POSITION HISTORY — injected only when per-ticker purchase history is available.
+	// Helps Claude understand cost basis and holding period context.
+	if len(req.PositionContext) > 0 {
+		tickers := make([]string, 0, len(req.PositionContext))
+		for t := range req.PositionContext {
+			tickers = append(tickers, t)
+		}
+		sort.Strings(tickers)
+		msg += "\nPOSITION HISTORY (your prior purchases):\n"
+		for _, ticker := range tickers {
+			tc := req.PositionContext[ticker]
+			taxLabel := "short-term"
+			if tc.MonthsHeld >= 12 {
+				taxLabel = "long-term"
+			}
+			msg += fmt.Sprintf("- %s: avg cost $%.2f, %d purchase(s), held %d month(s) (%s), $%.2f total invested\n",
+				ticker, tc.AverageCostBasis, tc.PurchaseCount, tc.MonthsHeld, taxLabel, tc.TotalInvested)
+		}
+	}
+
 	// Performance feedback — injected only when >= 5 verdicts exist (set by recommendation service).
 	// Gives Claude a signal on whether its past picks have beaten the market for this user.
 	if ps := req.PerformanceSummary; ps != nil {

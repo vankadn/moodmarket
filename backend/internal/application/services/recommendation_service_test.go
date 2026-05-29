@@ -177,6 +177,30 @@ func (p *stubPortfolioAggregator) GetHoldingsByAccount(_ context.Context, _, _ s
 	return nil, nil
 }
 
+// stubRebalanceRepo returns nil analysis for all users (no rebalance analysis on file).
+type stubRebalanceRepo struct{}
+
+func (r *stubRebalanceRepo) SaveAnalysis(_ context.Context, _ *models.RebalanceAnalysis) error {
+	return nil
+}
+func (r *stubRebalanceRepo) GetLatestAnalysis(_ context.Context, _ string) (*models.RebalanceAnalysis, error) {
+	return nil, nil
+}
+
+// stubRebalanceAggregator returns an empty request (no positions — background refresh exits early).
+type stubRebalanceAggregator struct{}
+
+func (s *stubRebalanceAggregator) BuildRequest(_ context.Context, _ string) (*models.RebalanceRequest, error) {
+	return &models.RebalanceRequest{}, nil
+}
+
+// stubRebalanceAdvisor always fails — never reached when positions are empty.
+type stubRebalanceAdvisor struct{}
+
+func (s *stubRebalanceAdvisor) AnalyzePortfolio(_ context.Context, _ models.RebalanceRequest, _ *models.UserProfile) (*models.RebalanceAnalysis, error) {
+	return nil, errors.New("stub: no analysis")
+}
+
 // stubDocumentRepo returns no tax documents.
 type stubDocumentRepo struct{}
 
@@ -205,6 +229,9 @@ func newServiceWithDecisionRepo(decisionRepo ports.DecisionRepository) (*Recomme
 		&stubBrokerageFactory{},
 		&stubDocumentRepo{},
 		&stubPortfolioAggregator{},
+		&stubRebalanceRepo{},
+		&stubRebalanceAggregator{},
+		&stubRebalanceAdvisor{},
 	)
 	return svc, advisor
 }

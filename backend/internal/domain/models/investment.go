@@ -1,6 +1,18 @@
 // domain/models/investment.go
 package models
 
+import "time"
+
+// TickerContext captures the user's purchase history for a single ticker.
+// Derived from InvestmentDecision.Receipts — zero new DB calls.
+type TickerContext struct {
+	AverageCostBasis float64   // average FilledPrice across all receipts for this ticker
+	TotalInvested    float64   // sum of FilledAmount across all receipts
+	PurchaseCount    int       // number of distinct receipts
+	FirstPurchasedAt time.Time // timestamp of the earliest receipt
+	MonthsHeld       int       // months since first purchase; <12 = short-term, >=12 = long-term
+}
+
 type InvestmentRequest struct {
 	BaseBudget         float64              `json:"base_budget"`
 	ExtraMoney         float64              `json:"extra_money"`
@@ -17,6 +29,9 @@ type InvestmentRequest struct {
 	DailyBudget float64 `json:"-"`
 	SpentToday  float64 `json:"-"`
 	Remaining   float64 `json:"-"`
+	// Rebalance intelligence — both injected by recommendation service; nil/empty when no analysis exists.
+	RebalanceAnalysis *RebalanceAnalysis      `json:"-"` // latest saved rebalance analysis; nil for new users
+	PositionContext   map[string]TickerContext `json:"-"` // per-ticker purchase history derived from recent decisions
 }
 
 type Allocation struct {

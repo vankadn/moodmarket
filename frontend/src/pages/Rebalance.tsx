@@ -171,11 +171,11 @@ export function Rebalance({ onBack }: Props) {
   const [analysis, setAnalysis] = useState<RebalanceAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleAnalyze() {
+  async function handleAnalyze(force = false) {
     setStatus("loading");
     setError(null);
     try {
-      const result = await analyzePortfolio();
+      const result = await analyzePortfolio(force);
       setAnalysis(result);
       setStatus("done");
     } catch (e: unknown) {
@@ -226,7 +226,7 @@ export function Rebalance({ onBack }: Props) {
       {/* Analyze button */}
       {status !== "done" && (
         <button
-          onClick={handleAnalyze}
+          onClick={() => handleAnalyze()}
           disabled={status === "loading"}
           style={{
             width: "100%", padding: "12px",
@@ -264,9 +264,9 @@ export function Rebalance({ onBack }: Props) {
           {/* Action count badges */}
           <SummaryBar analysis={analysis} />
 
-          {/* Re-analyze button */}
+          {/* Re-analyze button — force=true bypasses the 24h cache */}
           <button
-            onClick={handleAnalyze}
+            onClick={() => handleAnalyze(true)}
             style={{
               width: "100%", padding: "10px",
               background: "white",

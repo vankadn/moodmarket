@@ -681,10 +681,11 @@ export interface RebalanceAnalysis {
   generated_at: string;
 }
 
-export async function analyzePortfolio(): Promise<RebalanceAnalysis> {
+export async function analyzePortfolio(force = false): Promise<RebalanceAnalysis> {
   const res = await fetch(`${API_BASE}/rebalance/analyze`, {
     method: "POST",
-    headers: await authHeaders(),
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ force }),
   });
   if (res.status === 503) throw new Error("advisor_overloaded");
   if (!res.ok) throw new Error(`API error: ${res.status}`);

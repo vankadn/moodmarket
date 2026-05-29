@@ -138,8 +138,8 @@ func main() {
 		log.Fatalf("document extractor init failed: %v", err)
 	}
 	documentRepo := infradb.NewMongoDocumentRepository(database)
+	rebalanceRepo := infradb.NewMongoRebalanceRepository(database)
 
-	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory, documentRepo, portfolioAggregator)
 	investSvc := services.NewInvestmentService(brokerageFactory, profileRepo, decisionRepo, marketProvider)
 	documentSvc := services.NewDocumentService(documentExtractor, documentRepo)
 	rebalancingSvc := services.NewRebalancingService(decisionRepo, profileRepo, brokerageFactory)
@@ -148,6 +148,9 @@ func main() {
 		log.Fatalf("rebalance advisor init failed: %v", err)
 	}
 	rebalanceAggregationSvc := services.NewRebalanceAggregationService(brokerageFactory, profileRepo, decisionRepo, portfolioAggregator)
+
+	// REBALANCE_CACHE_HOURS — how long a rebalance analysis is served from cache before Claude is re-called (default 24h); read by the rebalance handler.
+	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory, documentRepo, portfolioAggregator, rebalanceRepo, rebalanceAggregationSvc, rebalanceAdvisor)
 	idp := middleware.ContextIdentityProvider{}
 
 	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar, decisionRepo)
@@ -189,7 +192,7 @@ func main() {
 		Eval:                           evalHandler,
 		PerformanceWinRateTrend:        http.HandlerFunc(performanceHandler.GetWinRateTrend),
 		PerformanceAssetClassBreakdown: http.HandlerFunc(performanceHandler.GetAssetClassBreakdown),
-		RebalanceAnalyze:               handlers.NewRebalanceHandler(rebalanceAggregationSvc, rebalanceAdvisor, profileRepo, idp),
+		RebalanceAnalyze:               handlers.NewRebalanceHandler(rebalanceAggregationSvc, rebalanceAdvisor, profileRepo, idp, rebalanceRepo),
 	}
 
 	port := os.Getenv("PORT")

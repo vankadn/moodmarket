@@ -12,6 +12,10 @@ import (
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
+type rebalanceRequestBuilder interface {
+	BuildRequest(ctx context.Context, userID string) (*models.RebalanceRequest, error)
+}
+
 type RecommendationService struct {
 	advisor              ports.InvestmentAdvisor
 	profileRepo          ports.ProfileRepository
@@ -21,6 +25,9 @@ type RecommendationService struct {
 	brokerageFactory     ports.BrokerageProviderFactory
 	documentRepo         ports.DocumentRepository
 	portfolioAggregator  ports.PortfolioAggregator
+	rebalanceRepo        ports.RebalanceRepository
+	rebalanceAggregator  rebalanceRequestBuilder
+	rebalanceAdvisor     ports.RebalanceAdvisor
 }
 
 func NewRecommendationService(
@@ -32,6 +39,9 @@ func NewRecommendationService(
 	brokerageFactory ports.BrokerageProviderFactory,
 	documentRepo ports.DocumentRepository,
 	portfolioAggregator ports.PortfolioAggregator,
+	rebalanceRepo ports.RebalanceRepository,
+	rebalanceAggregator rebalanceRequestBuilder,
+	rebalanceAdvisor ports.RebalanceAdvisor,
 ) *RecommendationService {
 	return &RecommendationService{
 		advisor:             advisor,
@@ -42,6 +52,9 @@ func NewRecommendationService(
 		brokerageFactory:    brokerageFactory,
 		documentRepo:        documentRepo,
 		portfolioAggregator: portfolioAggregator,
+		rebalanceRepo:       rebalanceRepo,
+		rebalanceAggregator: rebalanceAggregator,
+		rebalanceAdvisor:    rebalanceAdvisor,
 	}
 }
 
@@ -144,6 +157,71 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 		log.Printf("[recommend] %d recent decision(s) loaded", len(recentDecisions))
 	}
 
+	// Step 6a: load latest rebalance analysis with freshness check.
+	// If fresh (< 24h), inject it. If stale/missing, use stale as fallback and
+	// kick off a background refresh so the next recommendation gets fresh context.
+	const rebalanceCacheTTL = 24 * time.Hour
+	ra, raErr := s.rebalanceRepo.GetLatestAnalysis(ctx, userID)
+	if raErr != nil {
+		log.Printf("[recommend] rebalance analysis fetch failed (%v) — skipped", raErr)
+	} else if ra != nil && time.Since(ra.GeneratedAt) < rebalanceCacheTTL {
+		req.RebalanceAnalysis = ra
+		log.Printf("[recommend] rebalance analysis loaded (%d insights, generated %s)", len(ra.Insights), ra.GeneratedAt.Format("Jan 2"))
+	} else {
+		if ra != nil {
+			req.RebalanceAnalysis = ra // use stale as fallback for this request
+		}
+		go s.refreshRebalanceAnalysis(context.WithoutCancel(ctx), userID, profile)
+		log.Printf("[recommend] rebalance analysis stale/missing — background refresh started")
+	}
+
+	// Step 6b: compute per-ticker position context from already-loaded decision history.
+	// Derived entirely from recentDecisions — zero new DB calls.
+	// Receipts with FilledPrice==0 are skipped (Alpaca async orders not yet settled).
+	if len(recentDecisions) > 0 {
+		type accumulator struct {
+			priceSum      float64
+			totalInvested float64
+			count         int
+			earliest      time.Time
+		}
+		accs := make(map[string]*accumulator)
+		for _, d := range recentDecisions {
+			for _, receipt := range d.Receipts {
+				if receipt.FilledPrice == 0 {
+					continue
+				}
+				acc, ok := accs[receipt.Ticker]
+				if !ok {
+					acc = &accumulator{earliest: receipt.Timestamp}
+					accs[receipt.Ticker] = acc
+				}
+				acc.priceSum += receipt.FilledPrice
+				acc.totalInvested += receipt.FilledAmount
+				acc.count++
+				if receipt.Timestamp.Before(acc.earliest) {
+					acc.earliest = receipt.Timestamp
+				}
+			}
+		}
+		if len(accs) > 0 {
+			posCtx := make(map[string]models.TickerContext, len(accs))
+			now := time.Now()
+			for ticker, acc := range accs {
+				months := int(now.Sub(acc.earliest).Hours() / 24 / 30.44)
+				posCtx[ticker] = models.TickerContext{
+					AverageCostBasis: acc.priceSum / float64(acc.count),
+					TotalInvested:    acc.totalInvested,
+					PurchaseCount:    acc.count,
+					FirstPurchasedAt: acc.earliest,
+					MonthsHeld:       months,
+				}
+			}
+			req.PositionContext = posCtx
+			log.Printf("[recommend] position context built for %d ticker(s)", len(posCtx))
+		}
+	}
+
 	// Step 6.5: stamp verdicts for any decisions older than 24h that haven't been evaluated yet.
 	// Runs concurrently with step 7 so tax doc fetch and Polygon calls happen in parallel.
 	// Must complete before step 8 so GetEvalSummary reflects freshly-stamped verdicts.
@@ -211,6 +289,30 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	}(context.WithoutCancel(ctx), decision)
 
 	return rec, nil
+}
+
+// refreshRebalanceAnalysis builds a fresh portfolio analysis in the background and persists it.
+// Called as a goroutine when the cached analysis is stale or missing — never blocks a recommendation.
+func (s *RecommendationService) refreshRebalanceAnalysis(ctx context.Context, userID string, profile *models.UserProfile) {
+	req, err := s.rebalanceAggregator.BuildRequest(ctx, userID)
+	if err != nil {
+		log.Printf("[recommend] background rebalance: build request failed (%v)", err)
+		return
+	}
+	if len(req.Positions) == 0 {
+		return // nothing to analyze
+	}
+	analysis, err := s.rebalanceAdvisor.AnalyzePortfolio(ctx, *req, profile)
+	if err != nil {
+		log.Printf("[recommend] background rebalance: analyze failed (%v)", err)
+		return
+	}
+	analysis.UserID = userID
+	if err := s.rebalanceRepo.SaveAnalysis(ctx, analysis); err != nil {
+		log.Printf("[recommend] background rebalance: save failed (%v)", err)
+		return
+	}
+	log.Printf("[recommend] background rebalance refresh complete for user=%s", userID)
 }
 
 // GetCashContext returns a pre-computed spending insight for the given user.

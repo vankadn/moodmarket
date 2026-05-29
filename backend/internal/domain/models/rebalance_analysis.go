@@ -60,6 +60,7 @@ type PositionInsight struct {
 
 // RebalanceAnalysis is Claude's complete portfolio assessment.
 type RebalanceAnalysis struct {
+	UserID                 string            `json:"-"`                       // internal only; never sent to frontend
 	Insights               []PositionInsight `json:"insights"`
 	PortfolioHealthSummary string            `json:"portfolio_health_summary"`
 	GeneratedAt            time.Time         `json:"generated_at"`
