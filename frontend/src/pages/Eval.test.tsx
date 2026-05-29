@@ -15,10 +15,14 @@ import { Eval, fmtPct, configName } from "./Eval";
 import type { AutoInvestConfig } from "../services/api";
 
 // Mock the entire api module so tests control what each fetch returns.
+// getWinRateTrend / getAssetClassBreakdown are called with .catch(() => []) in
+// the component, so they must return a promise — default them to resolve [].
 vi.mock("../services/api", () => ({
   getEvalSummary: vi.fn(),
   getEvalDecisions: vi.fn(),
   getActivity: vi.fn(),
+  getWinRateTrend: vi.fn(() => Promise.resolve([])),
+  getAssetClassBreakdown: vi.fn(() => Promise.resolve([])),
 }));
 
 import { getEvalSummary, getEvalDecisions, getActivity } from "../services/api";
