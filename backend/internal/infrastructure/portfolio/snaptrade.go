@@ -177,51 +177,50 @@ func (c *SnapTradeClient) ListAccounts(ctx context.Context, providerUserID, prov
 	return out, nil
 }
 
-// GetHoldings fetches all positions across all linked brokerages for the given user.
+// GetHoldingsByAccount returns positions grouped by account display name (e.g. "Robinhood", "Fidelity").
 // Uses two-step approach: list accounts, then fetch positions per account.
-// The aggregate /holdings endpoint is not available on all plans.
-func (c *SnapTradeClient) GetHoldings(ctx context.Context, providerUserID, providerUserSecret string) ([]models.Position, error) {
-	// Step 1: list all accounts for this user.
+// The map key is the account display name from ListAccounts (institution name with fallback).
+func (c *SnapTradeClient) GetHoldingsByAccount(ctx context.Context, providerUserID, providerUserSecret string) (map[string][]models.Position, error) {
+	accounts, err := c.ListAccounts(ctx, providerUserID, providerUserSecret)
+	if err != nil {
+		return nil, fmt.Errorf("snaptrade: get holdings by account: %w", err)
+	}
+	log.Printf("[snaptrade] get holdings by account: %d account(s) found", len(accounts))
+
 	extra := map[string]string{
 		"userId":     providerUserID,
 		"userSecret": providerUserSecret,
 	}
-	accounts, err := c.listAccounts(ctx, providerUserID, providerUserSecret)
-	if err != nil {
-		return nil, fmt.Errorf("snaptrade: get holdings: %w", err)
-	}
-	log.Printf("[snaptrade] get holdings: %d account(s) found", len(accounts))
+	result := make(map[string][]models.Position, len(accounts))
 
-	// Step 2: fetch positions for each account.
-	var positions []models.Position
 	for _, account := range accounts {
 		posPath := "/api/v1/accounts/" + account.ID + "/positions"
 		posURL, posQuery := c.buildURL(posPath, extra)
 
 		posReq, err := http.NewRequestWithContext(ctx, http.MethodGet, posURL, nil)
 		if err != nil {
-			log.Printf("[snaptrade] get holdings: positions for account %s: build request failed (%v) — skipped", account.ID, err)
+			log.Printf("[snaptrade] get holdings by account: positions for %s: build request failed (%v) — skipped", account.ID, err)
 			continue
 		}
 		if err := c.signRequest(posReq, posPath, posQuery, nil); err != nil {
-			log.Printf("[snaptrade] get holdings: positions for account %s: sign failed (%v) — skipped", account.ID, err)
+			log.Printf("[snaptrade] get holdings by account: positions for %s: sign failed (%v) — skipped", account.ID, err)
 			continue
 		}
 
 		var raw []snapTradePosition
 		if err := c.do(posReq, &raw); err != nil {
-			log.Printf("[snaptrade] get holdings: positions for account %s failed (%v) — skipped", account.ID, err)
+			log.Printf("[snaptrade] get holdings by account: positions for %s failed (%v) — skipped", account.ID, err)
 			continue
 		}
-		log.Printf("[snaptrade] get holdings: account %s — %d raw position(s)", account.ID, len(raw))
 
+		positions := make([]models.Position, 0, len(raw))
 		for _, p := range raw {
 			ticker := p.Symbol.Symbol.Symbol
 			if ticker == "" {
 				ticker = p.Symbol.Symbol.RawSymbol
 			}
 			if ticker == "" {
-				log.Printf("[snaptrade] get holdings: skipping position with empty ticker (account %s)", account.ID)
+				log.Printf("[snaptrade] get holdings by account: skipping position with empty ticker (account %s)", account.ID)
 				continue
 			}
 			mv := p.Units * p.Price
@@ -237,7 +236,6 @@ func (c *SnapTradeClient) GetHoldings(ctx context.Context, providerUserID, provi
 			if costBasis > 0 {
 				uplPct = (upl / costBasis) * 100
 			}
-			log.Printf("[snaptrade] get holdings: ticker=%s qty=%.4f source=account/%s", ticker, p.Units, account.ID)
 			positions = append(positions, models.Position{
 				Ticker:              ticker,
 				Name:                p.Symbol.Symbol.Description,
@@ -249,8 +247,24 @@ func (c *SnapTradeClient) GetHoldings(ctx context.Context, providerUserID, provi
 				UnrealizedPLPercent: uplPct,
 			})
 		}
+		log.Printf("[snaptrade] get holdings by account: %s (%q) — %d position(s)", account.ID, account.Name, len(positions))
+		result[account.Name] = positions
 	}
-	log.Printf("[snaptrade] get holdings: returning %d position(s) across %d account(s)", len(positions), len(accounts))
+	return result, nil
+}
+
+// GetHoldings returns all positions across all linked accounts, flattened.
+// Delegates to GetHoldingsByAccount and merges results.
+func (c *SnapTradeClient) GetHoldings(ctx context.Context, providerUserID, providerUserSecret string) ([]models.Position, error) {
+	byAccount, err := c.GetHoldingsByAccount(ctx, providerUserID, providerUserSecret)
+	if err != nil {
+		return nil, fmt.Errorf("snaptrade: GetHoldings: %w", err)
+	}
+	var positions []models.Position
+	for _, accountPositions := range byAccount {
+		positions = append(positions, accountPositions...)
+	}
+	log.Printf("[snaptrade] GetHoldings: %d position(s) across %d account(s)", len(positions), len(byAccount))
 	return positions, nil
 }
 

@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-26 — Earnings calendar awareness added: Claude now calls `get_earnings_calendar` (Finnhub) before recommending individual stocks; 50%+ allocation reduction or ETF substitution if earnings ≤3 days out
+> Last updated: 2026-05-29 — Portfolio Rebalance Analysis feature in progress (steps 1 & 2 complete): domain models + RebalanceAdvisor port added; RebalanceAggregationService assembles Alpaca + SnapTrade positions (per-account attribution) + MongoDB buy reasoning + first-purchase dates for tax flags
 
 ---
 
@@ -82,8 +82,9 @@ Key interfaces:
 - `SecretsProvider` — sensitive credential retrieval (pre go-live, Vault / AWS Secrets Manager)
 - `Classifier` — in-memory ticker→asset-class lookup; `ClassificationCache` implements this; never hits Mongo during a recommendation
 - `ClassificationRepository` — ticker classification persistence: `LoadAll`, `StoreClassification`
-- `PortfolioAggregator` — read-only external holdings: `GetHoldings(ctx, providerUserID, providerUserSecret) []Position`; SnapTrade implements this
+- `PortfolioAggregator` — read-only external holdings: `GetHoldings` (flattened), `GetHoldingsByAccount` (keyed by institution name, e.g. "Robinhood"), `ListAccounts`; SnapTrade implements this
 - `PortfolioConnector` — OAuth lifecycle for external broker linking: `RegisterUser`, `GenerateConnectURL`, `DeleteUser`; SnapTrade implements this
+- `RebalanceAdvisor` — AI-based portfolio rebalance analysis: `AnalyzePortfolio(ctx, req, profile) *RebalanceAnalysis`; separate from `InvestmentAdvisor`
 
 ### DEV_MODE pattern
 `DEV_MODE=true` in `.env` auto-logs in as the hardcoded dev user. Zero login required during development. This logic lives in exactly ONE place — `infrastructure/auth/factory.go`. No DEV_MODE checks anywhere else.
@@ -288,6 +289,15 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Daily drift detection in `application/services/rebalancing_service.go`; ticker-level drift vs Claude's last recommendation targets + asset-class drift vs user's `AllocationPreferences` limits
 - `REBALANCE_DRIFT_THRESHOLD` env (default 10 pp); alerts sent via `NotificationProvider.SendRebalancingAlert`
 - `application/scheduler/rebalancing_scheduler.go` runs on `REBALANCE_TICK` (default 24h), market-calendar-aware
+
+### Portfolio Rebalance Analysis (in progress — steps 1 & 2 complete)
+- Read-only analysis: Claude suggests hold / add / trim / reconsider per position; never executes sells
+- Domain models: `RebalancePosition` (Position + Source + AccountName), `RebalanceRequest`, `PositionInsight`, `RebalanceAnalysis`, `SuggestedAction`, `TaxFlag` — in `domain/models/rebalance_analysis.go`
+- `RebalanceAdvisor` port in `domain/ports/rebalance_advisor.go` — intentionally separate from `InvestmentAdvisor`
+- `PortfolioAggregator` extended with `GetHoldingsByAccount` — returns positions keyed by institution name (e.g. "Robinhood", "Fidelity"); `GetHoldings` refactored to delegate to it
+- `RebalanceAggregationService` in `application/services/rebalance_aggregation_service.go`: fetches Alpaca positions, merges SnapTrade holdings per-account (with institution name), Alpaca-first deduplication, scans up to 200 decisions for buy reasoning (most recent per ticker) and first-purchase dates (from receipts, for tax flags)
+- Tax flags: `short_term` (held < 1yr), `long_term` (held ≥ 1yr), `unknown` (no receipt found in history)
+- Steps remaining: ClaudeRebalanceAdvisor implementation + system prompt (3), `POST /rebalance/analyze` endpoint (4), React Rebalance tab (5), scheduled email digest (6)
 
 ### Allocation preferences
 - Users set per-asset-class min/max % and a single-ticker cap (`AllocationPreferences` on `UserProfile`)

@@ -18,4 +18,8 @@ type PortfolioAggregator interface {
 	GetHoldings(ctx context.Context, providerUserID, providerUserSecret string) ([]models.Position, error)
 	// ListAccounts returns all brokerage accounts linked via the aggregator for the given user.
 	ListAccounts(ctx context.Context, providerUserID, providerUserSecret string) ([]models.LinkedAccount, error)
+	// GetHoldingsByAccount returns positions grouped by account display name (e.g. "Robinhood", "Fidelity").
+	// Used by rebalance analysis to attribute each position to its source institution.
+	// The map key is the account display name from LinkedAccount.Name.
+	GetHoldingsByAccount(ctx context.Context, providerUserID, providerUserSecret string) (map[string][]models.Position, error)
 }

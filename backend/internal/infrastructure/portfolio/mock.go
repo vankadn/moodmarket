@@ -31,10 +31,21 @@ func (m *MockPortfolioProvider) ListAccounts(_ context.Context, _, _ string) ([]
 	}, nil
 }
 
-func (m *MockPortfolioProvider) GetHoldings(_ context.Context, _, _ string) ([]models.Position, error) {
-	return []models.Position{
-		{Ticker: "AAPL", Name: "Apple Inc", Quantity: 5.0, MarketValue: 875.00, CostBasis: 750.00, AvgEntryPrice: 150.00, UnrealizedPL: 125.00, UnrealizedPLPercent: 16.67},
-		{Ticker: "MSFT", Name: "Microsoft Corporation", Quantity: 2.0, MarketValue: 830.00, CostBasis: 700.00, AvgEntryPrice: 350.00, UnrealizedPL: 130.00, UnrealizedPLPercent: 18.57},
-		{Ticker: "SPY", Name: "SPDR S&P 500 ETF", Quantity: 1.5, MarketValue: 783.00, CostBasis: 720.00, AvgEntryPrice: 480.00, UnrealizedPL: 63.00, UnrealizedPLPercent: 8.75},
+func (m *MockPortfolioProvider) GetHoldings(ctx context.Context, providerUserID, providerUserSecret string) ([]models.Position, error) {
+	byAccount, _ := m.GetHoldingsByAccount(ctx, providerUserID, providerUserSecret)
+	var positions []models.Position
+	for _, accountPositions := range byAccount {
+		positions = append(positions, accountPositions...)
+	}
+	return positions, nil
+}
+
+func (m *MockPortfolioProvider) GetHoldingsByAccount(_ context.Context, _, _ string) (map[string][]models.Position, error) {
+	return map[string][]models.Position{
+		"Robinhood Individual": {
+			{Ticker: "AAPL", Name: "Apple Inc", Quantity: 5.0, MarketValue: 875.00, CostBasis: 750.00, AvgEntryPrice: 150.00, UnrealizedPL: 125.00, UnrealizedPLPercent: 16.67},
+			{Ticker: "MSFT", Name: "Microsoft Corporation", Quantity: 2.0, MarketValue: 830.00, CostBasis: 700.00, AvgEntryPrice: 350.00, UnrealizedPL: 130.00, UnrealizedPLPercent: 18.57},
+			{Ticker: "SPY", Name: "SPDR S&P 500 ETF", Quantity: 1.5, MarketValue: 783.00, CostBasis: 720.00, AvgEntryPrice: 480.00, UnrealizedPL: 63.00, UnrealizedPLPercent: 8.75},
+		},
 	}, nil
 }
