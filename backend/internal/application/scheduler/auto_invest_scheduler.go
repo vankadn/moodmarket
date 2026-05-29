@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/krishnarajivvns/investiq/internal/application/services"
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
@@ -19,8 +18,8 @@ import (
 type AutoInvestScheduler struct {
 	autoInvestRepo ports.AutoInvestRepository
 	profileRepo    ports.ProfileRepository
-	recommendSvc   *services.RecommendationService
-	investSvc      *services.InvestmentService
+	recommendSvc   Recommender
+	investSvc      Investor
 	schedulerRepo  ports.SchedulerRepository
 	notifications  ports.NotificationProvider
 	calendar       ports.MarketCalendar
@@ -30,8 +29,8 @@ type AutoInvestScheduler struct {
 func NewAutoInvestScheduler(
 	autoInvestRepo ports.AutoInvestRepository,
 	profileRepo ports.ProfileRepository,
-	recommendSvc *services.RecommendationService,
-	investSvc *services.InvestmentService,
+	recommendSvc Recommender,
+	investSvc Investor,
 	schedulerRepo ports.SchedulerRepository,
 	notifications ports.NotificationProvider,
 	calendar ports.MarketCalendar,

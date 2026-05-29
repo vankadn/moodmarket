@@ -9,7 +9,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/krishnarajivvns/investiq/internal/application/services"
 	"github.com/krishnarajivvns/investiq/internal/domain/models"
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
@@ -22,8 +21,8 @@ func runForUser(
 	ctx context.Context,
 	config models.AutoInvestConfig,
 	target ports.NotificationTarget,
-	recommendSvc *services.RecommendationService,
-	investSvc *services.InvestmentService,
+	recommendSvc Recommender,
+	investSvc Investor,
 	notifications ports.NotificationProvider,
 	decisionRepo ports.DecisionRepository,
 ) (float64, error) {
