@@ -382,6 +382,20 @@
           }
         }
       ]
+    },
+    {
+      "name": "Rebalance",
+      "item": [
+        {
+          "name": "Analyze portfolio",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/rebalance/analyze", "host": ["{{baseUrl}}"], "path": ["rebalance", "analyze"] },
+            "description": "Assembles Alpaca + SnapTrade positions and asks Claude to assess each holding. Returns hold/add/trim/reconsider per position with tax flags. Read-only — no trades are executed. Allow up to 120s."
+          }
+        }
+      ]
     }
   ]
 }

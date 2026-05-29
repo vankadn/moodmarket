@@ -45,22 +45,22 @@ const (
 
 // PositionInsight is Claude's assessment of a single holding.
 type PositionInsight struct {
-	Ticker            string
-	Name              string
-	Source            string          // "alpaca" | "snaptrade"
-	AccountName       string          // e.g. "Robinhood", "Fidelity"; empty for Alpaca
-	CurrentValue      float64
-	UnrealizedPL      float64
-	UnrealizedPLPct   float64
-	OriginalBuyThesis string          // from InvestmentDecision.TickerReasoning; empty if not previously recommended by InvestIQ
-	ClaudeAssessment  string          // Claude's narrative analysis of this position
-	SuggestedAction   SuggestedAction // "hold" | "trim" | "reconsider"
-	TaxFlag           TaxFlag         // "short_term" | "long_term" | "unknown"
+	Ticker            string          `json:"ticker"`
+	Name              string          `json:"name"`
+	Source            string          `json:"source"`       // "alpaca" | "snaptrade"
+	AccountName       string          `json:"account_name"` // e.g. "Robinhood", "Fidelity"; empty for Alpaca
+	CurrentValue      float64         `json:"current_value"`
+	UnrealizedPL      float64         `json:"unrealized_pl"`
+	UnrealizedPLPct   float64         `json:"unrealized_pl_pct"`
+	OriginalBuyThesis string          `json:"original_buy_thesis,omitempty"`
+	ClaudeAssessment  string          `json:"claude_assessment"`
+	SuggestedAction   SuggestedAction `json:"suggested_action"` // "hold" | "add" | "trim" | "reconsider"
+	TaxFlag           TaxFlag         `json:"tax_flag"`          // "short_term" | "long_term" | "unknown"
 }
 
 // RebalanceAnalysis is Claude's complete portfolio assessment.
 type RebalanceAnalysis struct {
-	Insights               []PositionInsight
-	PortfolioHealthSummary string
-	GeneratedAt            time.Time
+	Insights               []PositionInsight `json:"insights"`
+	PortfolioHealthSummary string            `json:"portfolio_health_summary"`
+	GeneratedAt            time.Time         `json:"generated_at"`
 }

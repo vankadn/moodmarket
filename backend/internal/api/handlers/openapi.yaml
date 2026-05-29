@@ -358,6 +358,60 @@ components:
           format: date-time
           nullable: true
 
+    PositionInsight:
+      type: object
+      properties:
+        ticker:
+          type: string
+          example: AAPL
+        name:
+          type: string
+          example: Apple Inc
+        source:
+          type: string
+          enum: [alpaca, snaptrade]
+        account_name:
+          type: string
+          description: Institution name for SnapTrade positions (e.g. "Robinhood"); empty for Alpaca
+          example: Robinhood Individual
+        current_value:
+          type: number
+          example: 875.00
+        unrealized_pl:
+          type: number
+          example: 125.00
+        unrealized_pl_pct:
+          type: number
+          example: 16.67
+        original_buy_thesis:
+          type: string
+          description: Claude's reasoning when this position was originally recommended; omitted if unknown
+          example: Strong iPhone cycle momentum and AI integration thesis intact
+        claude_assessment:
+          type: string
+          example: Position is 12% of portfolio and thesis remains intact heading into WWDC.
+        suggested_action:
+          type: string
+          enum: [hold, add, trim, reconsider]
+        tax_flag:
+          type: string
+          enum: [short_term, long_term, unknown]
+          description: Estimated capital gains treatment if sold now
+
+    RebalanceAnalysis:
+      type: object
+      properties:
+        insights:
+          type: array
+          items:
+            $ref: '#/components/schemas/PositionInsight'
+        portfolio_health_summary:
+          type: string
+          example: Portfolio is 60% tech; trimming MSFT would meaningfully reduce concentration risk.
+        generated_at:
+          type: string
+          format: date-time
+
     Error:
       type: object
       properties:
@@ -855,3 +909,22 @@ paths:
       responses:
         '204':
           description: Deleted
+
+  /rebalance/analyze:
+    post:
+      summary: Analyze portfolio for rebalancing
+      description: |
+        Assembles the user's full position list (Alpaca + SnapTrade) and asks Claude
+        to assess each holding. Returns hold / add / trim / reconsider suggestions with
+        tax sensitivity flags. Read-only — never executes trades.
+        Allow up to 120s for Alpaca + SnapTrade fetches + Claude analysis.
+      tags: [Rebalance]
+      responses:
+        '200':
+          description: Rebalance analysis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebalanceAnalysis'
+        '503':
+          description: Advisor temporarily unavailable (Claude overloaded) — retry later

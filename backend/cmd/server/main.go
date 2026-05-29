@@ -143,6 +143,11 @@ func main() {
 	investSvc := services.NewInvestmentService(brokerageFactory, profileRepo, decisionRepo, marketProvider)
 	documentSvc := services.NewDocumentService(documentExtractor, documentRepo)
 	rebalancingSvc := services.NewRebalancingService(decisionRepo, profileRepo, brokerageFactory)
+	rebalanceAdvisor, err := infraadvisor.NewRebalanceAdvisor()
+	if err != nil {
+		log.Fatalf("rebalance advisor init failed: %v", err)
+	}
+	rebalanceAggregationSvc := services.NewRebalanceAggregationService(brokerageFactory, profileRepo, decisionRepo, portfolioAggregator)
 	idp := middleware.ContextIdentityProvider{}
 
 	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar, decisionRepo)
@@ -182,6 +187,7 @@ func main() {
 		Eval:                           evalHandler,
 		PerformanceWinRateTrend:        http.HandlerFunc(performanceHandler.GetWinRateTrend),
 		PerformanceAssetClassBreakdown: http.HandlerFunc(performanceHandler.GetAssetClassBreakdown),
+		RebalanceAnalyze:               handlers.NewRebalanceHandler(rebalanceAggregationSvc, rebalanceAdvisor, profileRepo, idp),
 	}
 
 	port := os.Getenv("PORT")

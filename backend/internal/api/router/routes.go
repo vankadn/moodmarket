@@ -47,4 +47,6 @@ const (
 
 	PerformanceWinRateTrendURI       = "/performance/win-rate-trend"
 	PerformanceAssetClassBreakdownURI = "/performance/asset-class-breakdown"
+
+	RebalanceAnalyzeURI = "/rebalance/analyze"
 )
