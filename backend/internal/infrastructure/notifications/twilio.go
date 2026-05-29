@@ -104,6 +104,12 @@ func (t *twilioProvider) SendSkipSummary(ctx context.Context, to ports.Notificat
 	return t.send(ctx, to.Phone, body)
 }
 
+func (t *twilioProvider) SendRebalanceDigest(_ context.Context, to ports.NotificationTarget, _ *models.RebalanceAnalysis) error {
+	// Rebalance digest is email-only — too verbose for SMS.
+	log.Printf("[notify] user=%s rebalance digest SMS skipped — email-only channel", to.UserID)
+	return nil
+}
+
 func (t *twilioProvider) SendRebalancingAlert(ctx context.Context, to ports.NotificationTarget, drifts []models.TickerDrift) error {
 	if to.Phone == "" {
 		return nil

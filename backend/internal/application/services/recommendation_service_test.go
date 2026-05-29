@@ -173,6 +173,10 @@ func (p *stubPortfolioAggregator) GetHoldings(_ context.Context, _, _ string) ([
 	return nil, nil
 }
 
+func (p *stubPortfolioAggregator) GetHoldingsByAccount(_ context.Context, _, _ string) (map[string][]models.Position, error) {
+	return nil, nil
+}
+
 // stubDocumentRepo returns no tax documents.
 type stubDocumentRepo struct{}
 

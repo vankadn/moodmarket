@@ -152,8 +152,10 @@ func main() {
 
 	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar, decisionRepo)
 	rebalancingScheduler := scheduler.NewRebalancingScheduler(autoInvestRepo, profileRepo, rebalancingSvc, notificationProvider, marketCalendar)
+	rebalanceDigestScheduler := scheduler.NewRebalanceDigestScheduler(autoInvestRepo, profileRepo, rebalanceAggregationSvc, rebalanceAdvisor, notificationProvider)
 	go autoInvestScheduler.Start(ctx)
 	go rebalancingScheduler.Start(ctx)
+	go rebalanceDigestScheduler.Start(ctx)
 
 	plaidHandler := handlers.NewPlaidHandler(financialDataProvider, profileRepo, idp)
 	portfolioConnectHandler := handlers.NewPortfolioConnectHandler(portfolioConnector, profileRepo, idp)

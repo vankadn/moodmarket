@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-29 — Portfolio Rebalance Analysis feature in progress (steps 1 & 2 complete): domain models + RebalanceAdvisor port added; RebalanceAggregationService assembles Alpaca + SnapTrade positions (per-account attribution) + MongoDB buy reasoning + first-purchase dates for tax flags
+> Last updated: 2026-05-29 — Portfolio Rebalance Analysis fully complete (all 6 steps): POST /rebalance/analyze endpoint, React Rebalance tab, and weekly email digest scheduler with Resend HTML email, log, composite, and Twilio no-op providers
 
 ---
 
@@ -290,14 +290,19 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - `REBALANCE_DRIFT_THRESHOLD` env (default 10 pp); alerts sent via `NotificationProvider.SendRebalancingAlert`
 - `application/scheduler/rebalancing_scheduler.go` runs on `REBALANCE_TICK` (default 24h), market-calendar-aware
 
-### Portfolio Rebalance Analysis (in progress — steps 1 & 2 complete)
+### Portfolio Rebalance Analysis
 - Read-only analysis: Claude suggests hold / add / trim / reconsider per position; never executes sells
 - Domain models: `RebalancePosition` (Position + Source + AccountName), `RebalanceRequest`, `PositionInsight`, `RebalanceAnalysis`, `SuggestedAction`, `TaxFlag` — in `domain/models/rebalance_analysis.go`
 - `RebalanceAdvisor` port in `domain/ports/rebalance_advisor.go` — intentionally separate from `InvestmentAdvisor`
 - `PortfolioAggregator` extended with `GetHoldingsByAccount` — returns positions keyed by institution name (e.g. "Robinhood", "Fidelity"); `GetHoldings` refactored to delegate to it
 - `RebalanceAggregationService` in `application/services/rebalance_aggregation_service.go`: fetches Alpaca positions, merges SnapTrade holdings per-account (with institution name), Alpaca-first deduplication, scans up to 200 decisions for buy reasoning (most recent per ticker) and first-purchase dates (from receipts, for tax flags)
 - Tax flags: `short_term` (held < 1yr), `long_term` (held ≥ 1yr), `unknown` (no receipt found in history)
-- Steps remaining: ClaudeRebalanceAdvisor implementation + system prompt (3), `POST /rebalance/analyze` endpoint (4), React Rebalance tab (5), scheduled email digest (6)
+- `ClaudeRebalanceAdvisor` in `infrastructure/advisor/`: full implementation + mock + factory; dedicated system prompt for hold/add/trim/reconsider analysis
+- `POST /rebalance/analyze` endpoint: calls `RebalanceAggregationService.BuildRequest` → `RebalanceAdvisor.AnalyzePortfolio`; returns `RebalanceAnalysis` JSON
+- React Rebalance tab: accessible from Home nav; displays per-position action, tax flag, Claude assessment, and overall summary
+- `SendRebalanceDigest(ctx, to NotificationTarget, analysis *models.RebalanceAnalysis) error` added to `NotificationProvider` port; implemented in log (logs each ticker → action), composite (fan-out), resend (rich HTML email with per-position rows, action color, Claude assessment, disclaimer footer, "Suggestions only" note), and twilio (no-op — digest is email-only)
+- `RebalanceDigestScheduler` in `application/scheduler/rebalance_digest_scheduler.go`: interval from `REBALANCE_DIGEST_INTERVAL` env var (default 168h = 7 days); per-enabled-user, deduplicates multiple configs, skips users with no notification email; wired in `main.go` alongside auto-invest and drift schedulers
+- Fixed `recommendation_service_test.go` stub: added `GetHoldingsByAccount` to `stubPortfolioAggregator` to satisfy the extended `PortfolioAggregator` interface
 
 ### Allocation preferences
 - Users set per-asset-class min/max % and a single-ticker cap (`AllocationPreferences` on `UserProfile`)

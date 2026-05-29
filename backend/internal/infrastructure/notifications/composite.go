@@ -59,3 +59,12 @@ func (c *compositeNotificationProvider) SendRebalancingAlert(ctx context.Context
 	}
 	return nil
 }
+
+func (c *compositeNotificationProvider) SendRebalanceDigest(ctx context.Context, to ports.NotificationTarget, analysis *models.RebalanceAnalysis) error {
+	for _, p := range c.providers {
+		if err := p.SendRebalanceDigest(ctx, to, analysis); err != nil {
+			log.Printf("[notify] user=%s SendRebalanceDigest provider error: %v", to.UserID, err)
+		}
+	}
+	return nil
+}

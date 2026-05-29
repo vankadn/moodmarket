@@ -16,6 +16,7 @@ import { NotificationSettingsPage } from "./pages/NotificationSettingsPage";
 import { AutoInvestConfig, getAutoInvestConfigs, getProfile, UserProfile } from "./services/api";
 import { Eval } from "./pages/Eval";
 import { AllocationPreferencesPage } from "./pages/AllocationPreferencesPage";
+import { Rebalance } from "./pages/Rebalance";
 
 export type AppState =
   | "loading"
@@ -30,7 +31,8 @@ export type AppState =
   | "brokerage"
   | "portfolio-connect"
   | "documents"
-  | "eval";
+  | "eval"
+  | "rebalance";
 
 interface AppShellProps {
   signOut?: () => void;
@@ -164,6 +166,10 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
     return <Eval onBack={() => setState("home")} autoInvestConfigs={autoInvestConfigs} />;
   }
 
+  if (state === "rebalance") {
+    return <Rebalance onBack={() => setState("home")} />;
+  }
+
   return (
     <Home
       profile={profile!}
@@ -178,6 +184,7 @@ export function AppShell({ signOut, keepPageOnRefresh = false }: AppShellProps) 
       onDocuments={() => setState("documents")}
       onEval={() => setState("eval")}
       onAllocationPreferences={() => setState("allocation-preferences")}
+      onRebalance={() => setState("rebalance")}
     />
   );
 }

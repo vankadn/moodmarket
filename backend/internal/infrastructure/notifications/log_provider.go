@@ -41,3 +41,11 @@ func (l *logNotificationProvider) SendRebalancingAlert(_ context.Context, to por
 	}
 	return nil
 }
+
+func (l *logNotificationProvider) SendRebalanceDigest(_ context.Context, to ports.NotificationTarget, analysis *models.RebalanceAnalysis) error {
+	log.Printf("[notify] user=%s rebalance digest: %d positions", to.UserID, len(analysis.Insights))
+	for _, ins := range analysis.Insights {
+		log.Printf("[notify] user=%s  %s → %s", to.UserID, ins.Ticker, ins.SuggestedAction)
+	}
+	return nil
+}

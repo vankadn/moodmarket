@@ -17,6 +17,7 @@ interface Props {
   onPortfolio?: () => void;
   onEval?: () => void;
   onAllocationPreferences?: () => void;
+  onRebalance?: () => void;
 }
 
 const goalLabel: Record<string, string> = {
@@ -38,7 +39,7 @@ type HomeState = "idle" | "confirming" | "investing" | "receipt";
 const brokerageIsConnected = (brokerages: BrokerageStatus[] | undefined) =>
   (brokerages?.length ?? 0) > 0;
 
-export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, onAutoInvestSettings, onNotificationSettings, onBrokerage, onPortfolioConnect, onDocuments, onPortfolio, onEval, onAllocationPreferences }: Props) {
+export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, onAutoInvestSettings, onNotificationSettings, onBrokerage, onPortfolioConnect, onDocuments, onPortfolio, onEval, onAllocationPreferences, onRebalance }: Props) {
   const [amount, setAmount] = useState<number>(100);
   const [perAllocBrokerage, setPerAllocBrokerage] = useState<Record<string, string>>({});
   const [cashCtx, setCashCtx] = useState<CashContext | null>(null);
@@ -161,6 +162,14 @@ export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, 
               style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
             >
               Performance
+            </button>
+          )}
+          {onRebalance && (
+            <button
+              onClick={onRebalance}
+              style={{ background: "none", border: "none", color: "#999", fontSize: "13px", cursor: "pointer", padding: "4px 0" }}
+            >
+              Rebalance
             </button>
           )}
           {onBrokerage && (

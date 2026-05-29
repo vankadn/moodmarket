@@ -122,6 +122,69 @@ func (r *resendEmailProvider) SendSkipSummary(ctx context.Context, to ports.Noti
 	return r.send(ctx, to.Email, "InvestIQ: auto-invest skipped", html)
 }
 
+func (r *resendEmailProvider) SendRebalanceDigest(ctx context.Context, to ports.NotificationTarget, analysis *models.RebalanceAnalysis) error {
+	if to.Email == "" {
+		log.Printf("[notify] user=%s rebalance digest skipped — no email configured", to.UserID)
+		return nil
+	}
+	log.Printf("[notify] user=%s sending rebalance digest to %s (%d positions)", to.UserID, maskEmail(to.Email), len(analysis.Insights))
+
+	actionLabel := map[string]string{
+		"hold":      "Hold",
+		"add":       "Add more",
+		"trim":      "Trim",
+		"reconsider": "Reconsider",
+	}
+	actionColor := map[string]string{
+		"hold":      "#888888",
+		"add":       "#27ae60",
+		"trim":      "#e67e22",
+		"reconsider": "#c0392b",
+	}
+
+	var rows []string
+	for _, ins := range analysis.Insights {
+		label := actionLabel[string(ins.SuggestedAction)]
+		if label == "" {
+			label = string(ins.SuggestedAction)
+		}
+		color := actionColor[string(ins.SuggestedAction)]
+		if color == "" {
+			color = "#888888"
+		}
+		name := ins.Name
+		if name != "" {
+			name = " — " + name
+		}
+		rows = append(rows, fmt.Sprintf(
+			`<tr><td style="padding:8px 0;border-bottom:1px solid #f0f0f0"><strong>%s</strong><span style="color:#888;font-size:13px">%s</span></td><td style="padding:8px 0;border-bottom:1px solid #f0f0f0;text-align:right"><span style="color:%s;font-weight:600">%s</span></td></tr>`,
+			ins.Ticker, name, color, label,
+		))
+		if ins.ClaudeAssessment != "" {
+			rows = append(rows, fmt.Sprintf(
+				`<tr><td colspan="2" style="padding:0 0 10px;font-size:13px;color:#555">%s</td></tr>`,
+				ins.ClaudeAssessment,
+			))
+		}
+	}
+
+	date := time.Now().Format("January 2, 2006")
+	html := fmt.Sprintf(`
+<p><strong>Weekly portfolio review</strong></p>
+<p>%s</p>
+<table style="width:100%%;border-collapse:collapse;margin-top:12px">
+%s
+</table>
+<p style="margin-top:16px;font-size:12px;color:#aaa">Suggestions only. InvestIQ never executes sells. Execute any changes yourself in your brokerage app.</p>
+<p style="font-size:12px;color:#aaa">Generated %s</p>`,
+		analysis.PortfolioHealthSummary,
+		strings.Join(rows, ""),
+		date,
+	)
+
+	return r.send(ctx, to.Email, fmt.Sprintf("InvestIQ: weekly rebalance digest — %s", date), html)
+}
+
 func (r *resendEmailProvider) SendRebalancingAlert(ctx context.Context, to ports.NotificationTarget, drifts []models.TickerDrift) error {
 	if to.Email == "" {
 		log.Printf("[notify] user=%s rebalancing alert skipped — no email configured", to.UserID)

@@ -655,3 +655,38 @@ export async function getAssetClassBreakdown(): Promise<AssetClassBreakdownItem[
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
+
+// --- Rebalance Analysis ---
+
+export type SuggestedAction = "hold" | "add" | "trim" | "reconsider";
+export type TaxFlag = "short_term" | "long_term" | "unknown";
+
+export interface PositionInsight {
+  ticker: string;
+  name: string;
+  source: "alpaca" | "snaptrade";
+  account_name: string;
+  current_value: number;
+  unrealized_pl: number;
+  unrealized_pl_pct: number;
+  original_buy_thesis?: string;
+  claude_assessment: string;
+  suggested_action: SuggestedAction;
+  tax_flag: TaxFlag;
+}
+
+export interface RebalanceAnalysis {
+  insights: PositionInsight[];
+  portfolio_health_summary: string;
+  generated_at: string;
+}
+
+export async function analyzePortfolio(): Promise<RebalanceAnalysis> {
+  const res = await fetch(`${API_BASE}/rebalance/analyze`, {
+    method: "POST",
+    headers: await authHeaders(),
+  });
+  if (res.status === 503) throw new Error("advisor_overloaded");
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
