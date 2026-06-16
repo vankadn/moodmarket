@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/krishnarajivvns/investiq/internal/application/services"
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
@@ -18,7 +17,7 @@ import (
 type RebalanceDigestScheduler struct {
 	autoInvestRepo  ports.AutoInvestRepository
 	profileRepo     ports.ProfileRepository
-	aggregationSvc  *services.RebalanceAggregationService
+	aggregationSvc  RebalanceRequestBuilder
 	rebalanceAdvisor ports.RebalanceAdvisor
 	notifications   ports.NotificationProvider
 }
@@ -26,7 +25,7 @@ type RebalanceDigestScheduler struct {
 func NewRebalanceDigestScheduler(
 	autoInvestRepo ports.AutoInvestRepository,
 	profileRepo ports.ProfileRepository,
-	aggregationSvc *services.RebalanceAggregationService,
+	aggregationSvc RebalanceRequestBuilder,
 	rebalanceAdvisor ports.RebalanceAdvisor,
 	notifications ports.NotificationProvider,
 ) *RebalanceDigestScheduler {

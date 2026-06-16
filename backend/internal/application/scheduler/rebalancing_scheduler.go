@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/krishnarajivvns/investiq/internal/application/services"
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
@@ -19,7 +18,7 @@ import (
 type RebalancingScheduler struct {
 	autoInvestRepo   ports.AutoInvestRepository
 	profileRepo      ports.ProfileRepository
-	rebalancingSvc   *services.RebalancingService
+	rebalancingSvc   DriftChecker
 	notifications    ports.NotificationProvider
 	calendar         ports.MarketCalendar
 }
@@ -27,7 +26,7 @@ type RebalancingScheduler struct {
 func NewRebalancingScheduler(
 	autoInvestRepo ports.AutoInvestRepository,
 	profileRepo ports.ProfileRepository,
-	rebalancingSvc *services.RebalancingService,
+	rebalancingSvc DriftChecker,
 	notifications ports.NotificationProvider,
 	calendar ports.MarketCalendar,
 ) *RebalancingScheduler {
