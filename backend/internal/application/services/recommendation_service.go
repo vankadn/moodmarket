@@ -28,6 +28,8 @@ type RecommendationService struct {
 	rebalanceRepo        ports.RebalanceRepository
 	rebalanceAggregator  rebalanceRequestBuilder
 	rebalanceAdvisor     ports.RebalanceAdvisor
+	critic               ports.RecommendationCritic
+	notifications        ports.NotificationProvider
 }
 
 func NewRecommendationService(
@@ -42,6 +44,8 @@ func NewRecommendationService(
 	rebalanceRepo ports.RebalanceRepository,
 	rebalanceAggregator rebalanceRequestBuilder,
 	rebalanceAdvisor ports.RebalanceAdvisor,
+	critic ports.RecommendationCritic,
+	notifications ports.NotificationProvider,
 ) *RecommendationService {
 	return &RecommendationService{
 		advisor:             advisor,
@@ -55,6 +59,8 @@ func NewRecommendationService(
 		rebalanceRepo:       rebalanceRepo,
 		rebalanceAggregator: rebalanceAggregator,
 		rebalanceAdvisor:    rebalanceAdvisor,
+		critic:              critic,
+		notifications:       notifications,
 	}
 }
 
@@ -270,23 +276,51 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	}
 	log.Printf("[recommend] Claude returned %d allocation(s) (risk=%s)", len(rec.Allocations), rec.RiskLevel)
 
-	// Persist decision asynchronously so the response is not gated on the DB write.
-	decision := &models.InvestmentDecision{
-		UserID:         userID,
-		Timestamp:      time.Now(),
-		MarketSnapshot: snapshot,
-		Allocations:    rec.Allocations,
-		TotalAmount:    rec.TotalBudget,
-		RiskLevel:      rec.RiskLevel,
-		Summary:        rec.Summary,
-	}
-	go func(saveCtx context.Context, d *models.InvestmentDecision) {
-		if err := s.decisionRepo.Save(saveCtx, d); err != nil {
-			log.Printf("[recommend] persist  save decision failed: %v", err)
-		} else {
-			log.Printf("[recommend] persist  decision saved to MongoDB")
+	// Step 9.5: adversarial critic pass — reviews the recommendation before execution.
+	// Non-fatal if the critic itself errors: we log and proceed with the recommendation.
+	criticReview, criticErr := s.critic.ReviewRecommendation(ctx, req, profile, rec)
+	if criticErr != nil {
+		log.Printf("[recommend] critic review failed (%v) — proceeding without critic", criticErr)
+	} else if criticReview.Verdict == "block" {
+		log.Printf("[recommend] critic BLOCKED recommendation (risk=%s): %s", criticReview.RiskLevel, criticReview.Reasoning)
+		blocked := &models.InvestmentDecision{
+			UserID:         userID,
+			Timestamp:      time.Now(),
+			MarketSnapshot: snapshot,
+			Allocations:    rec.Allocations,
+			TotalAmount:    rec.TotalBudget,
+			RiskLevel:      rec.RiskLevel,
+			Summary:        rec.Summary,
+			DecisionType:   "blocked",
+			BlockedReason:  criticReview.Reasoning,
+			CriticReview:   criticReview,
 		}
-	}(context.WithoutCancel(ctx), decision)
+		go func(saveCtx context.Context, d *models.InvestmentDecision) {
+			if err := s.decisionRepo.Save(saveCtx, d); err != nil {
+				log.Printf("[recommend] persist blocked decision failed: %v", err)
+			} else {
+				log.Printf("[recommend] persist blocked decision saved to MongoDB")
+			}
+		}(context.WithoutCancel(ctx), blocked)
+
+		if profile != nil && (profile.NotificationEmail != "" || profile.Phone != "") {
+			target := ports.NotificationTarget{
+				UserID: userID,
+				Email:  profile.NotificationEmail,
+				Phone:  profile.Phone,
+				Source: "manual",
+			}
+			_ = s.notifications.SendInvestmentFailure(ctx, target, "Recommendation blocked by risk review: "+criticReview.Reasoning)
+		}
+
+		// Return $0 recommendation — callers treat TotalBudget==0 as a skip (non-fatal, no 500).
+		return &models.Recommendation{
+			TotalBudget: 0,
+			SkipReason:  "Blocked by risk review: " + criticReview.Reasoning,
+			Summary:     rec.Summary,
+			RiskLevel:   rec.RiskLevel,
+		}, nil
+	}
 
 	return rec, nil
 }
@@ -360,11 +394,20 @@ func (s *RecommendationService) GetCashContext(ctx context.Context, userID strin
 // cachedRecommendation pulls the user's most recent investment decision from MongoDB and
 // rescales the allocation amounts to budget. Returns an error when no prior decision exists.
 func (s *RecommendationService) cachedRecommendation(ctx context.Context, userID string, budget float64) (*models.Recommendation, error) {
-	decisions, err := s.decisionRepo.ListByUser(ctx, userID, 1)
-	if err != nil || len(decisions) == 0 {
+	decisions, err := s.decisionRepo.ListByUser(ctx, userID, 20)
+	if err != nil {
 		return nil, fmt.Errorf("no cached decision available")
 	}
-	d := decisions[0]
+	var d *models.InvestmentDecision
+	for i := range decisions {
+		if decisions[i].DecisionType == "invest" {
+			d = &decisions[i]
+			break
+		}
+	}
+	if d == nil {
+		return nil, fmt.Errorf("no cached invest decision available")
+	}
 	if len(d.Allocations) == 0 {
 		return nil, fmt.Errorf("cached decision has no allocations")
 	}

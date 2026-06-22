@@ -27,11 +27,20 @@ type decisionDocument struct {
 	TotalAmount      float64             `bson:"total_amount"`
 	RiskLevel        string              `bson:"risk_level"`
 	Summary          string              `bson:"summary"`
-	DecisionType     string              `bson:"decision_type,omitempty"` // "invest" | "skip"; omitted for legacy records
+	DecisionType     string              `bson:"decision_type,omitempty"` // "invest" | "skip" | "blocked"; omitted for legacy records
 	SkipReason       string              `bson:"skip_reason,omitempty"`
+	BlockedReason    string              `bson:"blocked_reason,omitempty"`
 	OverallReasoning string              `bson:"overall_reasoning,omitempty"`
 	TickerReasoning  map[string]string   `bson:"ticker_reasoning,omitempty"`
+	CriticReview     *criticReviewDoc    `bson:"critic_review,omitempty"`
 	Verdict          *decisionVerdictDoc `bson:"verdict,omitempty"`
+}
+
+type criticReviewDoc struct {
+	Verdict   string   `bson:"verdict"`
+	Concerns  []string `bson:"concerns"`
+	RiskLevel string   `bson:"risk_level"`
+	Reasoning string   `bson:"reasoning"`
 }
 
 type decisionVerdictDoc struct {
@@ -313,7 +322,8 @@ func (r *MongoDecisionRepository) ListUnverdicted(ctx context.Context, userID st
 		noVerdictYet["timestamp"] = bson.M{"$lt": cutoff}
 	}
 	filter := bson.M{
-		"user_id": userID,
+		"user_id":       userID,
+		"decision_type": "invest",
 		// Only consider decisions that have a real SPY entry price (set by Phase 22+).
 		// Pre-Phase-22 decisions have spy_price=0 and no receipts — they can never produce
 		// a meaningful verdict and would be re-queued every cycle if included.
@@ -358,6 +368,7 @@ func (r *MongoDecisionRepository) GetUsersWithPendingVerdicts(ctx context.Contex
 	// Pre-Phase-22 decisions have spy_price=0 and no receipts — they can never produce
 	// a meaningful verdict and would be re-queued every cycle if included.
 	filter := bson.M{
+		"decision_type":             "invest",
 		"market_snapshot.spy_price": bson.M{"$gt": 0},
 		"$or":                       append(bson.A{noVerdictCond}, badVerdictConds...),
 	}
@@ -726,6 +737,7 @@ func fromDecision(d *models.InvestmentDecision) *decisionDocument {
 		Summary:          d.Summary,
 		DecisionType:     d.DecisionType,
 		SkipReason:       d.SkipReason,
+		BlockedReason:    d.BlockedReason,
 		OverallReasoning: d.OverallReasoning,
 		TickerReasoning:  d.TickerReasoning,
 	}
@@ -734,6 +746,14 @@ func fromDecision(d *models.InvestmentDecision) *decisionDocument {
 	}
 	if d.Verdict != nil {
 		doc.Verdict = fromVerdict(d.Verdict)
+	}
+	if d.CriticReview != nil {
+		doc.CriticReview = &criticReviewDoc{
+			Verdict:   d.CriticReview.Verdict,
+			Concerns:  d.CriticReview.Concerns,
+			RiskLevel: d.CriticReview.RiskLevel,
+			Reasoning: d.CriticReview.Reasoning,
+		}
 	}
 	return doc
 }
@@ -751,6 +771,7 @@ func toDecision(doc *decisionDocument) models.InvestmentDecision {
 		Summary:          doc.Summary,
 		DecisionType:     doc.DecisionType,
 		SkipReason:       doc.SkipReason,
+		BlockedReason:    doc.BlockedReason,
 		OverallReasoning: doc.OverallReasoning,
 		TickerReasoning:  doc.TickerReasoning,
 	}
@@ -759,6 +780,14 @@ func toDecision(doc *decisionDocument) models.InvestmentDecision {
 	}
 	if doc.Verdict != nil {
 		d.Verdict = toVerdict(doc.Verdict)
+	}
+	if doc.CriticReview != nil {
+		d.CriticReview = &models.CriticReview{
+			Verdict:   doc.CriticReview.Verdict,
+			Concerns:  doc.CriticReview.Concerns,
+			RiskLevel: doc.CriticReview.RiskLevel,
+			Reasoning: doc.CriticReview.Reasoning,
+		}
 	}
 	return d
 }

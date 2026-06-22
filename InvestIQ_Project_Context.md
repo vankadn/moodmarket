@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-05-29 — Portfolio Rebalance Analysis fully complete (all 6 steps): POST /rebalance/analyze endpoint, React Rebalance tab, and weekly email digest scheduler with Resend HTML email, log, composite, and Twilio no-op providers
+> Last updated: 2026-06-22 — Removed phantom-decision writes from /recommend path; verdict stamper and 529 fallback now filter to decision_type="invest" only; one-time cleanup tool added
 
 ---
 
@@ -54,6 +54,7 @@ infrastructure/      ← implementations of domain ports
   banking/           ← Plaid
   brokerage/         ← Alpaca
   notifications/     ← composite fan-out; log (always), Resend email (EMAIL_PROVIDER=resend), Twilio SMS (SMS_PROVIDER=twilio)
+  critic/            ← RecommendationCritic implementations (Claude + mock + factory)
   secrets/           ← Vault / secrets manager (pre go-live)
 
 api/                 ← outermost: HTTP handlers, middleware
@@ -85,6 +86,7 @@ Key interfaces:
 - `PortfolioAggregator` — read-only external holdings: `GetHoldings` (flattened), `GetHoldingsByAccount` (keyed by institution name, e.g. "Robinhood"), `ListAccounts`; SnapTrade implements this
 - `PortfolioConnector` — OAuth lifecycle for external broker linking: `RegisterUser`, `GenerateConnectURL`, `DeleteUser`; SnapTrade implements this
 - `RebalanceAdvisor` — AI-based portfolio rebalance analysis: `AnalyzePortfolio(ctx, req, profile) *RebalanceAnalysis`; separate from `InvestmentAdvisor`
+- `RecommendationCritic` — adversarial second-pass reviewer: `ReviewRecommendation(ctx, rec, profile) *CriticReview`; returns verdict `"approve"` or `"block"` with explanation
 
 ### DEV_MODE pattern
 `DEV_MODE=true` in `.env` auto-logs in as the hardcoded dev user. Zero login required during development. This logic lives in exactly ONE place — `infrastructure/auth/factory.go`. No DEV_MODE checks anywhere else.
@@ -182,6 +184,7 @@ See README.md for the full env var reference and provider swap table.
 | `AssetClassBreakdownItem` | Per-asset-class stats: AssetClass, Total, Wins, WinRate (0–100) — returned by `GET /performance/asset-class-breakdown` |
 | `ClassificationEntry` | One ticker record: ticker, asset_class, approved, suggested_by_claude, first_seen_at |
 | `Allocation.AssetClass` | Asset class on each allocation — returned by Claude in JSON, verified against cache; `omitempty` so old decisions are unaffected |
+| `CriticReview` | Adversarial critic output: Verdict ("approve"/"block"), Reason (one-sentence), Details (extended explanation); stored on approved and blocked decisions |
 
 ---
 
@@ -284,6 +287,21 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 ### Brokerage providers
 - **Coinbase Advanced Trade** — full `BrokerageProvider` via official REST API; HMAC-SHA256 auth (CB-ACCESS-KEY/SIGN/TIMESTAMP); `market_market_ioc` orders with `quote_size` (USD notional); per-user AES-256-GCM encrypted credentials; `BROKERAGE_PROVIDER=coinbase`
 - Verdict entry price accuracy: if `FilledPrice=0` (async order), live price is fetched immediately via `GetCurrentPrice` at order time — no stale Polygon proxy needed
+
+### Adversarial critic
+- `CriticReview` struct in `domain/models/critic_review.go`: `Verdict` ("approve"/"block"), `Reason`, `Details`
+- `RecommendationCritic` interface in `domain/ports/recommendation_critic.go`: `ReviewRecommendation(ctx, rec, profile) *CriticReview`
+- `infrastructure/critic/`: `claude_critic.go` (calls Claude with a dedicated adversarial system prompt), `mock_critic.go` (always approves), `factory.go` (selects by `AI_PROVIDER`)
+- `InvestmentDecision` gains `BlockedReason string` and `CriticReview *CriticReview` fields; `"blocked"` added as a valid `DecisionType`
+- `RecommendationService` calls critic after advisor; on `"block"`: persists a `DecisionType="blocked"` decision, notifies user via `SendInvestmentFailure`, returns `TotalBudget=0` to caller
+- Approved decisions store the full `CriticReview` on the persisted decision for audit trail
+- Block notifications reuse `SendInvestmentFailure` — no new notification method added
+- `main.go` wires `infracritic.NewRecommendationCritic()` and passes it + `notificationProvider` to `NewRecommendationService`
+- `infrastructure/db/mongo_decision_repository.go`: added `criticReviewDoc` struct; added `BlockedReason` and `CriticReview` fields to `decisionDocument`; `fromDecision` and `toDecision` now persist and hydrate both fields — fixes latent bug where these fields existed on the domain model but were never written to or read from MongoDB
+- `api/handlers/activity_handler.go`: `activityDecision` response struct widened with `decision_type`, `blocked_reason`, `critic_review` — required because blocked decisions have no verdict and never appear in the eval `verdictMap`
+- `api/handlers/eval_handler.go`: `evalDecisionItem` widened with `decision_type`, `blocked_reason`, `overall_reasoning`, `ticker_reasoning`, `critic_review`, `allocations` — all populated from the domain model directly, reusing `models.CriticReview` and `models.Allocation` types
+- `frontend/api.ts`: added `CriticReview` interface; widened `ActivityDecision` with `decision_type?`, `blocked_reason?`, `critic_review?`; widened `EvalDecision` with all 6 new fields
+- `frontend/Eval.tsx`: blocked rows render amber left border + "Blocked" badge + `blocked_reason` text + bullet list of `critic_review.concerns` when present; skip rows render grey left border + "Skipped" badge; invest rows show `overall_reasoning` as italic muted line under amount/risk row when present; ticker verdict chips set `title` to `ticker_reasoning[ticker]` for hover tooltip
 
 ### Rebalancing
 - Daily drift detection in `application/services/rebalancing_service.go`; ticker-level drift vs Claude's last recommendation targets + asset-class drift vs user's `AllocationPreferences` limits
@@ -466,6 +484,11 @@ Background data access is legitimate when:
 | Save-before-URL-generate in portfolio connect flow | If credentials are persisted after URL generation, a URL-step failure leaves a registered SnapTrade user with no local record — orphaned forever. Persist first; rollback with `DeleteUser` + `ClearPortfolioConnection` if the URL step fails. |
 | Best-effort disconnect for SnapTrade | Failing the `DeleteUser` provider call and returning 500 would leave the user stuck in "connected" UI state. Local clear proceeds regardless; provider-side cleanup is logged and monitored but not user-blocking. |
 | Alpaca positions take precedence over SnapTrade in deduplication | Alpaca positions are held and traded in this app — they are the ground truth for cost basis, entry price, and P&L. SnapTrade read-only positions are context for Claude, not authoritative. First-seen-wins with Alpaca fetched first enforces this without special-casing. |
+| Adversarial critic reuses `SendInvestmentFailure` for block notifications | A block is a failed investment from the user's perspective. Adding a dedicated `SendCriticBlock` method would require implementing it across all four notification providers (log, composite, Resend, Twilio) for no behavioral difference. Reuse is the right call at current scale. |
+| Critic `"blocked"` as a valid `DecisionType` | Blocked decisions are persisted so the audit trail is complete and the feedback loop (win rate, past performance prompt section) can exclude them. A separate collection would fragment query paths; a new `DecisionType` enum value costs nothing and fits the existing pipeline. |
+| `/recommend` does not write to MongoDB | `/recommend` is a preview step — only `/invest` should create a decision record. Writing at recommend time created phantom docs (no `decision_type`, no `config_id`, empty `receipts[]`) that corrupted win-rate metrics and could be served by the 529 fallback cache. Blocked-by-critic docs (intentional audit trail) are the sole exception. |
+| 529 fallback scans last 20 decisions for `decision_type="invest"` | Scanning the last document risked returning a phantom or blocked doc as the cached recommendation. Scanning 20 and taking the first `"invest"` guarantees the fallback always restores a real trade record. |
+| `ListUnverdicted` and `GetUsersWithPendingVerdicts` filter by `decision_type="invest"` | Verdict stamper must never stamp phantom (`""`) or blocked decisions — both have no receipts and no real tickers, so stamping them produces zero `ticker_verdicts` and corrupts win-rate stats. Filter at the query level so the stamper never sees them. |
 
 ---
 
@@ -479,6 +502,7 @@ Background data access is legitimate when:
 | Plaid balance cache is in-memory | Cache resets on restart; Redis for persistence at scale |
 | Encrypted Mongo for Plaid tokens | Move to Vault / AWS Secrets Manager before go-live |
 | `CashContext.UserOverride` field is dead | Field exists in the model but is never set; left over from an abandoned per-session override design. Remove when cleaning up. |
+| `CriticReview.Concerns` field contract is implicit | `Eval.tsx` renders `critic_review.concerns` as a bullet list, but `CriticReview` in `domain/models/critic_review.go` has no `Concerns []string` field — the field is only present if the Claude critic includes it in its JSON. Make the field explicit on the struct and persist/hydrate it alongside `Reason` and `Details`. |
 | Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |
 | Classification bad data has no correction UI | If Claude mis-classifies a ticker (e.g. calls a bond ETF "US Equity"), the fix is a manual Mongo update. Acceptable for now — `cmd/dbcheck` makes it easy to spot. No admin UI planned until mis-classifications become a real pattern |
 
@@ -511,5 +535,18 @@ Decisions made before the verdict pipeline existed also produce empty ticker lis
 **Fix:** both `ListUnverdicted` and `GetUsersWithPendingVerdicts` now require `market_snapshot.spy_price > 0`. Old decisions with `spy_price=0` (or the field absent) are permanently excluded from the verdict queue.
 
 **Rule reinforced:** when adding a "retry on bad state" condition, enumerate the states that can actually be corrected vs. states that are permanently terminal. Terminal states need a separate filter or a `skipped` flag — otherwise they re-queue forever.
+
+---
+
+### Phantom decisions from /recommend corrupted win-rate metrics and the 529 fallback cache
+
+`RecommendationService.GetDailyRecommendation` was calling `decisionRepo.Save()` at the end of every approved recommendation, even though `/recommend` is only a preview step. These phantom documents had no `decision_type`, no `config_id`, and empty `receipts[]`. Two downstream effects:
+
+1. The verdict stamper picked them up via `ListUnverdicted` and stamped them against SPY with zero `ticker_verdicts`, corrupting win-rate metrics for affected users.
+2. The 529 fallback (`cachedRecommendation`) retrieved the most recent decision by timestamp — which could be a phantom — and served it as the cached recommendation instead of a real invest decision.
+
+**Fix (Phase 26):** removed the `decisionRepo.Save()` call from the approved recommend path. `cachedRecommendation` now scans the last 20 decisions and selects the first with `DecisionType == "invest"`. `ListUnverdicted` and `GetUsersWithPendingVerdicts` filter by `decision_type="invest"` at the query level. A one-time cleanup tool (`cmd/cleanup-phantom-decisions/main.go`, dry-run by default) was used to remove phantom docs from production MongoDB before the fix was deployed.
+
+**Rule reinforced:** a service that previews a decision must never write to the decisions collection. Preview and commit are distinct operations — conflating them creates a class of silent, structurally invalid documents that poison every downstream query touching that collection.
 
 ---
