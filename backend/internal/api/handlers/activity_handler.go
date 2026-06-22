@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/krishnarajivvns/investiq/internal/domain/models"
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
@@ -20,10 +21,13 @@ func NewActivityHandler(identityProvider ports.IdentityProvider, decisionRepo po
 }
 
 type activityDecision struct {
-	ID          string    `json:"id"`
-	Timestamp   time.Time `json:"timestamp"`
-	TotalAmount float64   `json:"total_amount"`
-	RiskLevel   string    `json:"risk_level"`
+	ID             string               `json:"id"`
+	Timestamp      time.Time            `json:"timestamp"`
+	TotalAmount    float64              `json:"total_amount"`
+	RiskLevel      string               `json:"risk_level"`
+	DecisionType   string               `json:"decision_type,omitempty"`
+	BlockedReason  string               `json:"blocked_reason,omitempty"`
+	CriticReview   *models.CriticReview `json:"critic_review,omitempty"`
 }
 
 type activityResponse struct {
@@ -105,10 +109,13 @@ func (h *ActivityHandler) GetActivity(w http.ResponseWriter, r *http.Request) {
 	for i, d := range decisions {
 		resp.TotalInvested += d.TotalAmount
 		resp.Decisions[i] = activityDecision{
-			ID:          d.ID,
-			Timestamp:   d.Timestamp,
-			TotalAmount: d.TotalAmount,
-			RiskLevel:   d.RiskLevel,
+			ID:            d.ID,
+			Timestamp:     d.Timestamp,
+			TotalAmount:   d.TotalAmount,
+			RiskLevel:     d.RiskLevel,
+			DecisionType:  d.DecisionType,
+			BlockedReason: d.BlockedReason,
+			CriticReview:  d.CriticReview,
 		}
 	}
 

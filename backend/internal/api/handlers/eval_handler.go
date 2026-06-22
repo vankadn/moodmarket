@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/krishnarajivvns/investiq/internal/domain/models"
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
@@ -125,12 +126,18 @@ func (h *EvalHandler) getSummary(w http.ResponseWriter, r *http.Request, userID 
 }
 
 type evalDecisionItem struct {
-	ID          string           `json:"id"`
-	Timestamp   time.Time        `json:"timestamp"`
-	TotalAmount float64          `json:"total_amount"`
-	RiskLevel   string           `json:"risk_level"`
-	ConfigID    string           `json:"config_id,omitempty"`
-	Verdict     *verdictResponse `json:"verdict"`
+	ID               string               `json:"id"`
+	Timestamp        time.Time            `json:"timestamp"`
+	TotalAmount      float64              `json:"total_amount"`
+	RiskLevel        string               `json:"risk_level"`
+	ConfigID         string               `json:"config_id,omitempty"`
+	Verdict          *verdictResponse     `json:"verdict"`
+	DecisionType     string               `json:"decision_type,omitempty"`
+	BlockedReason    string               `json:"blocked_reason,omitempty"`
+	OverallReasoning string               `json:"overall_reasoning,omitempty"`
+	TickerReasoning  map[string]string    `json:"ticker_reasoning,omitempty"`
+	CriticReview     *models.CriticReview `json:"critic_review,omitempty"`
+	Allocations      []models.Allocation  `json:"allocations,omitempty"`
 }
 
 type verdictResponse struct {
@@ -172,11 +179,17 @@ func (h *EvalHandler) getDecisions(w http.ResponseWriter, r *http.Request, userI
 	items := make([]evalDecisionItem, len(decisions))
 	for i, d := range decisions {
 		item := evalDecisionItem{
-			ID:          d.ID,
-			Timestamp:   d.Timestamp,
-			TotalAmount: d.TotalAmount,
-			RiskLevel:   d.RiskLevel,
-			ConfigID:    d.ConfigID,
+			ID:               d.ID,
+			Timestamp:        d.Timestamp,
+			TotalAmount:      d.TotalAmount,
+			RiskLevel:        d.RiskLevel,
+			ConfigID:         d.ConfigID,
+			DecisionType:     d.DecisionType,
+			BlockedReason:    d.BlockedReason,
+			OverallReasoning: d.OverallReasoning,
+			TickerReasoning:  d.TickerReasoning,
+			CriticReview:     d.CriticReview,
+			Allocations:      d.Allocations,
 		}
 		if d.Verdict != nil {
 			tvs := make([]tickerVerdictResponse, len(d.Verdict.TickerVerdicts))

@@ -14,6 +14,7 @@ import (
 	"github.com/krishnarajivvns/investiq/internal/application/scheduler"
 	"github.com/krishnarajivvns/investiq/internal/application/services"
 	infraadvisor "github.com/krishnarajivvns/investiq/internal/infrastructure/advisor"
+	infracritic "github.com/krishnarajivvns/investiq/internal/infrastructure/critic"
 	infraauth "github.com/krishnarajivvns/investiq/internal/infrastructure/auth"
 	infrabanking "github.com/krishnarajivvns/investiq/internal/infrastructure/banking"
 	inflabrokerage "github.com/krishnarajivvns/investiq/internal/infrastructure/brokerage"
@@ -147,10 +148,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("rebalance advisor init failed: %v", err)
 	}
+	recommendationCritic, err := infracritic.NewRecommendationCritic()
+	if err != nil {
+		log.Fatalf("recommendation critic init failed: %v", err)
+	}
 	rebalanceAggregationSvc := services.NewRebalanceAggregationService(brokerageFactory, profileRepo, decisionRepo, portfolioAggregator)
 
 	// REBALANCE_CACHE_HOURS — how long a rebalance analysis is served from cache before Claude is re-called (default 24h); read by the rebalance handler.
-	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory, documentRepo, portfolioAggregator, rebalanceRepo, rebalanceAggregationSvc, rebalanceAdvisor)
+	recommendSvc := services.NewRecommendationService(advisor, profileRepo, marketProvider, decisionRepo, financialDataProvider, brokerageFactory, documentRepo, portfolioAggregator, rebalanceRepo, rebalanceAggregationSvc, rebalanceAdvisor, recommendationCritic, notificationProvider)
 	idp := middleware.ContextIdentityProvider{}
 
 	autoInvestScheduler := scheduler.NewAutoInvestScheduler(autoInvestRepo, profileRepo, recommendSvc, investSvc, schedulerRepo, notificationProvider, marketCalendar, decisionRepo)

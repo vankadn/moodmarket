@@ -213,6 +213,35 @@ func (d *stubDocumentRepo) GetByID(_ context.Context, _ string) (*models.TaxDocu
 }
 func (d *stubDocumentRepo) DeleteByID(_ context.Context, _, _ string) error { return nil }
 
+// stubRecommendationCritic always approves — never blocks in unit tests.
+type stubRecommendationCritic struct{}
+
+func (c *stubRecommendationCritic) ReviewRecommendation(_ context.Context, _ models.InvestmentRequest, _ *models.UserProfile, _ *models.Recommendation) (*models.CriticReview, error) {
+	return &models.CriticReview{Verdict: "approve", Concerns: []string{}, RiskLevel: "low", Reasoning: "stub: approved"}, nil
+}
+
+// stubNotificationProvider is a no-op.
+type stubNotificationProvider struct{}
+
+func (n *stubNotificationProvider) SendInvestmentSummary(_ context.Context, _ ports.NotificationTarget, _ []models.TradeReceipt, _ float64, _ string) error {
+	return nil
+}
+func (n *stubNotificationProvider) SendInvestmentFailure(_ context.Context, _ ports.NotificationTarget, _ string) error {
+	return nil
+}
+func (n *stubNotificationProvider) SendMarketClosed(_ context.Context, _ ports.NotificationTarget, _ string) error {
+	return nil
+}
+func (n *stubNotificationProvider) SendSkipSummary(_ context.Context, _ ports.NotificationTarget, _, _ string) error {
+	return nil
+}
+func (n *stubNotificationProvider) SendRebalancingAlert(_ context.Context, _ ports.NotificationTarget, _ []models.TickerDrift) error {
+	return nil
+}
+func (n *stubNotificationProvider) SendRebalanceDigest(_ context.Context, _ ports.NotificationTarget, _ *models.RebalanceAnalysis) error {
+	return nil
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 // newServiceWithDecisionRepo wires a RecommendationService with the given
@@ -232,6 +261,8 @@ func newServiceWithDecisionRepo(decisionRepo ports.DecisionRepository) (*Recomme
 		&stubRebalanceRepo{},
 		&stubRebalanceAggregator{},
 		&stubRebalanceAdvisor{},
+		&stubRecommendationCritic{},
+		&stubNotificationProvider{},
 	)
 	return svc, advisor
 }

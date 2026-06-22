@@ -338,20 +338,47 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
               {allDecisions.map(d => {
                 const evalD = verdictMap.get(d.id);
                 const v = evalD?.verdict ?? null;
+                const isBlocked = d.decision_type === "blocked";
+                const isSkip = d.decision_type === "skip";
                 return (
-                  <div key={d.id} style={{ borderBottom: "1px solid #f0f0f0", padding: "12px 0" }}>
+                  <div
+                    key={d.id}
+                    style={{
+                      borderBottom: "1px solid #f0f0f0",
+                      padding: "12px 0",
+                      ...(isBlocked ? { borderLeft: "3px solid #e67e22", paddingLeft: "10px" } : {}),
+                      ...(isSkip ? { borderLeft: "3px solid #ddd", paddingLeft: "10px" } : {}),
+                    }}
+                  >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div>
-                        <div style={{ fontSize: "14px", fontWeight: 500 }}>{fmtDate(d.timestamp)}</div>
+                        <div style={{ fontSize: "14px", fontWeight: 500, display: "flex", alignItems: "center", gap: "6px" }}>
+                          {fmtDate(d.timestamp)}
+                          {isBlocked && (
+                            <span style={{ fontSize: "10px", background: "#fef3e8", color: "#e67e22", borderRadius: "4px", padding: "1px 6px", fontWeight: 600, letterSpacing: "0.03em" }}>
+                              Blocked
+                            </span>
+                          )}
+                          {isSkip && (
+                            <span style={{ fontSize: "10px", background: "#f5f5f5", color: "#999", borderRadius: "4px", padding: "1px 6px", fontWeight: 600, letterSpacing: "0.03em" }}>
+                              Skipped
+                            </span>
+                          )}
+                        </div>
                         <div style={{ fontSize: "12px", color: "#aaa", marginTop: "1px" }}>
                           {fmtDollars(d.total_amount)} · {d.risk_level}
                           {evalD?.config_id && evalD.config_id !== "manual" && (
                             <span> · {configName(evalD.config_id, autoInvestConfigs)}</span>
                           )}
                         </div>
+                        {!isBlocked && !isSkip && evalD?.overall_reasoning && (
+                          <div style={{ fontSize: "12px", color: "#bbb", fontStyle: "italic", marginTop: "3px" }}>
+                            {evalD.overall_reasoning}
+                          </div>
+                        )}
                       </div>
                       <div style={{ textAlign: "right" }}>
-                        {v ? (
+                        {isBlocked || isSkip ? null : v ? (
                           <>
                             <div style={{ fontSize: "15px", fontWeight: 600, color: v.overall_return_pct >= 0 ? "#27ae60" : "#c0392b" }}>
                               {fmtPct(v.overall_return_pct, true)}
@@ -364,26 +391,44 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
                             </div>
                           </>
                         ) : (
-                          <span style={{ fontSize: "12px", color: "#bbb", fontStyle: "italic" }}>Pending</span>
+                          <span style={{ fontSize: "12px", color: "#bbb", fontStyle: "italic" }}>Too young to rank</span>
                         )}
                       </div>
                     </div>
 
+                    {/* Blocked reason + critic concerns */}
+                    {isBlocked && d.blocked_reason && (
+                      <div style={{ marginTop: "6px", fontSize: "12px", color: "#e67e22" }}>
+                        {d.blocked_reason}
+                        {d.critic_review?.verdict === "block" && d.critic_review.concerns.length > 0 && (
+                          <ul style={{ margin: "4px 0 0 0", paddingLeft: "16px", color: "#999" }}>
+                            {d.critic_review.concerns.map((c, i) => (
+                              <li key={i} style={{ fontSize: "11px" }}>{c}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+
                     {/* Ticker pills — only for verdicted decisions */}
                     {v && v.ticker_verdicts?.length > 0 && (
                       <div style={{ marginTop: "8px", display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                        {v.ticker_verdicts.map(tv => (
-                          <span
-                            key={tv.ticker}
-                            style={{
-                              fontSize: "11px", padding: "2px 8px", borderRadius: "99px",
-                              background: tv.return_pct >= 0 ? "#f0faf4" : "#fdf4f4",
-                              color: tv.return_pct >= 0 ? "#27ae60" : "#c0392b",
-                            }}
-                          >
-                            {tv.ticker} {fmtPct(tv.return_pct, true)}
-                          </span>
-                        ))}
+                        {v.ticker_verdicts.map(tv => {
+                          const reasoning = evalD?.ticker_reasoning?.[tv.ticker];
+                          return (
+                            <span
+                              key={tv.ticker}
+                              title={reasoning || undefined}
+                              style={{
+                                fontSize: "11px", padding: "2px 8px", borderRadius: "99px",
+                                background: tv.return_pct >= 0 ? "#f0faf4" : "#fdf4f4",
+                                color: tv.return_pct >= 0 ? "#27ae60" : "#c0392b",
+                              }}
+                            >
+                              {tv.ticker} {fmtPct(tv.return_pct, true)}
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

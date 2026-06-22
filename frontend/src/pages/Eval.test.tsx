@@ -314,7 +314,7 @@ describe("Eval component", () => {
     });
   });
 
-  it("shows_Pending_label_for_decisions_without_a_verdict", async () => {
+  it("shows_too_young_label_for_decisions_without_a_verdict", async () => {
     // Activity API returns a decision that has no matching entry in the eval API.
     // The decision was made too recently for a verdict to be stamped yet.
     vi.mocked(getEvalSummary).mockResolvedValue(makeSummary());
@@ -325,7 +325,7 @@ describe("Eval component", () => {
 
     render(<Eval onBack={() => {}} autoInvestConfigs={noConfigs} />);
     await waitFor(() => {
-      expect(screen.getByText("Pending")).toBeInTheDocument();
+      expect(screen.getByText("Too young to rank")).toBeInTheDocument();
     });
   });
 

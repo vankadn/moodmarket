@@ -257,11 +257,21 @@ export async function deleteAutoInvestConfig(id: string): Promise<void> {
   if (!res.ok) throw new Error(`API error: ${res.status}`);
 }
 
+export interface CriticReview {
+  verdict: string;
+  concerns: string[];
+  risk_level: string;
+  reasoning: string;
+}
+
 export interface ActivityDecision {
   id: string;
   timestamp: string;
   total_amount: number;
   risk_level: string;
+  decision_type?: string;
+  blocked_reason?: string;
+  critic_review?: CriticReview;
 }
 
 export interface ActivitySummary {
@@ -472,6 +482,12 @@ export interface EvalDecision {
   risk_level: string;
   config_id?: string;
   verdict: VerdictItem;
+  decision_type?: string;
+  blocked_reason?: string;
+  overall_reasoning?: string;
+  ticker_reasoning?: Record<string, string>;
+  critic_review?: CriticReview;
+  allocations?: Allocation[];
 }
 
 export async function getEvalSummary(): Promise<EvalSummary> {
