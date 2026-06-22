@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-06-22 — Removed phantom-decision writes from /recommend path; verdict stamper and 529 fallback now filter to decision_type="invest" only; one-time cleanup tool added
+> Last updated: 2026-06-22 — Eval shows pending decisions; manual invest persists overall_reasoning; blocked decisions show reasoning; blocked context injected into prompt; null allocations guarded
 
 ---
 
@@ -75,7 +75,7 @@ Key interfaces:
 - `IdentityProvider` — userId in request context
 - `MarketDataProvider` — live prices (Finnhub real-time, Polygon prev-day, or mock); `GetDailySnapshot` builds the full market context; `GetPrice` returns a single ticker price used by the verdict stamper
 - `NewsProvider` — market headlines (Polygon or mock)
-- `DecisionRepository` — investment decision persistence; includes `WinRateTrend` (ISO-week bucketed win rate, last N weeks) and `AssetClassBreakdown` (per-asset-class win/loss counts via `$lookup` on `ticker_classifications`)
+- `DecisionRepository` — investment decision persistence; includes `WinRateTrend` (ISO-week bucketed win rate, last N weeks), `AssetClassBreakdown` (per-asset-class win/loss counts via `$lookup` on `ticker_classifications`), and `ListDecisions` (returns all decisions for a user, including pending/unverdicted)
 - `BrokerageProvider` — trade execution + position reads + portfolio history (Alpaca or mock)
 - `BrokerageProviderFactory` — constructs a `BrokerageProvider` from a per-user `BrokerageConnection`; decouples application layer from credential decryption and Alpaca constructor details
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
@@ -151,10 +151,10 @@ See README.md for the full env var reference and provider swap table.
 | Term | Meaning |
 |------|---------|
 | `UserProfile` | Complete financial picture of the user |
-| `InvestmentRequest` | Request to generate a daily allocation |
-| `Allocation` | Single position recommendation (ticker, amount, %, `Reasoning` — one-sentence per-ticker Claude explanation; `omitempty`) |
+| `InvestmentRequest` | Request to generate a daily allocation; carries `RecentBlockedDecisions []InvestmentDecision` (last 3, injected into prompt) |
+| `Allocation` | Single position recommendation (ticker, amount, %, `Reasoning` — one-sentence per-ticker Claude explanation; `omitempty`, `AssetClass`) |
 | `Recommendation` | Full AI response: allocations + summary + risk level + `OverallReasoning` (1-2 sentence thesis) + `FromCache bool` (true when returned from MongoDB fallback due to advisor overload) |
-| `InvestmentDecision` | Persisted record: userId, timestamp, market snapshot, allocations, trade receipts, DecisionType ("invest"/"skip"), SkipReason, OverallReasoning, TickerReasoning (map[ticker]reason) |
+| `InvestmentDecision` | Persisted record: userId, timestamp, market snapshot, allocations, trade receipts, DecisionType ("invest"/"skip"/"blocked"), SkipReason, OverallReasoning, TickerReasoning (map[ticker]reason), Summary |
 | `MarketSnapshot` | Point-in-time market context: SPY/QQQ trend, sector ETF performance, sentiment |
 | `RiskTolerance` | conservative / moderate / aggressive |
 | `TimeHorizon` | under_1_year / one_to_five / five_to_ten / ten_plus |
@@ -226,7 +226,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 ### Core investment loop
 - `/recommend` — Claude generates a structured allocation (ticker, amount, %, asset_class) using: user profile, live market snapshot, current positions, recent decision history, market news (via tool use), tax documents, spending context (opt-in), and portfolio concentration by asset class
-- `/invest` — places Alpaca market orders (notional dollar-based), routes by asset category across multiple brokerage accounts, logs full decision + receipts to MongoDB
+- `/invest` — places Alpaca market orders (notional dollar-based), routes by asset category across multiple brokerage accounts, logs full decision + receipts to MongoDB; accepts and persists `overall_reasoning` from the frontend (fixes asymmetry where manual invest always saved `""` while scheduled invest populated it)
 - Advisor overload fallback: on HTTP 529, returns last decision rescaled to today's budget (`FromCache: true`) — no hard error
 - Claude prompt retries: 3 attempts, exponential backoff; parse errors get a correction turn, API errors get a clean retry
 
@@ -282,6 +282,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Decision verdicts: stamped inline (goroutine per recommendation); `OverallReturnPct`, `SPYReturnPct`, `BeatMarket`, per-ticker verdicts
 - Feedback loop: when `VerdictedDecisions ≥ 5`, Claude receives its own win rate + avg return vs SPY in every prompt (`PAST PERFORMANCE` section)
 - Claude reasoning stored on every invest decision: `OverallReasoning` (1-2 sentence thesis) and `TickerReasoning` map (per-ticker explanation); both `omitempty` — old decisions unaffected; system prompt requires `overall_reasoning` + `allocations[].reasoning` in Claude's JSON response
+- Blocked decision feedback loop: `RecommendationService` injects the last 3 blocked decisions into `InvestmentRequest.RecentBlockedDecisions` (no extra DB call — sliced from already-loaded `recentDecisions`); `buildUserMessage` adds a RECENT BLOCKS section listing each block date + reason; system prompt rule 8 instructs advisor not to repeat the same risk_level or asset-class concentration when RECENT BLOCKS are present; RECENT INVESTMENT HISTORY loop switches on `DecisionType` (blocked → `[BLOCKED]`, skip → `[SKIPPED]`, invest → tickers as before)
 - Performance dashboard (formerly Activity): total invested, verdict stats, win rate vs SPY, best/worst decision, per-strategy breakdown, full decision history with verdicts overlaid — `GET /users/activity`, `/eval/summary`, `/eval/decisions`, `/performance/win-rate-trend` (ISO-week bucketed win rate, last 12 weeks, SVG polyline chart), `/performance/asset-class-breakdown` (per-asset-class win rate via `$lookup` on `ticker_classifications`, colored bar per row)
 
 ### Brokerage providers
@@ -301,7 +302,10 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - `api/handlers/activity_handler.go`: `activityDecision` response struct widened with `decision_type`, `blocked_reason`, `critic_review` — required because blocked decisions have no verdict and never appear in the eval `verdictMap`
 - `api/handlers/eval_handler.go`: `evalDecisionItem` widened with `decision_type`, `blocked_reason`, `overall_reasoning`, `ticker_reasoning`, `critic_review`, `allocations` — all populated from the domain model directly, reusing `models.CriticReview` and `models.Allocation` types
 - `frontend/api.ts`: added `CriticReview` interface; widened `ActivityDecision` with `decision_type?`, `blocked_reason?`, `critic_review?`; widened `EvalDecision` with all 6 new fields
-- `frontend/Eval.tsx`: blocked rows render amber left border + "Blocked" badge + `blocked_reason` text + bullet list of `critic_review.concerns` when present; skip rows render grey left border + "Skipped" badge; invest rows show `overall_reasoning` as italic muted line under amount/risk row when present; ticker verdict chips set `title` to `ticker_reasoning[ticker]` for hover tooltip
+- `frontend/Eval.tsx`: blocked rows render amber left border + "Blocked" badge + `blocked_reason` text; skip rows render grey left border + "Skipped" badge; invest rows show `overall_reasoning` as italic muted line under amount/risk row when present; ticker verdict chips set `title` to `ticker_reasoning[ticker]` for hover tooltip; expanded panel derives thesis from `overall_reasoning ?? summary` and builds per-ticker reasoning from `ticker_reasoning` map or `allocations[].reasoning` fallback
+- `eval_handler.go` `evalDecisionItem` carries `Summary` field (mapped from `d.Summary`); `GET /eval/decisions` uses `ListDecisions` (filter: `user_id` only) so pending/unverdicted decisions appear in the panel
+- `frontend/api.ts`: `EvalDecision.verdict` typed as `VerdictItem | null`; `EvalDecision` gains `summary?` field; `Allocation` gains `reasoning?: string`; `Recommendation.allocations` typed as `Allocation[] | null`
+- `ConfirmScreen.tsx` and `RecommendationCard.tsx`: guard `.map()`/`.some()` with `?? []` for null `allocations`; `Home.tsx` guards `allocations: rec.allocations ?? []` in the invest call
 
 ### Rebalancing
 - Daily drift detection in `application/services/rebalancing_service.go`; ticker-level drift vs Claude's last recommendation targets + asset-class drift vs user's `AllocationPreferences` limits
@@ -489,6 +493,8 @@ Background data access is legitimate when:
 | `/recommend` does not write to MongoDB | `/recommend` is a preview step — only `/invest` should create a decision record. Writing at recommend time created phantom docs (no `decision_type`, no `config_id`, empty `receipts[]`) that corrupted win-rate metrics and could be served by the 529 fallback cache. Blocked-by-critic docs (intentional audit trail) are the sole exception. |
 | 529 fallback scans last 20 decisions for `decision_type="invest"` | Scanning the last document risked returning a phantom or blocked doc as the cached recommendation. Scanning 20 and taking the first `"invest"` guarantees the fallback always restores a real trade record. |
 | `ListUnverdicted` and `GetUsersWithPendingVerdicts` filter by `decision_type="invest"` | Verdict stamper must never stamp phantom (`""`) or blocked decisions — both have no receipts and no real tickers, so stamping them produces zero `ticker_verdicts` and corrupts win-rate stats. Filter at the query level so the stamper never sees them. |
+| `ListDecisions` returns all decisions (not verdict-filtered) | `GET /eval/decisions` showing only verdicted docs hid pending and blocked decisions — the expanded panel showed "No reasoning recorded." Filtering by `verdict.$exists=true` was the wrong predicate for a panel whose job is to show reasoning. Filter by `user_id` only; `EvalDecision.verdict` typed as nullable on the frontend to handle the empty case. |
+| Blocked context sliced from already-loaded decisions (no extra DB call) | `RecommendationService` already loads `recentDecisions` for the PAST PERFORMANCE prompt. Filtering that slice for `DecisionType="blocked"` costs zero extra reads. A separate `ListBlockedDecisions` repo call would add latency and a new query path for a dataset already in memory. |
 
 ---
 
