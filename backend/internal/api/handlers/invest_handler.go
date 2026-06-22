@@ -52,6 +52,7 @@ func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		TotalAmount       float64             `json:"total_amount"`
 		RiskLevel         string              `json:"risk_level"`
 		Summary           string              `json:"summary"`
+		OverallReasoning  string              `json:"overall_reasoning,omitempty"`
 		PerAllocBrokerage map[string]string   `json:"per_allocation_brokerage,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -66,7 +67,7 @@ func (h *InvestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	receipts, decisionID, err := h.service.Execute(ctx, userID, body.Allocations, body.TotalAmount, body.RiskLevel, body.Summary, "", body.PerAllocBrokerage, "manual")
+	receipts, decisionID, err := h.service.Execute(ctx, userID, body.Allocations, body.TotalAmount, body.RiskLevel, body.Summary, body.OverallReasoning, body.PerAllocBrokerage, "manual")
 	if err != nil {
 		if errors.Is(err, ports.ErrBrokerageNotConnected) {
 			http.Error(w, "no brokerage account connected", http.StatusBadRequest)

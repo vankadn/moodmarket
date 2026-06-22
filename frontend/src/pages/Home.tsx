@@ -86,10 +86,11 @@ export function Home({ profile, autoInvestConfigs, onSignOut, onManageAccounts, 
     try {
       const overrides = Object.keys(perAllocBrokerage).length > 0 ? perAllocBrokerage : undefined;
       const response = await invest({
-        allocations: rec.allocations,
+        allocations: rec.allocations ?? [],
         total_amount: rec.total_budget,
         risk_level: rec.risk_level,
         summary: rec.summary,
+        overall_reasoning: rec.overall_reasoning,
         per_allocation_brokerage: overrides,
       });
       setReceipts(response.receipts);

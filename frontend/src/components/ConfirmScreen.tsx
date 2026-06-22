@@ -18,7 +18,7 @@ export function ConfirmScreen({ rec, brokerages, perAllocBrokerage, onPerAllocCh
   const showVia = brokerages.length > 0;
   const multiConn = brokerages.length > 1;
   const colSpanTotal = showVia ? 3 : 2;
-  const hasInvalidAllocation = rec.allocations.some((a) => a.amount < 1.00);
+  const hasInvalidAllocation = (rec.allocations ?? []).some((a) => a.amount < 1.00);
 
   return (
     <div style={{ background: "white", border: "1px solid #e0e0e0", borderRadius: "12px", padding: "1.25rem 1.5rem" }}>
@@ -49,7 +49,7 @@ export function ConfirmScreen({ rec, brokerages, perAllocBrokerage, onPerAllocCh
           </tr>
         </thead>
         <tbody>
-          {rec.allocations.map((a) => (
+          {(rec.allocations ?? []).map((a) => (
             <tr key={a.ticker} style={{ borderBottom: "1px solid #f8f8f8" }}>
               <td style={{ padding: "10px 0" }}>
                 <span style={{ background: "#f0f0f0", padding: "2px 8px", borderRadius: "6px", fontSize: "12px", fontWeight: 500 }}>

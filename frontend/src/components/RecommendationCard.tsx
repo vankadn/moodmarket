@@ -19,7 +19,7 @@ export function RecommendationCard({ rec }: Props) {
         </span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        {rec.allocations.map((a) => (
+        {(rec.allocations ?? []).map((a) => (
           <div key={a.ticker}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
               <span style={{ background: "#f0f0f0", padding: "2px 8px", borderRadius: "6px", fontSize: "12px", fontWeight: 500, minWidth: "44px", textAlign: "center" }}>
