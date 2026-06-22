@@ -139,7 +139,7 @@ func (r *fakeDecisionRepo) GetUsersWithPendingVerdicts(_ context.Context, _ time
 func (r *fakeDecisionRepo) GetEvalSummary(_ context.Context, _ string) (*models.EvalSummary, error) {
 	return nil, nil
 }
-func (r *fakeDecisionRepo) ListVerdictedDecisions(_ context.Context, _ string, _, _ int) ([]models.InvestmentDecision, error) {
+func (r *fakeDecisionRepo) ListDecisions(_ context.Context, _ string, _, _ int) ([]models.InvestmentDecision, error) {
 	return nil, nil
 }
 func (r *fakeDecisionRepo) WinRateTrend(_ context.Context, _ string, _ int) ([]models.WinRateTrendPoint, error) {

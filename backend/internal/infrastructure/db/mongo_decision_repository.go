@@ -515,7 +515,7 @@ func (r *MongoDecisionRepository) findExtreme(ctx context.Context, filter bson.M
 	return ref, nil
 }
 
-func (r *MongoDecisionRepository) ListVerdictedDecisions(ctx context.Context, userID string, page, limit int) ([]models.InvestmentDecision, error) {
+func (r *MongoDecisionRepository) ListDecisions(ctx context.Context, userID string, page, limit int) ([]models.InvestmentDecision, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -527,7 +527,7 @@ func (r *MongoDecisionRepository) ListVerdictedDecisions(ctx context.Context, us
 	}
 	skip := int64((page - 1) * limit)
 
-	filter := bson.M{"user_id": userID, "verdict": bson.M{"$exists": true}}
+	filter := bson.M{"user_id": userID}
 	opts := options.Find().
 		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
 		SetSkip(skip).

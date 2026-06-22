@@ -96,13 +96,15 @@ export interface Allocation {
   amount: number;
   percentage: number;
   rationale: string;
+  reasoning?: string;
 }
 
 export interface Recommendation {
   total_budget: number;
-  allocations: Allocation[];
+  allocations: Allocation[] | null;
   summary: string;
   risk_level: "low" | "medium" | "high";
+  overall_reasoning?: string;
   from_cache?: boolean;
 }
 
@@ -156,6 +158,7 @@ export interface InvestRequest {
   total_amount: number;
   risk_level: string;
   summary: string;
+  overall_reasoning?: string;
   per_allocation_brokerage?: Record<string, string>;
 }
 
@@ -481,10 +484,11 @@ export interface EvalDecision {
   total_amount: number;
   risk_level: string;
   config_id?: string;
-  verdict: VerdictItem;
+  verdict: VerdictItem | null;
   decision_type?: string;
   blocked_reason?: string;
   overall_reasoning?: string;
+  summary?: string;
   ticker_reasoning?: Record<string, string>;
   critic_review?: CriticReview;
   allocations?: Allocation[];

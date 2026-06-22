@@ -143,6 +143,13 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
   const [assetClassBreakdown, setAssetClassBreakdown] = useState<AssetClassBreakdownItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const toggleRow = (id: string) =>
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
   useEffect(() => {
     Promise.all([
@@ -354,6 +361,13 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
                       <div>
                         <div style={{ fontSize: "14px", fontWeight: 500, display: "flex", alignItems: "center", gap: "6px" }}>
                           {fmtDate(d.timestamp)}
+                          <button
+                            onClick={() => toggleRow(d.id)}
+                            style={{ background: "none", border: "none", cursor: "pointer", padding: "0 2px", color: "#bbb", fontSize: "11px", lineHeight: 1 }}
+                            aria-label={expandedRows.has(d.id) ? "Collapse" : "Expand"}
+                          >
+                            {expandedRows.has(d.id) ? "▾" : "▸"}
+                          </button>
                           {isBlocked && (
                             <span style={{ fontSize: "10px", background: "#fef3e8", color: "#e67e22", borderRadius: "4px", padding: "1px 6px", fontWeight: 600, letterSpacing: "0.03em" }}>
                               Blocked
@@ -371,11 +385,6 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
                             <span> · {configName(evalD.config_id, autoInvestConfigs)}</span>
                           )}
                         </div>
-                        {!isBlocked && !isSkip && evalD?.overall_reasoning && (
-                          <div style={{ fontSize: "12px", color: "#bbb", fontStyle: "italic", marginTop: "3px" }}>
-                            {evalD.overall_reasoning}
-                          </div>
-                        )}
                       </div>
                       <div style={{ textAlign: "right" }}>
                         {isBlocked || isSkip ? null : v ? (
@@ -414,11 +423,9 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
                     {v && v.ticker_verdicts?.length > 0 && (
                       <div style={{ marginTop: "8px", display: "flex", flexWrap: "wrap", gap: "6px" }}>
                         {v.ticker_verdicts.map(tv => {
-                          const reasoning = evalD?.ticker_reasoning?.[tv.ticker];
                           return (
                             <span
                               key={tv.ticker}
-                              title={reasoning || undefined}
                               style={{
                                 fontSize: "11px", padding: "2px 8px", borderRadius: "99px",
                                 background: tv.return_pct >= 0 ? "#f0faf4" : "#fdf4f4",
@@ -431,6 +438,52 @@ export function Eval({ onBack, autoInvestConfigs = [] }: Props) {
                         })}
                       </div>
                     )}
+
+                    {/* Expand/collapse reasoning panel */}
+                    {expandedRows.has(d.id) && (() => {
+                      const thesis = evalD?.overall_reasoning || evalD?.summary;
+                      const tickerReasoningMap: Record<string, string> =
+                        evalD?.ticker_reasoning ??
+                        Object.fromEntries(
+                          (evalD?.allocations ?? [])
+                            .filter(a => a.reasoning)
+                            .map(a => [a.ticker, a.reasoning!])
+                        );
+                      const hasTickerReasoning = Object.keys(tickerReasoningMap).length > 0;
+                      return (
+                        <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #f5f5f5", fontSize: "13px" }}>
+                          {(thesis || hasTickerReasoning)
+                            ? (
+                              <>
+                                {thesis && (
+                                  <p style={{ margin: "0 0 8px 0", color: "#555", lineHeight: "1.5" }}>
+                                    {thesis}
+                                  </p>
+                                )}
+                                {hasTickerReasoning && (
+                                  <div>
+                                    <div style={{ fontSize: "11px", fontWeight: 600, color: "#aaa", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                      Ticker reasoning
+                                    </div>
+                                    {Object.entries(tickerReasoningMap).map(([ticker, reason]) => (
+                                      <div key={ticker} style={{ display: "flex", gap: "8px", marginBottom: "3px", fontSize: "12px" }}>
+                                        <span style={{ fontWeight: 600, color: "#555", minWidth: "52px" }}>{ticker}</span>
+                                        <span style={{ color: "#888" }}>{reason}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </>
+                            )
+                            : (
+                              <span style={{ color: "#bbb", fontStyle: "italic", fontSize: "12px" }}>
+                                No reasoning recorded for this decision.
+                              </span>
+                            )
+                          }
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}

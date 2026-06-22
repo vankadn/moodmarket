@@ -40,7 +40,7 @@ func (m *mockDecisionRepoForEval) GetEvalSummary(_ context.Context, _ string) (*
 	return m.summary, m.summaryErr
 }
 
-func (m *mockDecisionRepoForEval) ListVerdictedDecisions(_ context.Context, _ string, page, limit int) ([]models.InvestmentDecision, error) {
+func (m *mockDecisionRepoForEval) ListDecisions(_ context.Context, _ string, page, limit int) ([]models.InvestmentDecision, error) {
 	m.capturedPage = page
 	m.capturedLimit = limit
 	return m.decisions, m.decisionsErr

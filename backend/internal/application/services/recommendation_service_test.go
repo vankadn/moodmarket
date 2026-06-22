@@ -75,7 +75,7 @@ func (r *stubDecisionRepo) GetUsersWithPendingVerdicts(_ context.Context, _ time
 func (r *stubDecisionRepo) GetEvalSummary(_ context.Context, _ string) (*models.EvalSummary, error) {
 	return r.evalSummary, r.evalErr
 }
-func (r *stubDecisionRepo) ListVerdictedDecisions(_ context.Context, _ string, _, _ int) ([]models.InvestmentDecision, error) {
+func (r *stubDecisionRepo) ListDecisions(_ context.Context, _ string, _, _ int) ([]models.InvestmentDecision, error) {
 	return nil, nil
 }
 func (r *stubDecisionRepo) SumInvestedToday(_ context.Context, _, _, _ string) (float64, error) {
