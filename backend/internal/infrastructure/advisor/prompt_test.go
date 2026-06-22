@@ -114,6 +114,34 @@ func TestBuildUserMessage(t *testing.T) {
 			mustContain: []string{"RECENT INVESTMENT HISTORY", "Vary today's allocation", "VTI", "BND"},
 		},
 		{
+			name: "blocked_decision_renders_as_marker_not_allocations",
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				RecentDecisions: []models.InvestmentDecision{
+					{
+						Timestamp:     time.Now().AddDate(0, 0, -1),
+						DecisionType:  "blocked",
+						BlockedReason: "allocation too aggressive for stated risk tolerance",
+					},
+				},
+			},
+			mustContain:    []string{"RECENT INVESTMENT HISTORY", "[BLOCKED] allocation too aggressive"},
+			mustNotContain: []string{"Vary today's allocation"},
+		},
+		{
+			name: "recent_blocked_decisions_render_blocks_section",
+			req: models.InvestmentRequest{
+				BaseBudget: 100,
+				RecentBlockedDecisions: []models.InvestmentDecision{
+					{
+						Timestamp:     time.Now().AddDate(0, 0, -1),
+						BlockedReason: "concentration in US Equity exceeded 80%",
+					},
+				},
+			},
+			mustContain: []string{"RECENT BLOCKS", "concentration in US Equity exceeded 80%"},
+		},
+		{
 			name:           "no_balance_summary_shows_fallback",
 			req:            baseReq,
 			mustContain:    []string{"No bank accounts connected"},

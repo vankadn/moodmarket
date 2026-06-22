@@ -161,6 +161,19 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 	} else {
 		req.RecentDecisions = recentDecisions
 		log.Printf("[recommend] %d recent decision(s) loaded", len(recentDecisions))
+		var recentBlocked []models.InvestmentDecision
+		for _, d := range recentDecisions {
+			if d.DecisionType == "blocked" {
+				recentBlocked = append(recentBlocked, d)
+				if len(recentBlocked) == 3 {
+					break
+				}
+			}
+		}
+		if len(recentBlocked) > 0 {
+			req.RecentBlockedDecisions = recentBlocked
+			log.Printf("[recommend] %d recent blocked decision(s) injected into prompt", len(recentBlocked))
+		}
 	}
 
 	// Step 6a: load latest rebalance analysis with freshness check.

@@ -59,6 +59,7 @@ ALLOCATION LOGIC (apply in order):
 5. Recent history: do NOT repeat the exact same allocation as the previous day — vary tickers or weights meaningfully
 6. CONCENTRATION RULE: Do not recommend any allocation that would push an asset class already above 40% concentration higher. If all asset classes are below 40%, allocate freely based on risk profile and market context.
 7. TICKER RULE: Prefer tickers not already held in the portfolio unless the position is below 5% and adding more is justified by today's market context.
+8. RECENT BLOCKS: if a RECENT BLOCKS section appears in the user message, do not repeat the same risk_level or asset-class concentration that triggered those blocks.
 
 OUTPUT CONTRACT:
 Return ONLY a raw JSON object. No markdown, no code fences, no text before or after.
@@ -774,14 +775,33 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 			limit = len(req.RecentDecisions)
 		}
 		msg += "\nRECENT INVESTMENT HISTORY (last 5):\n"
+		hasInvestDecision := false
 		for _, d := range req.RecentDecisions[:limit] {
-			tickers := make([]string, len(d.Allocations))
-			for i, a := range d.Allocations {
-				tickers[i] = fmt.Sprintf("%s %.0f%%", a.Ticker, a.Percentage)
+			switch d.DecisionType {
+			case "blocked":
+				reason := d.BlockedReason
+				if reason == "" {
+					reason = "no reason recorded"
+				}
+				msg += fmt.Sprintf("- %s: [BLOCKED] %s\n", d.Timestamp.Format("Jan 2"), reason)
+			case "skip":
+				reason := d.SkipReason
+				if reason == "" {
+					reason = "no specific reason"
+				}
+				msg += fmt.Sprintf("- %s: [SKIPPED] %s\n", d.Timestamp.Format("Jan 2"), reason)
+			default: // "invest" or legacy empty string
+				tickers := make([]string, len(d.Allocations))
+				for i, a := range d.Allocations {
+					tickers[i] = fmt.Sprintf("%s %.0f%%", a.Ticker, a.Percentage)
+				}
+				msg += fmt.Sprintf("- %s: $%.0f — %s\n", d.Timestamp.Format("Jan 2"), d.TotalAmount, strings.Join(tickers, ", "))
+				hasInvestDecision = true
 			}
-			msg += fmt.Sprintf("- %s: $%.0f — %s\n", d.Timestamp.Format("Jan 2"), d.TotalAmount, strings.Join(tickers, ", "))
 		}
-		msg += "Vary today's allocation — do not repeat the exact same split as yesterday.\n"
+		if hasInvestDecision {
+			msg += "Vary today's allocation — do not repeat the exact same split as yesterday.\n"
+		}
 	}
 
 	if len(req.TaxDocuments) > 0 {
@@ -872,6 +892,14 @@ func buildUserMessage(req models.InvestmentRequest, profile *models.UserProfile,
 			msg += fmt.Sprintf("- Best decision: %+.1f%% | Worst: %+.1f%%\n", ps.BestDecision.ReturnPct, ps.WorstDecision.ReturnPct)
 		}
 		msg += "Use as context only — do not override the user's stated risk tolerance or investment amount.\n"
+	}
+
+	if len(req.RecentBlockedDecisions) > 0 {
+		msg += "\nRECENT BLOCKS (recommendations rejected by risk review):\n"
+		for _, d := range req.RecentBlockedDecisions {
+			msg += fmt.Sprintf("- %s: %s\n", d.Timestamp.Format("Jan 2"), d.BlockedReason)
+		}
+		msg += "Do not repeat the same risk_level or asset-class concentration that triggered these blocks.\n"
 	}
 
 	if req.AgenticMode {
