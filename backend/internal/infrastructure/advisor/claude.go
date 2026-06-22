@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"sort"
 	"strings"
 	"sync"
@@ -442,7 +443,12 @@ func (c *claudeAdvisor) executeTool(ctx context.Context, name, toolUseID string,
 			log.Printf("[advisor]           TOOL get_market_news ←  0 items returned")
 			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: "No news headlines available today."}
 		}
-		limit := 5
+		limit := 15
+		if v := os.Getenv("NEWS_ARTICLE_LIMIT"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
 		if len(items) < limit {
 			limit = len(items)
 		}

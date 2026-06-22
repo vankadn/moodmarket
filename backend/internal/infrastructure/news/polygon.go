@@ -17,18 +17,20 @@ import (
 const polygonNewsURL = "https://api.polygon.io/v2/reference/news"
 
 type polygonNewsProvider struct {
-	apiKey     string
-	httpClient *http.Client
+	apiKey       string
+	articleLimit int
+	httpClient   *http.Client
 
 	mu          sync.Mutex
 	cachedNews  []models.NewsItem
 	cacheDate   string
 }
 
-func newPolygonNewsProvider(apiKey string) *polygonNewsProvider {
+func newPolygonNewsProvider(apiKey string, articleLimit int) *polygonNewsProvider {
 	return &polygonNewsProvider{
-		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		apiKey:       apiKey,
+		articleLimit: articleLimit,
+		httpClient:   &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -60,7 +62,7 @@ func (p *polygonNewsProvider) GetDailyNews(ctx context.Context) ([]models.NewsIt
 }
 
 func (p *polygonNewsProvider) fetch(ctx context.Context) ([]models.NewsItem, error) {
-	url := fmt.Sprintf("%s?ticker=SPY&limit=10&apiKey=%s", polygonNewsURL, p.apiKey)
+	url := fmt.Sprintf("%s?ticker=SPY&limit=%d&apiKey=%s", polygonNewsURL, p.articleLimit, p.apiKey)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {

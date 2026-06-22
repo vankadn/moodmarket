@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-06-22 — Eval shows pending decisions; manual invest persists overall_reasoning; blocked decisions show reasoning; blocked context injected into prompt; null allocations guarded
+> Last updated: 2026-06-22 — NEWS_ARTICLE_LIMIT env var added; both Polygon fetch cap and Claude tool-result cap now respect the same configurable limit
 
 ---
 
@@ -132,7 +132,7 @@ Every brokerage provider implements `BrokerageProvider` in `domain/ports/`. No b
 | Secrets | Encrypted Mongo now, Vault pre go-live | Behind SecretsProvider interface |
 | Scheduler | Go time.Ticker | Drives autonomous investment cycle; interval from AUTO_INVEST_INTERVAL env var |
 | Notifications | Composite fan-out: log + optional Resend email + optional Twilio SMS | Behind NotificationProvider interface; channels are independent: `EMAIL_PROVIDER=resend` (+ `RESEND_API_KEY` + `RESEND_FROM`) and `SMS_PROVIDER=twilio` (+ Twilio creds) can both be active at once; log provider always runs |
-| News | Polygon.io `/v2/reference/news` / mock | Behind NewsProvider interface; daily cache; top 5 SPY-tagged headlines injected into Claude prompt |
+| News | Polygon.io `/v2/reference/news` / mock | Behind NewsProvider interface; daily cache; article count controlled by `NEWS_ARTICLE_LIMIT` env var (default 15, must be > 0); both the Polygon fetch and the Claude `get_market_news` tool-result cap read the same var — previously Polygon fetched 10 and Claude saw only 5 (hardcoded); mock expanded to 15 headlines for dev parity |
 
 ---
 
@@ -494,6 +494,7 @@ Background data access is legitimate when:
 | 529 fallback scans last 20 decisions for `decision_type="invest"` | Scanning the last document risked returning a phantom or blocked doc as the cached recommendation. Scanning 20 and taking the first `"invest"` guarantees the fallback always restores a real trade record. |
 | `ListUnverdicted` and `GetUsersWithPendingVerdicts` filter by `decision_type="invest"` | Verdict stamper must never stamp phantom (`""`) or blocked decisions — both have no receipts and no real tickers, so stamping them produces zero `ticker_verdicts` and corrupts win-rate stats. Filter at the query level so the stamper never sees them. |
 | `ListDecisions` returns all decisions (not verdict-filtered) | `GET /eval/decisions` showing only verdicted docs hid pending and blocked decisions — the expanded panel showed "No reasoning recorded." Filtering by `verdict.$exists=true` was the wrong predicate for a panel whose job is to show reasoning. Filter by `user_id` only; `EvalDecision.verdict` typed as nullable on the frontend to handle the empty case. |
+| `NEWS_ARTICLE_LIMIT` governs both fetch and tool-result cap | Two separate hardcoded caps (Polygon: 10, Claude tool result: 5) meant Claude never saw more than 5 headlines regardless of what Polygon fetched. A single env var eliminates the silent truncation and makes the limit observable and tunable without a code change. |
 | Blocked context sliced from already-loaded decisions (no extra DB call) | `RecommendationService` already loads `recentDecisions` for the PAST PERFORMANCE prompt. Filtering that slice for `DecisionType="blocked"` costs zero extra reads. A separate `ListBlockedDecisions` repo call would add latency and a new query path for a dataset already in memory. |
 
 ---

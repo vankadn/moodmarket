@@ -4,6 +4,7 @@ package news
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
@@ -25,7 +26,13 @@ func NewNewsProvider() (ports.NewsProvider, error) {
 		if apiKey == "" {
 			return nil, fmt.Errorf("news factory: POLYGON_API_KEY is required for provider %q — add it to .env", provider)
 		}
-		return newPolygonNewsProvider(apiKey), nil
+		articleLimit := 15
+		if v := os.Getenv("NEWS_ARTICLE_LIMIT"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				articleLimit = n
+			}
+		}
+		return newPolygonNewsProvider(apiKey, articleLimit), nil
 	default:
 		return nil, fmt.Errorf("news factory: unknown provider %q (set NEWS_PROVIDER=polygon or use MOCK_ALL=true for local dev)", provider)
 	}
