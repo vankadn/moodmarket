@@ -503,8 +503,10 @@ Background data access is legitimate when:
 | Encrypted Mongo for Plaid tokens | Move to Vault / AWS Secrets Manager before go-live |
 | `CashContext.UserOverride` field is dead | Field exists in the model but is never set; left over from an abandoned per-session override design. Remove when cleaning up. |
 | `CriticReview.Concerns` field contract is implicit | `Eval.tsx` renders `critic_review.concerns` as a bullet list, but `CriticReview` in `domain/models/critic_review.go` has no `Concerns []string` field — the field is only present if the Claude critic includes it in its JSON. Make the field explicit on the struct and persist/hydrate it alongside `Reason` and `Details`. |
+| Env var name mismatch caused silent email failures in prod | Factory reads `EMAIL_PROVIDER` but prod env had `NOTIFICATION_PROVIDER` set — Resend was never selected, no attempt was ever logged, notifications silently fell through to log-only. Fixed by aligning the env var name. Watch for similar mismatches if adding new provider env vars. |
 | Prompt tests are white-box string assertions | `buildUserMessage` is package-private; tests in same package. Future: LLM-level assertion tests (does Claude actually respect the 40% rule?), fuzz tests on allocation sum, regression snapshot tests |
 | Classification bad data has no correction UI | If Claude mis-classifies a ticker (e.g. calls a bond ETF "US Equity"), the fix is a manual Mongo update. Acceptable for now — `cmd/dbcheck` makes it easy to spot. No admin UI planned until mis-classifications become a real pattern |
+| `MOCK_ALL=true` wiring unverified | Referenced in factory error messages and `.env.example` but not confirmed to actually override every provider — confirm wiring before relying on it for fresh setup. |
 
 ---
 
