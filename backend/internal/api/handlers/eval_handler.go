@@ -131,6 +131,7 @@ type evalDecisionItem struct {
 	TotalAmount      float64              `json:"total_amount"`
 	RiskLevel        string               `json:"risk_level"`
 	ConfigID         string               `json:"config_id,omitempty"`
+	Summary          string               `json:"summary,omitempty"`
 	Verdict          *verdictResponse     `json:"verdict"`
 	DecisionType     string               `json:"decision_type,omitempty"`
 	BlockedReason    string               `json:"blocked_reason,omitempty"`
@@ -169,7 +170,7 @@ func (h *EvalHandler) getDecisions(w http.ResponseWriter, r *http.Request, userI
 		limit = 20
 	}
 
-	decisions, err := h.decisionRepo.ListVerdictedDecisions(r.Context(), userID, page, limit)
+	decisions, err := h.decisionRepo.ListDecisions(r.Context(), userID, page, limit)
 	if err != nil {
 		log.Printf("[eval] decisions: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -184,6 +185,7 @@ func (h *EvalHandler) getDecisions(w http.ResponseWriter, r *http.Request, userI
 			TotalAmount:      d.TotalAmount,
 			RiskLevel:        d.RiskLevel,
 			ConfigID:         d.ConfigID,
+			Summary:          d.Summary,
 			DecisionType:     d.DecisionType,
 			BlockedReason:    d.BlockedReason,
 			OverallReasoning: d.OverallReasoning,
