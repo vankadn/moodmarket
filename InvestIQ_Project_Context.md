@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-06-22 — bargain_hunter strategy type fully implemented: domain model changes, fundamentals tools (get_fundamentals / get_earnings_surprises / get_insider_activity), strategies.go prompt constants, critic rules updated, lifetime budget cap added
+> Last updated: 2026-06-23 — added retrospective: decision-type hygiene in the decisions collection (three incidents, pattern rule)
 
 ---
 
@@ -563,5 +563,19 @@ Decisions made before the verdict pipeline existed also produce empty ticker lis
 **Fix (Phase 26):** removed the `decisionRepo.Save()` call from the approved recommend path. `cachedRecommendation` now scans the last 20 decisions and selects the first with `DecisionType == "invest"`. `ListUnverdicted` and `GetUsersWithPendingVerdicts` filter by `decision_type="invest"` at the query level. A one-time cleanup tool (`cmd/cleanup-phantom-decisions/main.go`, dry-run by default) was used to remove phantom docs from production MongoDB before the fix was deployed.
 
 **Rule reinforced:** a service that previews a decision must never write to the decisions collection. Preview and commit are distinct operations — conflating them creates a class of silent, structurally invalid documents that poison every downstream query touching that collection.
+
+---
+
+### Decision-type hygiene — the decisions collection has three types with fundamentally different semantics
+
+The same root mistake surfaced three times across separate code paths: a query or loop read from the `decisions` collection without filtering or switching on `DecisionType`, treating all documents as if they were executed trades.
+
+| Incident | Where | What went wrong | Fix |
+|----------|-------|-----------------|-----|
+| Phantom decisions | `/recommend` path | `RecommendationService` wrote `DecisionType=""` docs for $0 skips — no receipts, no config_id, corrupted win-rate metrics and the 529 fallback cache | Removed the `Save()` call from the recommend path; fallback now scans last 20 and selects first `decision_type="invest"` |
+| Verdict stamper | `ListUnverdicted` | Stamped verdicts on `blocked` and `skip` decisions that have no receipts and no real tickers — produced zero `ticker_verdicts`, corrupted win-rate stats | Added `decision_type="invest"` filter at the query level in `ListUnverdicted` and `GetUsersWithPendingVerdicts` |
+| Prompt builder (RECENT INVESTMENT HISTORY) | `buildUserMessage` | `blocked` and `skip` decisions were rendered as executed trades in the RECENT INVESTMENT HISTORY section — Claude treated its own rejected thesis as a real prior trade to "vary from", reinforcing bad patterns | Switched on `DecisionType` in the history loop: `blocked` → `[BLOCKED] <reason>`, `skip` → `[SKIPPED] <reason>`, `invest` → ticker/amount line; "vary today's allocation" instruction fires only when at least one real `invest` decision is present |
+
+**Pattern rule:** any query or loop that reads from the `decisions` collection must filter or switch on `DecisionType` explicitly. "All recent decisions" is never the right default — `invest`, `skip`, and `blocked` have fundamentally different semantics and must not be conflated downstream.
 
 ---
