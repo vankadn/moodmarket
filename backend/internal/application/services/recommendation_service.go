@@ -326,9 +326,10 @@ func (s *RecommendationService) GetDailyRecommendation(ctx context.Context, user
 			_ = s.notifications.SendInvestmentFailure(ctx, target, "Recommendation blocked by risk review: "+criticReview.Reasoning)
 		}
 
-		// Return $0 recommendation — callers treat TotalBudget==0 as a skip (non-fatal, no 500).
+		// Return $0 recommendation — callers check WasBlocked to avoid writing a duplicate skip doc.
 		return &models.Recommendation{
 			TotalBudget: 0,
+			WasBlocked:  true,
 			SkipReason:  "Blocked by risk review: " + criticReview.Reasoning,
 			Summary:     rec.Summary,
 			RiskLevel:   rec.RiskLevel,

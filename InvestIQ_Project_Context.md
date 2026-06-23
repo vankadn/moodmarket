@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-06-23 — expanded Fundamentals model with 4 additional valuation signals (EVToEBITDA, FCFYieldPct, PriceToBook, PEVsOwnFiveYearAvg, EVEBITDAVsOwnAvg) sourced from existing Finnhub response
+> Last updated: 2026-06-23 — fixed duplicate blocked+skip decision writes per critic-block cycle; added WasBlocked bool to Recommendation struct
 
 ---
 
@@ -154,7 +154,7 @@ See README.md for the full env var reference and provider swap table.
 | `UserProfile` | Complete financial picture of the user |
 | `InvestmentRequest` | Request to generate a daily allocation; carries `RecentBlockedDecisions []InvestmentDecision` (last 3, injected into prompt) and `StrategyType string` (flows domain→scheduler→req→advisor→critic, selects system prompt prefix) |
 | `Allocation` | Single position recommendation (ticker, amount, %, `Reasoning` — one-sentence per-ticker Claude explanation; `omitempty`, `AssetClass`) |
-| `Recommendation` | Full AI response: allocations + summary + risk level + `OverallReasoning` (1-2 sentence thesis) + `FromCache bool` (true when returned from MongoDB fallback due to advisor overload) |
+| `Recommendation` | Full AI response: allocations + summary + risk level + `OverallReasoning` (1-2 sentence thesis) + `FromCache bool` (true when returned from MongoDB fallback due to advisor overload) + `WasBlocked bool` (true when a critic block caused `TotalBudget=0`; callers must check this before inferring a genuine advisor skip) |
 | `InvestmentDecision` | Persisted record: userId, timestamp, market snapshot, allocations, trade receipts, DecisionType ("invest"/"skip"/"blocked"), SkipReason, OverallReasoning, TickerReasoning (map[ticker]reason), Summary |
 | `MarketSnapshot` | Point-in-time market context: SPY/QQQ trend, sector ETF performance, sentiment |
 | `RiskTolerance` | conservative / moderate / aggressive |
@@ -507,6 +507,7 @@ Background data access is legitimate when:
 | Fundamentals valuation signals sourced from existing Finnhub response | All five new fields (EVToEBITDA, FCFYieldPct, PriceToBook, PEVsOwnFiveYearAvg, EVEBITDAVsOwnAvg) are computed from the `metric` and `series` keys already present in the single `/stock/metric?metric=all` call. Dependency principle: no new API, no new key, no new failure surface. |
 | `V *float64` pointer for seriesEntry values | Finnhub returns `null` for missing historical PE entries (confirmed on real MU data for 2023). A value type would decode null as 0 and silently include it in the average. A pointer makes null explicit — `seriesAvg` skips nil entries and returns 0 when fewer than 3 non-null values exist. |
 | `FUNDAMENTALS_PROVIDER=finnhub` added to `.env` and `.env.example` | Without this var set, the factory defaults to mock — `get_fundamentals` tool calls return synthetic data even in production. Railway deployment requires the same var in the dashboard alongside the existing `FINNHUB_API_KEY`. |
+| `WasBlocked bool` on `Recommendation` instead of parsing `SkipReason` string | `TotalBudget=0` is returned by both a critic block and a genuine Claude skip. Without a typed field, the scheduler's `TotalBudget==0` guard fires unconditionally — it calls `saveSkipDecision` even when the service's goroutine has already written a `blocked` doc, producing two decision documents per cycle. A typed boolean makes the two zero-budget paths structurally distinct; the scheduler branches on it directly without string parsing. |
 
 ---
 
@@ -581,5 +582,17 @@ The same root mistake surfaced three times across separate code paths: a query o
 | Prompt builder (RECENT INVESTMENT HISTORY) | `buildUserMessage` | `blocked` and `skip` decisions were rendered as executed trades in the RECENT INVESTMENT HISTORY section — Claude treated its own rejected thesis as a real prior trade to "vary from", reinforcing bad patterns | Switched on `DecisionType` in the history loop: `blocked` → `[BLOCKED] <reason>`, `skip` → `[SKIPPED] <reason>`, `invest` → ticker/amount line; "vary today's allocation" instruction fires only when at least one real `invest` decision is present |
 
 **Pattern rule:** any query or loop that reads from the `decisions` collection must filter or switch on `DecisionType` explicitly. "All recent decisions" is never the right default — `invest`, `skip`, and `blocked` have fundamentally different semantics and must not be conflated downstream.
+
+---
+
+### Duplicate decision documents per critic-block cycle — two goroutines writing for the same event
+
+`RecommendationService` on a critic block: (1) launches a goroutine to persist a `DecisionType="blocked"` document, then (2) returns `Recommendation{TotalBudget: 0}` to the scheduler. The scheduler's `if rec.TotalBudget == 0` guard interpreted this as a genuine Claude skip and called `saveSkipDecision`, producing a second document — a `DecisionType="skip"` doc — for the same cycle.
+
+Root cause: `TotalBudget=0` was overloaded. Both a critic block and a genuine Claude skip used the same sentinel. The scheduler had no way to distinguish them without parsing `SkipReason`, which is fragile.
+
+**Fix:** added `WasBlocked bool` to `Recommendation`. The critic-block return path sets it to `true`. The scheduler's `TotalBudget==0` branch checks `WasBlocked` first; when true it logs and returns immediately — the service goroutine already owns persistence for that cycle.
+
+**Rule reinforced:** when a value (zero, empty string, nil) carries two semantically different meanings in different code paths, replace it with a typed field. Branching on a sentinel shared between unrelated states always collapses eventually.
 
 ---

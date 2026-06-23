@@ -75,8 +75,13 @@ func runForUser(
 		return 0, fmt.Errorf("recommendation: %w", err)
 	}
 
-	// Claude chose to skip this run ($0 total_budget).
 	if rec.TotalBudget == 0 {
+		// Critic block: the service's goroutine already persisted a "blocked" doc — no second write.
+		if rec.WasBlocked {
+			log.Printf("[scheduler] user=%s critic block already persisted — no skip doc written", config.UserID)
+			return 0, nil
+		}
+		// Claude itself chose $0 (budget exhaustion or its own judgment).
 		reason := rec.SkipReason
 		if reason == "" {
 			reason = rec.Summary

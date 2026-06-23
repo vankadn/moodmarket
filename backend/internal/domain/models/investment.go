@@ -52,7 +52,8 @@ type Recommendation struct {
 	Allocations      []Allocation `json:"allocations"`
 	Summary          string       `json:"summary"`
 	RiskLevel        string       `json:"risk_level"`
-	SkipReason       string       `json:"skip_reason,omitempty"`        // set by Claude when total_budget == 0 in agentic mode
+	SkipReason       string       `json:"skip_reason,omitempty"`        // set when total_budget == 0; check WasBlocked to distinguish critic block from Claude's own skip judgment — do not parse this string
 	OverallReasoning string       `json:"overall_reasoning,omitempty"` // 1-2 sentence investment thesis from Claude
 	FromCache        bool         `json:"from_cache,omitempty"`
+	WasBlocked       bool         `json:"was_blocked,omitempty"`        // true when a RecommendationCritic block caused TotalBudget=0; false when Claude itself chose to skip (budget exhaustion or its own judgment)
 }
