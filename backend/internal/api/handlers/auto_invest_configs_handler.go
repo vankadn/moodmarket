@@ -66,9 +66,10 @@ type multiConfigRequest struct {
 	Enabled         bool                 `json:"enabled"`
 	Mode            string               `json:"mode,omitempty"`
 	Amount          float64              `json:"amount"`
-	DailyBudget     float64              `json:"daily_budget,omitempty"`
-	Risk            models.RiskTolerance `json:"risk"`
-	Strategy        string               `json:"strategy"`
+	DailyBudget       float64              `json:"daily_budget,omitempty"`
+	LifetimeBudgetCap float64              `json:"lifetime_budget_cap,omitempty"`
+	Risk              models.RiskTolerance `json:"risk"`
+	Strategy          string               `json:"strategy"`
 	IntervalDays    int                  `json:"interval_days,omitempty"`
 	IntervalHours   int                  `json:"interval_hours,omitempty"`
 	IntervalSeconds int                  `json:"interval_seconds,omitempty"`
@@ -91,14 +92,15 @@ func (h *autoInvestConfigsHandler) create(w http.ResponseWriter, r *http.Request
 		Name:            req.Name,
 		Enabled:         req.Enabled,
 		Mode:            req.Mode,
-		Amount:          req.Amount,
-		DailyBudget:     req.DailyBudget,
-		Risk:            req.Risk,
-		Strategy:        req.Strategy,
-		IntervalDays:    req.IntervalDays,
-		IntervalHours:   req.IntervalHours,
-		IntervalSeconds: req.IntervalSeconds,
-		EnabledAt:       enabledAt,
+		Amount:            req.Amount,
+		DailyBudget:       req.DailyBudget,
+		LifetimeBudgetCap: req.LifetimeBudgetCap,
+		Risk:              req.Risk,
+		Strategy:          req.Strategy,
+		IntervalDays:      req.IntervalDays,
+		IntervalHours:     req.IntervalHours,
+		IntervalSeconds:   req.IntervalSeconds,
+		EnabledAt:         enabledAt,
 	}
 
 	created, err := h.repo.Create(r.Context(), config)
@@ -133,14 +135,15 @@ func (h *autoInvestConfigsHandler) update(w http.ResponseWriter, r *http.Request
 		Name:            req.Name,
 		Enabled:         req.Enabled,
 		Mode:            req.Mode,
-		Amount:          req.Amount,
-		DailyBudget:     req.DailyBudget,
-		Risk:            req.Risk,
-		Strategy:        req.Strategy,
-		IntervalDays:    req.IntervalDays,
-		IntervalHours:   req.IntervalHours,
-		IntervalSeconds: req.IntervalSeconds,
-		EnabledAt:       enabledAt,
+		Amount:            req.Amount,
+		DailyBudget:       req.DailyBudget,
+		LifetimeBudgetCap: req.LifetimeBudgetCap,
+		Risk:              req.Risk,
+		Strategy:          req.Strategy,
+		IntervalDays:      req.IntervalDays,
+		IntervalHours:     req.IntervalHours,
+		IntervalSeconds:   req.IntervalSeconds,
+		EnabledAt:         enabledAt,
 	}
 
 	updated, err := h.repo.UpdateByID(r.Context(), configID, userID, config)

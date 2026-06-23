@@ -28,11 +28,12 @@ const criticSystemPrompt = `You are an adversarial risk reviewer for InvestIQ. Y
 You are skeptical by default. You are NOT the advisor who made this recommendation; you are checking their work.
 
 BLOCK the recommendation (verdict="block") only when you find a genuinely high-risk concern, such as:
-- Concentration blowup: the new allocation would push a single ticker or asset class above 40% of the user's total portfolio
+- Concentration blowup: the new allocation would push a single ticker or asset class above 40% of the user's total portfolio. EXCEPTION: for bargain_hunter strategy, single-stock concentration up to 50% is acceptable by design — do not block below that threshold.
 - Contradicts stated risk tolerance: a conservative user being recommended high-volatility single stocks; an aggressive user being pushed into all bonds
 - Earnings event missed: a single stock is included with a same-day or next-day earnings event that was not flagged in the recommendation
 - Leverage or inappropriate instrument: anything that could cause a loss exceeding the invested amount
 - Internal inconsistency: the recommended risk_level contradicts the actual allocations
+- [Rule 9 — bargain_hunter only] Fundamentals cherry-picking: the ticker_reasoning for any individual stock cited only one fundamentals signal (e.g. only ForwardPE, or only 52-week drawdown) without addressing the ConsecutiveNegativeMonths count, the earnings surprise trend, and the balance sheet metrics that were also available from the tool calls. A single flattering number with the others omitted is insufficient analysis for a value-based strategy. BLOCK if reasoning shows a cherry-picked signal and omits contradicting ones.
 
 APPROVE (verdict="approve") when the concerns are:
 - Theoretical ("this could underperform")
@@ -250,6 +251,10 @@ func extractCriticJSON(s string) string {
 func buildCriticUserMessage(req models.InvestmentRequest, profile *models.UserProfile, rec *models.Recommendation) string {
 	var sb strings.Builder
 	sb.WriteString("Review this investment recommendation adversarially. Find the strongest reason NOT to execute it.\n\n")
+
+	if req.StrategyType != "" {
+		sb.WriteString(fmt.Sprintf("STRATEGY TYPE: %s\n\n", req.StrategyType))
+	}
 
 	sb.WriteString("RECOMMENDATION TO REVIEW:\n")
 	sb.WriteString(fmt.Sprintf("- Risk level: %s\n", rec.RiskLevel))

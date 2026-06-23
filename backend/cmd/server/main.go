@@ -23,6 +23,7 @@ import (
 	infradb "github.com/krishnarajivvns/investiq/internal/infrastructure/db"
 	infracalendar "github.com/krishnarajivvns/investiq/internal/infrastructure/calendar"
 	infraextractor "github.com/krishnarajivvns/investiq/internal/infrastructure/extractor"
+	infrafundamentals "github.com/krishnarajivvns/investiq/internal/infrastructure/fundamentals"
 	inframarket "github.com/krishnarajivvns/investiq/internal/infrastructure/market"
 	infranews "github.com/krishnarajivvns/investiq/internal/infrastructure/news"
 	infranotifications "github.com/krishnarajivvns/investiq/internal/infrastructure/notifications"
@@ -66,6 +67,7 @@ func main() {
 		os.Setenv("DOCUMENT_EXTRACTOR", "mock")
 		os.Setenv("MARKET_CALENDAR", "mock")
 		os.Setenv("SNAPTRADE_PROVIDER", "mock")
+		os.Setenv("FUNDAMENTALS_PROVIDER", "mock")
 		os.Setenv("DEV_MODE", "true")
 	}
 
@@ -95,14 +97,19 @@ func main() {
 		log.Fatalf("news provider init failed: %v", err)
 	}
 
-	advisor, err := infraadvisor.NewAdvisor(newsProvider, classificationCache, classificationRepo)
-	if err != nil {
-		log.Fatalf("advisor init failed: %v", err)
-	}
-
 	marketProvider, err := inframarket.NewMarketDataProvider()
 	if err != nil {
 		log.Fatalf("market data provider init failed: %v", err)
+	}
+
+	fundamentalsProvider, err := infrafundamentals.NewFundamentalsProvider()
+	if err != nil {
+		log.Fatalf("fundamentals provider init failed: %v", err)
+	}
+
+	advisor, err := infraadvisor.NewAdvisor(newsProvider, fundamentalsProvider, classificationCache, classificationRepo)
+	if err != nil {
+		log.Fatalf("advisor init failed: %v", err)
 	}
 
 	brokerageFactory, err := inflabrokerage.NewBrokerageFactory()

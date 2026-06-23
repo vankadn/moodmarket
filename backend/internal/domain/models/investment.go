@@ -24,6 +24,7 @@ type InvestmentRequest struct {
 	NewsItems              []NewsItem           `json:"-"` // today's market headlines; injected by recommendation service
 	TaxDocuments           []*TaxDocument       `json:"-"` // verified tax docs (W2/1099/1098); injected by recommendation service
 	StrategyPrompt         string               `json:"-"` // optional; prepended to Claude system prompt when set
+	StrategyType           string               `json:"-"` // "long_term" | "short_term" | "bargain_hunter"; resolved to prompt by infrastructure/advisor
 	PerformanceSummary     *EvalSummary         `json:"-"` // injected by recommendation service; nil for new users or when below verdict threshold
 	// Agentic budget fields — set by scheduler when Mode == "agentic"; zero values mean fixed mode.
 	AgenticMode bool    `json:"-"`

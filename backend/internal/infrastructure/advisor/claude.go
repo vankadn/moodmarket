@@ -42,6 +42,9 @@ const systemPrompt = `You are InvestIQ, a personal investment advisor. Your job 
 AVAILABLE TOOLS:
 - get_market_news: call this before making allocation decisions to retrieve today's top market news headlines.
 - get_earnings_calendar: call this for any individual stock (not ETFs) you are considering to check if it reports earnings in the next 7 days.
+- get_fundamentals: [bargain_hunter] fetch PE, ForwardPE, ForwardPEG, 52-week range with dates, debt ratios, and current ratio for a stock ticker.
+- get_earnings_surprises: [bargain_hunter] fetch last N quarters of EPS actual vs estimate for a stock ticker.
+- get_insider_activity: [bargain_hunter] fetch monthly insider sentiment (MSPR, net share changes, ConsecutiveNegativeMonths) for a stock ticker.
 
 EARNINGS AWARENESS:
 - Always call get_earnings_calendar before recommending any individual stock ticker (e.g. AAPL, CRM, NVDA). Never call it for ETFs (SPY, QQQ, VTI, BND, XLE, etc.).
@@ -174,27 +177,89 @@ type earningsCacheEntry struct {
 const earningsCacheTTL = 1 * time.Hour
 const finnhubEarningsBaseURL = "https://finnhub.io/api/v1/calendar/earnings"
 
+// fundamentalsTools are registered alongside marketNewsTools for bargain_hunter strategy calls.
+// All three are multi-use (one call per candidate ticker, same pattern as get_earnings_calendar).
+var fundamentalsTools = []claudeTool{
+	{
+		Name:        "get_fundamentals",
+		Description: "Fetch key value metrics for a stock ticker from Finnhub: PE (trailing), ForwardPE, ForwardPEG, 52-week high/low with dates, LongTermDebtToEquity, TotalDebtToEquity, CurrentRatio. Call this for each individual stock candidate in a bargain_hunter strategy.",
+		InputSchema: claudeToolSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"ticker": map[string]interface{}{
+					"type":        "string",
+					"description": "Stock ticker symbol, e.g. MU, AAPL, NVDA.",
+				},
+			},
+			Required: []string{"ticker"},
+		},
+	},
+	{
+		Name:        "get_earnings_surprises",
+		Description: "Fetch the last N quarters of EPS actuals vs analyst estimates for a stock ticker from Finnhub. Validates whether a forward-PE-cheap thesis is supported by recent earnings delivery.",
+		InputSchema: claudeToolSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"ticker": map[string]interface{}{
+					"type":        "string",
+					"description": "Stock ticker symbol.",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of quarters to return (default 4, max 8).",
+				},
+			},
+			Required: []string{"ticker"},
+		},
+	},
+	{
+		Name:        "get_insider_activity",
+		Description: "Fetch insider sentiment data for a stock ticker from Finnhub: monthly MSPR display data, and ConsecutiveNegativeMonths (months since last genuine open-market purchase, code P, price > $0 — grants and awards at $0 do NOT reset this counter). Also returns LastGenuinePurchase date. Required for bargain_hunter to surface sustained insider selling.",
+		InputSchema: claudeToolSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"ticker": map[string]interface{}{
+					"type":        "string",
+					"description": "Stock ticker symbol.",
+				},
+			},
+			Required: []string{"ticker"},
+		},
+	},
+}
+
+// multiUseTools lists tool names that are NOT removed after their first call —
+// Claude may invoke them once per ticker candidate in the same recommendation.
+var multiUseTools = map[string]bool{
+	"get_earnings_calendar": true,
+	"get_fundamentals":      true,
+	"get_earnings_surprises": true,
+	"get_insider_activity":  true,
+}
+
 // --- Advisor ---
 
 type claudeAdvisor struct {
-	apiKey       string
-	httpClient   *http.Client
-	newsProvider ports.NewsProvider
-	classifier   ports.Classifier
-	classRepo    ports.ClassificationRepository
+	apiKey               string
+	httpClient           *http.Client
+	newsProvider         ports.NewsProvider
+	fundamentalsProvider ports.FundamentalsProvider // nil when not configured; tools return degraded responses
+	classifier           ports.Classifier
+	classRepo            ports.ClassificationRepository
 
 	earningsMu    sync.RWMutex
 	earningsCache map[string]earningsCacheEntry
 }
 
-func newClaudeAdvisor(newsProvider ports.NewsProvider, classifier ports.Classifier, classRepo ports.ClassificationRepository) *claudeAdvisor {
+func newClaudeAdvisor(newsProvider ports.NewsProvider, fundamentalsProvider ports.FundamentalsProvider, classifier ports.Classifier, classRepo ports.ClassificationRepository) *claudeAdvisor {
 	return &claudeAdvisor{
-		apiKey:        os.Getenv("ANTHROPIC_API_KEY"),
-		httpClient:    &http.Client{},
-		newsProvider:  newsProvider,
-		classifier:    classifier,
-		classRepo:     classRepo,
-		earningsCache: make(map[string]earningsCacheEntry),
+		apiKey:               os.Getenv("ANTHROPIC_API_KEY"),
+		httpClient:           &http.Client{},
+		newsProvider:         newsProvider,
+		fundamentalsProvider: fundamentalsProvider,
+		classifier:           classifier,
+		classRepo:            classRepo,
+		earningsCache:        make(map[string]earningsCacheEntry),
 	}
 }
 
@@ -206,11 +271,17 @@ func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.Invest
 		req.BaseBudget+req.ExtraMoney, profile != nil, snapshot != nil, len(req.Positions), len(req.RecentDecisions))
 	log.Printf("[advisor]   user message built: %d chars", len(userMsg))
 
-	fullSystem := systemPrompt
-	if req.StrategyPrompt != "" {
-		fullSystem = "[STRATEGY PREFIX]\n" + req.StrategyPrompt + "\n\n[BASE SYSTEM PROMPT]\n" + systemPrompt
+	// Resolve strategy prompt: explicit StrategyPrompt wins; fall back to StrategyType lookup.
+	resolvedStrategyPrompt := req.StrategyPrompt
+	if resolvedStrategyPrompt == "" && req.StrategyType != "" {
+		resolvedStrategyPrompt = strategySystemPrompt(req.StrategyType)
 	}
-	log.Printf("[advisor] ── prompt sizes: system=%d chars  user=%d chars", len(fullSystem), len(userMsg))
+
+	fullSystem := systemPrompt
+	if resolvedStrategyPrompt != "" {
+		fullSystem = "[STRATEGY PREFIX]\n" + resolvedStrategyPrompt + "\n\n[BASE SYSTEM PROMPT]\n" + systemPrompt
+	}
+	log.Printf("[advisor] ── prompt sizes: system=%d chars  user=%d chars  strategy=%s", len(fullSystem), len(userMsg), req.StrategyType)
 
 	messages := []claudeMessage{{Role: "user", Content: userMsg}}
 
@@ -219,7 +290,7 @@ func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.Invest
 		if attempt > 1 {
 			log.Printf("[advisor]   retry attempt %d/%d", attempt, maxAttempts)
 		}
-		rec, full, err := c.callClaudeWithTools(ctx, messages, req.StrategyPrompt)
+		rec, full, err := c.callClaudeWithTools(ctx, messages, resolvedStrategyPrompt)
 		if err == nil {
 			c.classifyAndStore(rec.Allocations)
 			log.Printf("[advisor] ══ DONE   %d allocations  risk=%s  total=$%.2f", len(rec.Allocations), rec.RiskLevel, rec.TotalBudget)
@@ -267,9 +338,11 @@ func (c *claudeAdvisor) GetRecommendation(ctx context.Context, req models.Invest
 // request the same tool twice. This prevents a nil toolResults bug (nil stored in
 // interface{} marshals as JSON null, not [], which the API rejects).
 func (c *claudeAdvisor) callClaudeWithTools(ctx context.Context, messages []claudeMessage, strategyPrompt string) (*models.Recommendation, string, error) {
-	// Start with all tools available; remove each one after its first use.
-	remainingTools := make([]claudeTool, len(marketNewsTools))
-	copy(remainingTools, marketNewsTools)
+	// Start with all tools available; remove single-use tools after their first call.
+	// Multi-use tools (earnings calendar, fundamentals family) stay available for per-ticker calls.
+	allTools := append(marketNewsTools, fundamentalsTools...)
+	remainingTools := make([]claudeTool, len(allTools))
+	copy(remainingTools, allTools)
 
 	for turn := 1; turn <= maxToolIterations; turn++ {
 		log.Printf("[advisor] TURN %d →  sending to Claude  (conversation: %d message(s), tools available: %d)", turn, len(messages), len(remainingTools))
@@ -294,8 +367,8 @@ func (c *claudeAdvisor) callClaudeWithTools(ctx context.Context, messages []clau
 				}
 				log.Printf("[advisor]           Claude wants: %s  (id=%s)", block.Name, block.ID)
 				toolResults = append(toolResults, c.executeTool(ctx, block.Name, block.ID, block.Input))
-				// get_earnings_calendar is multi-use (one call per ticker); only single-use tools are removed.
-				if block.Name != "get_earnings_calendar" {
+				// Multi-use tools stay available for per-ticker calls; single-use tools are removed after first call.
+				if !multiUseTools[block.Name] {
 					remainingTools = removeToolByName(remainingTools, block.Name)
 				}
 			}
@@ -472,6 +545,115 @@ func (c *claudeAdvisor) executeTool(ctx context.Context, name, toolUseID string,
 		log.Printf("[advisor]           TOOL get_earnings_calendar →  fetching earnings for %s", ticker)
 		result := c.fetchEarnings(ctx, ticker)
 		log.Printf("[advisor]           TOOL get_earnings_calendar ←  %s", result)
+		return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: result}
+
+	case "get_fundamentals":
+		var input struct {
+			Ticker string `json:"ticker"`
+		}
+		if err := json.Unmarshal(rawInput, &input); err != nil || strings.TrimSpace(input.Ticker) == "" {
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: "Error: ticker is required for get_fundamentals."}
+		}
+		ticker := strings.ToUpper(strings.TrimSpace(input.Ticker))
+		log.Printf("[advisor]           TOOL get_fundamentals →  %s", ticker)
+		if c.fundamentalsProvider == nil {
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: "Fundamentals data unavailable (FUNDAMENTALS_PROVIDER not configured)."}
+		}
+		fund, err := c.fundamentalsProvider.GetFundamentals(ctx, ticker)
+		if err != nil {
+			log.Printf("[advisor]           TOOL get_fundamentals ←  ERROR: %v", err)
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: fmt.Sprintf("Error fetching fundamentals for %s: %v", ticker, err)}
+		}
+		content := fmt.Sprintf(
+			"%s: PE=%.2f ForwardPE=%.2f ForwardPEG=%.4f 52wkHigh=%.2f(%s) 52wkLow=%.2f(%s) LT-D/E=%.2f Tot-D/E=%.2f CurrentRatio=%.2f",
+			fund.Ticker, fund.PE, fund.ForwardPE, fund.ForwardPEG,
+			fund.FiftyTwoWeekHigh, fund.FiftyTwoWeekHighDate,
+			fund.FiftyTwoWeekLow, fund.FiftyTwoWeekLowDate,
+			fund.DebtToEquity, fund.TotalDebtToEquity, fund.CurrentRatio,
+		)
+		log.Printf("[advisor]           TOOL get_fundamentals ←  %s", content)
+		return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: content}
+
+	case "get_earnings_surprises":
+		var input struct {
+			Ticker string `json:"ticker"`
+			Limit  int    `json:"limit"`
+		}
+		if err := json.Unmarshal(rawInput, &input); err != nil || strings.TrimSpace(input.Ticker) == "" {
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: "Error: ticker is required for get_earnings_surprises."}
+		}
+		ticker := strings.ToUpper(strings.TrimSpace(input.Ticker))
+		limit := input.Limit
+		if limit <= 0 || limit > 8 {
+			limit = 4
+		}
+		log.Printf("[advisor]           TOOL get_earnings_surprises →  %s limit=%d", ticker, limit)
+		if c.fundamentalsProvider == nil {
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: "Earnings surprise data unavailable."}
+		}
+		surprises, err := c.fundamentalsProvider.GetEarningsSurprises(ctx, ticker, limit)
+		if err != nil {
+			log.Printf("[advisor]           TOOL get_earnings_surprises ←  ERROR: %v", err)
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: fmt.Sprintf("Error: %v", err)}
+		}
+		if len(surprises) == 0 {
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: fmt.Sprintf("%s: no earnings surprise data available.", ticker)}
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "%s earnings surprises (last %d quarters):\n", ticker, len(surprises))
+		for _, s := range surprises {
+			label := "BEAT"
+			if s.SurprisePct < 0 {
+				label = "MISS"
+			}
+			fmt.Fprintf(&sb, "- %s: actual=%.2f estimate=%.2f surprise=%+.2f%% [%s]\n",
+				s.Period, s.ActualEPS, s.EstimateEPS, s.SurprisePct, label)
+		}
+		result := strings.TrimSpace(sb.String())
+		log.Printf("[advisor]           TOOL get_earnings_surprises ←  %d quarters for %s", len(surprises), ticker)
+		return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: result}
+
+	case "get_insider_activity":
+		var input struct {
+			Ticker string `json:"ticker"`
+		}
+		if err := json.Unmarshal(rawInput, &input); err != nil || strings.TrimSpace(input.Ticker) == "" {
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: "Error: ticker is required for get_insider_activity."}
+		}
+		ticker := strings.ToUpper(strings.TrimSpace(input.Ticker))
+		log.Printf("[advisor]           TOOL get_insider_activity →  %s", ticker)
+		if c.fundamentalsProvider == nil {
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: "Insider activity data unavailable."}
+		}
+		activity, err := c.fundamentalsProvider.GetInsiderActivity(ctx, ticker)
+		if err != nil {
+			log.Printf("[advisor]           TOOL get_insider_activity ←  ERROR: %v", err)
+			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: fmt.Sprintf("Error: %v", err)}
+		}
+		var sb strings.Builder
+		lastBuy := activity.LastGenuinePurchaseDate
+		if lastBuy == "" {
+			lastBuy = "none in lookback window"
+		}
+		fmt.Fprintf(&sb, "%s insider activity: ConsecutiveNegativeMonths=%d LastGenuinePurchase=%s\n",
+			ticker, activity.ConsecutiveNegativeMonths, lastBuy)
+		shown := activity.RecentMonths
+		if len(shown) > 6 {
+			shown = shown[:6]
+		}
+		if len(shown) > 0 {
+			sb.WriteString("Recent months (most recent first; SELLING/BUYING reflects MSPR sign, not purchase intent):\n")
+			for _, m := range shown {
+				direction := "BUYING"
+				if m.MSPR < 0 {
+					direction = "SELLING"
+				}
+				fmt.Fprintf(&sb, "- %d-%02d: MSPR=%.1f change=%d [%s]\n", m.Year, m.Month, m.MSPR, m.Change, direction)
+			}
+		}
+		result := strings.TrimSpace(sb.String())
+		log.Printf("[advisor]           TOOL get_insider_activity ←  %s ConsecutiveNegativeMonths=%d lastBuy=%q",
+			ticker, activity.ConsecutiveNegativeMonths, activity.LastGenuinePurchaseDate)
 		return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: result}
 
 	default:

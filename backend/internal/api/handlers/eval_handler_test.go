@@ -74,6 +74,9 @@ func (m *mockDecisionRepoForEval) GetUsersWithPendingVerdicts(_ context.Context,
 func (m *mockDecisionRepoForEval) SumInvestedToday(_ context.Context, _, _, _ string) (float64, error) {
 	panic("not used in eval handler tests")
 }
+func (m *mockDecisionRepoForEval) SumAllTimeByConfig(_ context.Context, _, _ string) (float64, error) {
+	panic("not used in eval handler tests")
+}
 func (m *mockDecisionRepoForEval) WinRateTrend(_ context.Context, _ string, _ int) ([]models.WinRateTrendPoint, error) {
 	panic("not used in eval handler tests")
 }

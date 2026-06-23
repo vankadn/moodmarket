@@ -12,9 +12,10 @@ type AutoInvestConfig struct {
 	Enabled         bool          `json:"enabled"`
 	Mode            string        `json:"mode,omitempty"` // "fixed" (default) | "agentic"
 	Amount          float64       `json:"amount"`          // fixed mode: invest this amount each run
-	DailyBudget     float64       `json:"daily_budget,omitempty"` // agentic mode: max to invest per calendar day
+	DailyBudget       float64       `json:"daily_budget,omitempty"`        // agentic mode: max to invest per calendar day
+	LifetimeBudgetCap float64       `json:"lifetime_budget_cap,omitempty"` // optional ceiling on total dollars ever deployed through this config
 	Risk            RiskTolerance `json:"risk"`
-	Strategy        string        `json:"strategy,omitempty"` // "long_term" | "short_term"
+	Strategy        string        `json:"strategy,omitempty"` // "long_term" | "short_term" | "bargain_hunter"
 	IntervalDays    int           `json:"interval_days,omitempty"`      // deprecated — migrated to IntervalHours on read
 	IntervalHours   int           `json:"interval_hours,omitempty"`     // when > 0, overrides interval_days; agentic hardcodes to 1
 	IntervalSeconds int           `json:"interval_seconds,omitempty"`   // when > 0, overrides interval_hours; dev/sub-hour testing only

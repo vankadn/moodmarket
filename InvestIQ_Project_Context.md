@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-06-22 — NEWS_ARTICLE_LIMIT env var added; both Polygon fetch cap and Claude tool-result cap now respect the same configurable limit
+> Last updated: 2026-06-22 — bargain_hunter strategy type fully implemented: domain model changes, fundamentals tools (get_fundamentals / get_earnings_surprises / get_insider_activity), strategies.go prompt constants, critic rules updated, lifetime budget cap added
 
 ---
 
@@ -75,7 +75,7 @@ Key interfaces:
 - `IdentityProvider` — userId in request context
 - `MarketDataProvider` — live prices (Finnhub real-time, Polygon prev-day, or mock); `GetDailySnapshot` builds the full market context; `GetPrice` returns a single ticker price used by the verdict stamper
 - `NewsProvider` — market headlines (Polygon or mock)
-- `DecisionRepository` — investment decision persistence; includes `WinRateTrend` (ISO-week bucketed win rate, last N weeks), `AssetClassBreakdown` (per-asset-class win/loss counts via `$lookup` on `ticker_classifications`), and `ListDecisions` (returns all decisions for a user, including pending/unverdicted)
+- `DecisionRepository` — investment decision persistence; includes `WinRateTrend` (ISO-week bucketed win rate, last N weeks), `AssetClassBreakdown` (per-asset-class win/loss counts via `$lookup` on `ticker_classifications`), `ListDecisions` (returns all decisions for a user, including pending/unverdicted), and `SumAllTimeByConfig(ctx, userID, configID string) (float64, error)` (lifetime spend for a config, used by lifetime budget cap check)
 - `BrokerageProvider` — trade execution + position reads + portfolio history (Alpaca or mock)
 - `BrokerageProviderFactory` — constructs a `BrokerageProvider` from a per-user `BrokerageConnection`; decouples application layer from credential decryption and Alpaca constructor details
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
@@ -87,6 +87,7 @@ Key interfaces:
 - `PortfolioConnector` — OAuth lifecycle for external broker linking: `RegisterUser`, `GenerateConnectURL`, `DeleteUser`; SnapTrade implements this
 - `RebalanceAdvisor` — AI-based portfolio rebalance analysis: `AnalyzePortfolio(ctx, req, profile) *RebalanceAnalysis`; separate from `InvestmentAdvisor`
 - `RecommendationCritic` — adversarial second-pass reviewer: `ReviewRecommendation(ctx, rec, profile) *CriticReview`; returns verdict `"approve"` or `"block"` with explanation
+- `FundamentalsProvider` — per-ticker fundamental data: `GetFundamentals`, `GetEarningsSurprises`, `GetInsiderActivity`; used by `claudeAdvisor` for bargain_hunter tool calls
 
 ### DEV_MODE pattern
 `DEV_MODE=true` in `.env` auto-logs in as the hardcoded dev user. Zero login required during development. This logic lives in exactly ONE place — `infrastructure/auth/factory.go`. No DEV_MODE checks anywhere else.
@@ -151,7 +152,7 @@ See README.md for the full env var reference and provider swap table.
 | Term | Meaning |
 |------|---------|
 | `UserProfile` | Complete financial picture of the user |
-| `InvestmentRequest` | Request to generate a daily allocation; carries `RecentBlockedDecisions []InvestmentDecision` (last 3, injected into prompt) |
+| `InvestmentRequest` | Request to generate a daily allocation; carries `RecentBlockedDecisions []InvestmentDecision` (last 3, injected into prompt) and `StrategyType string` (flows domain→scheduler→req→advisor→critic, selects system prompt prefix) |
 | `Allocation` | Single position recommendation (ticker, amount, %, `Reasoning` — one-sentence per-ticker Claude explanation; `omitempty`, `AssetClass`) |
 | `Recommendation` | Full AI response: allocations + summary + risk level + `OverallReasoning` (1-2 sentence thesis) + `FromCache bool` (true when returned from MongoDB fallback due to advisor overload) |
 | `InvestmentDecision` | Persisted record: userId, timestamp, market snapshot, allocations, trade receipts, DecisionType ("invest"/"skip"/"blocked"), SkipReason, OverallReasoning, TickerReasoning (map[ticker]reason), Summary |
@@ -169,7 +170,7 @@ See README.md for the full env var reference and provider swap table.
 | `BrokerageConnection` | Internal per-user Alpaca credential record: ID, Name, AssetCategories, APIKey, SecretKey, BaseURL, Connected, ConnectedAt — encrypted at rest, never exposed to frontend |
 | `BrokerageStatus` | JSON-safe API subset: ID, Name, AssetCategories, connected, base_url, connected_at — returned in `UserProfile.Brokerages` array |
 | `AssetCategory` | `equity` / `bond` / `default` — controls which connection an allocation is routed to |
-| `AutoInvestConfig` | First-class domain model (own collection): Enabled, Amount, DailyBudget, Risk, IntervalHours, EnabledAt, UpdatedAt |
+| `AutoInvestConfig` | First-class domain model (own collection): Enabled, Amount, DailyBudget, LifetimeBudgetCap, Risk, IntervalHours, EnabledAt, UpdatedAt |
 | `SchedulerRun` | Audit record for one autonomous cycle: RunID, StartedAt, CompletedAt, UsersProcessed, TotalInvested, Errors |
 | `NotificationTarget` | Delivery target for one notification: UserID, Email, Phone, Source (`"manual"` or `"auto"`) |
 | `HistoryPoint` | One data point in a portfolio value time series: Timestamp (Unix epoch seconds), Equity, ProfitLoss, ProfitLossPct |
@@ -267,7 +268,9 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 ### Autonomous investing
 - Scheduler: per-user `isDue()` check on hourly tick; priority: `IntervalSeconds` > `IntervalHours` > `IntervalDays` (0 = daily)
 - Agentic daily budget: when `DailyBudget > 0`, scheduler sums today's spend via `SumTodayByConfig`, injects remaining into Claude prompt; Claude returns `total_budget: 0` to skip or an amount ≤ remaining; budget-exhausted and Claude-skip paths both save a `DecisionType: "skip"` decision and notify via `SendSkipSummary`
-- Multi-config strategies per user: named, with `long_term` or `short_term` strategy prompt injected before base system prompt; CRUD at `/users/auto-invest/configs`
+- Multi-config strategies per user: named, with `long_term`, `short_term`, or `bargain_hunter` strategy prompt injected before base system prompt; CRUD at `/users/auto-invest/configs`
+- bargain_hunter strategy: 6-step evaluation protocol (get_fundamentals → get_earnings_surprises → get_insider_activity), hard reject rule (ForwardPE<15 + <15% below 52wk high + ConsecutiveNegativeMonths≥3 = reject/relabel), 2–4 positions, up to 40% single-stock; prompt constants in `infrastructure/advisor/strategies.go`
+- Lifetime budget cap: `AutoInvestConfig.LifetimeBudgetCap float64`; scheduler checks `SumAllTimeByConfig` before the daily budget check; saves a skip decision and notifies if cap reached; persisted in `auto_invest_configs` collection
 - Market holiday awareness: algorithmic NYSE calendar (no external API); `MARKET_CALENDAR=nyse|mock`
 - Per-strategy activity: decision count, total invested, last run — `GET /users/activity/by-strategy`
 - Per-strategy P&L: proportional attribution of live Alpaca unrealized P&L by ticker cost basis — `GET /users/activity/by-strategy/pnl`
@@ -276,6 +279,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 ### Intelligence & context
 - Claude tool use: fetches market news itself via `get_market_news` (Polygon) — app never pre-fetches or injects headlines
 - Earnings calendar awareness: Claude calls `get_earnings_calendar` (Finnhub) for any individual stock before recommending it (not ETFs); if earnings ≤3 days out: allocation reduced ≥50% or replaced with a sector ETF + date noted in rationale; 4–7 days out: included with date note; 1-hour TTL in-memory cache per ticker with `sync.RWMutex`; uses existing `FINNHUB_API_KEY`; tool is multi-use (not removed from tool list after first call unlike `get_market_news`)
+- Fundamentals tool use (bargain_hunter): three multi-use per-ticker tools — `get_fundamentals`, `get_earnings_surprises`, `get_insider_activity` — added to `claudeAdvisor`; tracked in `multiUseTools` map; tool definitions in `fundamentalsTools` var; executed against `FundamentalsProvider`; base system prompt documents all 5 available tools
 - Tax document intelligence: PDF upload → Claude extracts structured fields (W2/1099/1098) → injected into every recommendation; `POST /documents/upload`, `GET /documents`, `DELETE /documents/:id`
 - Portfolio concentration block: positions grouped by asset class, sorted by %, injected into Claude prompt; CONCENTRATION RULE + TICKER RULE in system prompt
 - Ticker classification: 29 base tickers seeded in `ticker_classifications`; unknown tickers classified by Claude at recommendation time and stored immediately via `StoreClassification`; in-memory `ClassificationCache` means zero Mongo reads per request
@@ -292,7 +296,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 ### Adversarial critic
 - `CriticReview` struct in `domain/models/critic_review.go`: `Verdict` ("approve"/"block"), `Reason`, `Details`
 - `RecommendationCritic` interface in `domain/ports/recommendation_critic.go`: `ReviewRecommendation(ctx, rec, profile) *CriticReview`
-- `infrastructure/critic/`: `claude_critic.go` (calls Claude with a dedicated adversarial system prompt), `mock_critic.go` (always approves), `factory.go` (selects by `AI_PROVIDER`)
+- `infrastructure/critic/`: `claude_critic.go` (calls Claude with a dedicated adversarial system prompt), `mock_critic.go` (always approves), `factory.go` (selects by `AI_PROVIDER`); rule 9 added for bargain_hunter fundamentals cherry-picking; concentration ceiling exception: bargain_hunter allows up to 50% single-stock; `buildCriticUserMessage` prepends `STRATEGY TYPE:` when `req.StrategyType != ""`
 - `InvestmentDecision` gains `BlockedReason string` and `CriticReview *CriticReview` fields; `"blocked"` added as a valid `DecisionType`
 - `RecommendationService` calls critic after advisor; on `"block"`: persists a `DecisionType="blocked"` decision, notifies user via `SendInvestmentFailure`, returns `TotalBudget=0` to caller
 - Approved decisions store the full `CriticReview` on the persisted decision for audit trail
@@ -429,6 +433,9 @@ Background data access is legitimate when:
 
 | Decision | Why |
 |---------|-----|
+| Strategy prompt text lives in `infrastructure/advisor/strategies.go`, not `application/` | Prompt wording is Claude-specific (tool names, step ordering, hard rules reference Claude JSON schema). A different AI provider would need different prompt text. Keeping it in the infrastructure layer avoids leaking provider-specific text into the application layer. |
+| `StrategyType string` flows as a plain string through domain→scheduler→req→advisor→critic | Avoids defining a strategy enum in the domain layer (which would need to know all valid values). The string is validated only at the edges (API handler, advisor prompt lookup) — domain and application layers stay generic. |
+| bargain_hunter concentration ceiling raised to 50% in critic (vs 40% in base rules) | The strategy deliberately concentrates in 2–4 deeply discounted names. Applying the default 40% cap would block near-every valid bargain_hunter recommendation. The raised ceiling is strategy-scoped — base and long_term/short_term strategies retain the 40% rule. |
 | Scrapped mood-based concept | Mood is a gimmick — financial state drives real decisions |
 | App owns intelligence, AI is swappable | Not locked into Claude — Deepseek, fine-tuned model, or any model works |
 | Onion arch + DDD from day one | Early architecture decisions make later features easy or painful — set them wrong and every new layer pays for it |

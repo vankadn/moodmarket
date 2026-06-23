@@ -593,6 +593,40 @@ func (r *MongoDecisionRepository) SumInvestedToday(ctx context.Context, userID, 
 	return result[0].Total, nil
 }
 
+func (r *MongoDecisionRepository) SumAllTimeByConfig(ctx context.Context, userID, configID string) (float64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{
+			"user_id":       userID,
+			"config_id":     configID,
+			"decision_type": bson.M{"$ne": "skip"},
+		}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "total", Value: bson.M{"$sum": "$total_amount"}},
+		}}},
+	}
+
+	cursor, err := r.collection.Aggregate(ctx, pipeline)
+	if err != nil {
+		return 0, fmt.Errorf("mongo decision repo: sum all time by config: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var result []struct {
+		Total float64 `bson:"total"`
+	}
+	if err := cursor.All(ctx, &result); err != nil {
+		return 0, fmt.Errorf("mongo decision repo: sum all time by config decode: %w", err)
+	}
+	if len(result) == 0 {
+		return 0, nil
+	}
+	return result[0].Total, nil
+}
+
 func (r *MongoDecisionRepository) WinRateTrend(ctx context.Context, userID string, weeksBack int) ([]models.WinRateTrendPoint, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

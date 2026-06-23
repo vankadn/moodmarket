@@ -115,6 +115,9 @@ func (r *fakeDecisionRepo) Save(_ context.Context, d *models.InvestmentDecision)
 func (r *fakeDecisionRepo) SumInvestedToday(_ context.Context, _, _, _ string) (float64, error) {
 	return r.spentToday, r.spentTodayErr
 }
+func (r *fakeDecisionRepo) SumAllTimeByConfig(_ context.Context, _, _ string) (float64, error) {
+	return 0, nil
+}
 func (r *fakeDecisionRepo) ListByUser(_ context.Context, _ string, _ int) ([]models.InvestmentDecision, error) {
 	return nil, nil
 }

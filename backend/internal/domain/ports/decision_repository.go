@@ -40,6 +40,10 @@ type DecisionRepository interface {
 	// Skip decisions (decision_type="skip") are excluded. Returns 0 when no records exist.
 	// userTimezone should be a valid IANA location string (e.g. "America/New_York"); defaults to UTC on parse error.
 	SumInvestedToday(ctx context.Context, userID, configID, userTimezone string) (float64, error)
+	// SumAllTimeByConfig returns the total amount ever invested through a specific config (all dates).
+	// Skip decisions are excluded. Returns 0 when no records exist.
+	// Used to enforce LifetimeBudgetCap on AutoInvestConfig.
+	SumAllTimeByConfig(ctx context.Context, userID, configID string) (float64, error)
 	// WinRateTrend returns win rate bucketed by ISO calendar week for the last weeksBack weeks.
 	// Only weeks with at least one verdicted decision are returned, sorted oldest-first.
 	WinRateTrend(ctx context.Context, userID string, weeksBack int) ([]models.WinRateTrendPoint, error)

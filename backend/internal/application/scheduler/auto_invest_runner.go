@@ -27,9 +27,26 @@ func runForUser(
 	decisionRepo ports.DecisionRepository,
 ) (float64, error) {
 	isAgentic := config.Mode == "agentic"
-	log.Printf("[scheduler] user=%s pipeline start (mode=%s amount=%.0f dailyBudget=%.0f)", config.UserID, config.Mode, config.Amount, config.DailyBudget)
+	log.Printf("[scheduler] user=%s pipeline start (mode=%s amount=%.0f dailyBudget=%.0f strategy=%s)", config.UserID, config.Mode, config.Amount, config.DailyBudget, config.Strategy)
 
-	req := models.InvestmentRequest{BaseBudget: config.Amount, ExtraMoney: 0}
+	req := models.InvestmentRequest{
+		BaseBudget:   config.Amount,
+		ExtraMoney:   0,
+		StrategyType: config.Strategy,
+	}
+
+	// Lifetime budget cap — applies to all modes; checked before daily budget to avoid unnecessary work.
+	if config.LifetimeBudgetCap > 0 {
+		spentAllTime, err := decisionRepo.SumAllTimeByConfig(ctx, config.UserID, config.ID)
+		if err != nil {
+			log.Printf("[scheduler] user=%s lifetime budget check failed (%v) — proceeding without cap", config.UserID, err)
+		} else if spentAllTime >= config.LifetimeBudgetCap {
+			log.Printf("[scheduler] user=%s lifetime budget cap reached (cap=%.2f spent=%.2f)", config.UserID, config.LifetimeBudgetCap, spentAllTime)
+			saveSkipDecision(ctx, decisionRepo, config, "lifetime budget cap reached")
+			_ = notifications.SendSkipSummary(ctx, target, config.Name, "Lifetime budget cap reached — this strategy has deployed its maximum configured amount.")
+			return 0, nil
+		}
+	}
 
 	if isAgentic {
 		spentToday, err := decisionRepo.SumInvestedToday(ctx, config.UserID, config.ID, defaultTimezone)
