@@ -15,6 +15,12 @@ type Fundamentals struct {
 	DebtToEquity         float64 // metric["longTermDebt/equityQuarterly"]   — slash is literal in Finnhub key
 	TotalDebtToEquity    float64 // metric["totalDebt/totalEquityQuarterly"] — slash is literal in Finnhub key
 	CurrentRatio         float64 // metric.currentRatioQuarterly
+	// Valuation depth — sourced from the same /stock/metric?metric=all response, zero extra API calls.
+	EVToEBITDA        float64 // metric.evEbitdaTTM — enterprise value / EBITDA trailing twelve months
+	FCFYieldPct       float64 // 1/metric.pfcfTTM * 100; 0 when pfcfTTM ≤ 0 (negative or missing FCF)
+	PriceToBook       float64 // metric.pb
+	PEVsOwnFiveYearAvg  float64 // peTTM / avg(series.annual.pe, trailing 5 non-null entries); 0 if < 3 entries
+	EVEBITDAVsOwnAvg  float64 // evEbitdaTTM / avg(series.annual.evEbitda, trailing 5 non-null entries); 0 if < 3 entries
 }
 
 // EarningsSurprise holds one quarterly EPS beat/miss from Finnhub /stock/earnings.

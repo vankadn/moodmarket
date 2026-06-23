@@ -564,13 +564,33 @@ func (c *claudeAdvisor) executeTool(ctx context.Context, name, toolUseID string,
 			log.Printf("[advisor]           TOOL get_fundamentals ←  ERROR: %v", err)
 			return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: fmt.Sprintf("Error fetching fundamentals for %s: %v", ticker, err)}
 		}
+		var fcfStr, peAvgStr, evAvgStr string
+		if fund.FCFYieldPct > 0 {
+			fcfStr = fmt.Sprintf("%.2f%%", fund.FCFYieldPct)
+		} else {
+			fcfStr = "n/a (negative/missing FCF)"
+		}
+		if fund.PEVsOwnFiveYearAvg > 0 {
+			peAvgStr = fmt.Sprintf("%.2fx own 5yr avg", fund.PEVsOwnFiveYearAvg)
+		} else {
+			peAvgStr = "n/a (insufficient history)"
+		}
+		if fund.EVEBITDAVsOwnAvg > 0 {
+			evAvgStr = fmt.Sprintf("%.2fx own 5yr avg", fund.EVEBITDAVsOwnAvg)
+		} else {
+			evAvgStr = "n/a (insufficient history)"
+		}
 		content := fmt.Sprintf(
-			"%s: PE=%.2f ForwardPE=%.2f ForwardPEG=%.4f 52wkHigh=%.2f(%s) 52wkLow=%.2f(%s) LT-D/E=%.2f Tot-D/E=%.2f CurrentRatio=%.2f",
+			"%s: PE=%.2f ForwardPE=%.2f ForwardPEG=%.4f 52wkHigh=%.2f(%s) 52wkLow=%.2f(%s) LT-D/E=%.2f Tot-D/E=%.2f CurrentRatio=%.2f EV/EBITDA=%.2f(%s) FCFYield=%s P/B=%.2f",
 			fund.Ticker, fund.PE, fund.ForwardPE, fund.ForwardPEG,
 			fund.FiftyTwoWeekHigh, fund.FiftyTwoWeekHighDate,
 			fund.FiftyTwoWeekLow, fund.FiftyTwoWeekLowDate,
 			fund.DebtToEquity, fund.TotalDebtToEquity, fund.CurrentRatio,
+			fund.EVToEBITDA, evAvgStr, fcfStr, fund.PriceToBook,
 		)
+		if fund.PEVsOwnFiveYearAvg > 0 {
+			content += fmt.Sprintf(" PE-vs-5yrAvg=%s", peAvgStr)
+		}
 		log.Printf("[advisor]           TOOL get_fundamentals ←  %s", content)
 		return claudeToolResultBlock{Type: "tool_result", ToolUseID: toolUseID, Content: content}
 

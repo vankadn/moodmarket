@@ -24,6 +24,11 @@ func (m *mockFundamentalsProvider) GetFundamentals(_ context.Context, ticker str
 		DebtToEquity:         0.43,
 		TotalDebtToEquity:    0.58,
 		CurrentRatio:         2.1,
+		EVToEBITDA:           12.4,  // moderate valuation
+		FCFYieldPct:          4.8,   // ~21x price-to-FCF inverted
+		PriceToBook:          3.2,
+		PEVsOwnFiveYearAvg:   0.87, // trading at a 13% discount to its own 5yr PE average
+		EVEBITDAVsOwnAvg:     1.05, // roughly in line with own history
 	}, nil
 }
 

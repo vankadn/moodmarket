@@ -52,6 +52,35 @@ func (f *finnhubFundamentalsProvider) get(ctx context.Context, url string, out i
 	return nil
 }
 
+// seriesEntry is one element of a Finnhub series.annual array, e.g. {"period":"2025-08-28","v":15.99}.
+// V is a pointer so JSON null decodes to nil rather than 0 — important for PE in loss years.
+type seriesEntry struct {
+	Period string   `json:"period"`
+	V      *float64 `json:"v"`
+}
+
+// seriesAvg returns the mean of the first maxEntries non-nil values in entries (already
+// ordered most-recent-first by Finnhub). Returns (0, false) when fewer than minEntries
+// non-nil values are found — caller should treat the result as unusable in that case.
+func seriesAvg(entries []seriesEntry, maxEntries, minEntries int) (float64, bool) {
+	var sum float64
+	var count int
+	for _, e := range entries {
+		if e.V == nil {
+			continue
+		}
+		sum += *e.V
+		count++
+		if count == maxEntries {
+			break
+		}
+	}
+	if count < minEntries {
+		return 0, false
+	}
+	return sum / float64(count), true
+}
+
 // mFloat pulls a float64 from the metric map; returns 0 if the key is absent or the wrong type.
 func mFloat(m map[string]interface{}, key string) float64 {
 	v, ok := m[key]
@@ -88,15 +117,42 @@ func (f *finnhubFundamentalsProvider) GetFundamentals(ctx context.Context, ticke
 
 	var result struct {
 		Metric map[string]interface{} `json:"metric"`
+		Series struct {
+			Annual struct {
+				PE       []seriesEntry `json:"pe"`
+				EvEbitda []seriesEntry `json:"evEbitda"`
+			} `json:"annual"`
+		} `json:"series"`
 	}
 	if err := f.get(ctx, url, &result); err != nil {
 		return nil, fmt.Errorf("finnhub-fundamentals GetFundamentals %s: %w", ticker, err)
 	}
 
 	m := result.Metric
+
+	// FCFYield: invert pfcfTTM; guard against 0 (missing) and negative (loss-year companies).
+	fcfYield := 0.0
+	if pfcf := mFloat(m, "pfcfTTM"); pfcf > 0 {
+		fcfYield = 1.0 / pfcf * 100
+	}
+
+	evTTM := mFloat(m, "evEbitdaTTM")
+	peTTM := mFloat(m, "peTTM")
+
+	// VsOwnAvg ratios: current TTM / trailing-5-year annual average.
+	// Requires at least 3 non-null annual entries; otherwise 0 (insufficient history).
+	peVsAvg := 0.0
+	if avg, ok := seriesAvg(result.Series.Annual.PE, 5, 3); ok && avg != 0 {
+		peVsAvg = peTTM / avg
+	}
+	evVsAvg := 0.0
+	if avg, ok := seriesAvg(result.Series.Annual.EvEbitda, 5, 3); ok && avg != 0 {
+		evVsAvg = evTTM / avg
+	}
+
 	out := &models.Fundamentals{
 		Ticker:               ticker,
-		PE:                   mFloat(m, "peTTM"),
+		PE:                   peTTM,
 		ForwardPE:            mFloat(m, "forwardPE"),
 		ForwardPEG:           mFloat(m, "forwardPEG"),
 		FiftyTwoWeekHigh:     mFloat(m, "52WeekHigh"),
@@ -106,12 +162,19 @@ func (f *finnhubFundamentalsProvider) GetFundamentals(ctx context.Context, ticke
 		DebtToEquity:         mFloat(m, "longTermDebt/equityQuarterly"),
 		TotalDebtToEquity:    mFloat(m, "totalDebt/totalEquityQuarterly"),
 		CurrentRatio:         mFloat(m, "currentRatioQuarterly"),
+		EVToEBITDA:           evTTM,
+		FCFYieldPct:          fcfYield,
+		PriceToBook:          mFloat(m, "pb"),
+		PEVsOwnFiveYearAvg:   peVsAvg,
+		EVEBITDAVsOwnAvg:     evVsAvg,
 	}
 
-	log.Printf("[finnhub-fundamentals] %s pe=%.2f fwdPE=%.2f fwdPEG=%.2f 52wkH=%.2f 52wkL=%.2f ltD/E=%.2f totD/E=%.2f cr=%.2f",
+	log.Printf("[finnhub-fundamentals] %s pe=%.2f fwdPE=%.2f fwdPEG=%.2f 52wkH=%.2f 52wkL=%.2f ltD/E=%.2f totD/E=%.2f cr=%.2f ev/ebitda=%.2f fcfYield=%.2f%% pb=%.2f peVsAvg=%.2fx evVsAvg=%.2fx",
 		ticker, out.PE, out.ForwardPE, out.ForwardPEG,
 		out.FiftyTwoWeekHigh, out.FiftyTwoWeekLow,
-		out.DebtToEquity, out.TotalDebtToEquity, out.CurrentRatio)
+		out.DebtToEquity, out.TotalDebtToEquity, out.CurrentRatio,
+		out.EVToEBITDA, out.FCFYieldPct, out.PriceToBook,
+		out.PEVsOwnFiveYearAvg, out.EVEBITDAVsOwnAvg)
 	return out, nil
 }
 

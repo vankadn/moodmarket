@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-06-23 — added retrospective: decision-type hygiene in the decisions collection (three incidents, pattern rule)
+> Last updated: 2026-06-23 — expanded Fundamentals model with 4 additional valuation signals (EVToEBITDA, FCFYieldPct, PriceToBook, PEVsOwnFiveYearAvg, EVEBITDAVsOwnAvg) sourced from existing Finnhub response
 
 ---
 
@@ -280,6 +280,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 - Claude tool use: fetches market news itself via `get_market_news` (Polygon) — app never pre-fetches or injects headlines
 - Earnings calendar awareness: Claude calls `get_earnings_calendar` (Finnhub) for any individual stock before recommending it (not ETFs); if earnings ≤3 days out: allocation reduced ≥50% or replaced with a sector ETF + date noted in rationale; 4–7 days out: included with date note; 1-hour TTL in-memory cache per ticker with `sync.RWMutex`; uses existing `FINNHUB_API_KEY`; tool is multi-use (not removed from tool list after first call unlike `get_market_news`)
 - Fundamentals tool use (bargain_hunter): three multi-use per-ticker tools — `get_fundamentals`, `get_earnings_surprises`, `get_insider_activity` — added to `claudeAdvisor`; tracked in `multiUseTools` map; tool definitions in `fundamentalsTools` var; executed against `FundamentalsProvider`; base system prompt documents all 5 available tools
+- `models.Fundamentals` expanded with 5 additional valuation signals sourced from the already-fetched `/stock/metric?metric=all` Finnhub response (zero new API calls): `EVToEBITDA` (`evEbitdaTTM`), `FCFYieldPct` (`1/pfcfTTM * 100`; 0 when pfcfTTM ≤ 0), `PriceToBook` (`pb`), `PEVsOwnFiveYearAvg` (peTTM / trailing-5-year avg; 0 if < 3 entries), `EVEBITDAVsOwnAvg` (evEbitdaTTM / trailing-5-year avg; 0 if < 3 entries); `series` top-level key decoded via `seriesEntry` type and `seriesAvg` helper in `finnhub_fundamentals.go`; `V *float64` pointer handles JSON null (confirmed on real MU + AAPL data); `get_fundamentals` tool result in `claude.go` and `mock_fundamentals.go` updated to include all new fields
 - Tax document intelligence: PDF upload → Claude extracts structured fields (W2/1099/1098) → injected into every recommendation; `POST /documents/upload`, `GET /documents`, `DELETE /documents/:id`
 - Portfolio concentration block: positions grouped by asset class, sorted by %, injected into Claude prompt; CONCENTRATION RULE + TICKER RULE in system prompt
 - Ticker classification: 29 base tickers seeded in `ticker_classifications`; unknown tickers classified by Claude at recommendation time and stored immediately via `StoreClassification`; in-memory `ClassificationCache` means zero Mongo reads per request
@@ -503,6 +504,9 @@ Background data access is legitimate when:
 | `ListDecisions` returns all decisions (not verdict-filtered) | `GET /eval/decisions` showing only verdicted docs hid pending and blocked decisions — the expanded panel showed "No reasoning recorded." Filtering by `verdict.$exists=true` was the wrong predicate for a panel whose job is to show reasoning. Filter by `user_id` only; `EvalDecision.verdict` typed as nullable on the frontend to handle the empty case. |
 | `NEWS_ARTICLE_LIMIT` governs both fetch and tool-result cap | Two separate hardcoded caps (Polygon: 10, Claude tool result: 5) meant Claude never saw more than 5 headlines regardless of what Polygon fetched. A single env var eliminates the silent truncation and makes the limit observable and tunable without a code change. |
 | Blocked context sliced from already-loaded decisions (no extra DB call) | `RecommendationService` already loads `recentDecisions` for the PAST PERFORMANCE prompt. Filtering that slice for `DecisionType="blocked"` costs zero extra reads. A separate `ListBlockedDecisions` repo call would add latency and a new query path for a dataset already in memory. |
+| Fundamentals valuation signals sourced from existing Finnhub response | All five new fields (EVToEBITDA, FCFYieldPct, PriceToBook, PEVsOwnFiveYearAvg, EVEBITDAVsOwnAvg) are computed from the `metric` and `series` keys already present in the single `/stock/metric?metric=all` call. Dependency principle: no new API, no new key, no new failure surface. |
+| `V *float64` pointer for seriesEntry values | Finnhub returns `null` for missing historical PE entries (confirmed on real MU data for 2023). A value type would decode null as 0 and silently include it in the average. A pointer makes null explicit — `seriesAvg` skips nil entries and returns 0 when fewer than 3 non-null values exist. |
+| `FUNDAMENTALS_PROVIDER=finnhub` added to `.env` and `.env.example` | Without this var set, the factory defaults to mock — `get_fundamentals` tool calls return synthetic data even in production. Railway deployment requires the same var in the dashboard alongside the existing `FINNHUB_API_KEY`. |
 
 ---
 
