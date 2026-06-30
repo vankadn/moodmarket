@@ -84,6 +84,9 @@ func (r *stubDecisionRepo) SumInvestedToday(_ context.Context, _, _, _ string) (
 func (r *stubDecisionRepo) SumAllTimeByConfig(_ context.Context, _, _ string) (float64, error) {
 	return 0, nil
 }
+func (r *stubDecisionRepo) HasSkipToday(_ context.Context, _, _, _, _ string) (bool, error) {
+	return false, nil
+}
 func (r *stubDecisionRepo) WinRateTrend(_ context.Context, _ string, _ int) ([]models.WinRateTrendPoint, error) {
 	return nil, nil
 }

@@ -44,6 +44,11 @@ type DecisionRepository interface {
 	// Skip decisions are excluded. Returns 0 when no records exist.
 	// Used to enforce LifetimeBudgetCap on AutoInvestConfig.
 	SumAllTimeByConfig(ctx context.Context, userID, configID string) (float64, error)
+	// HasSkipToday returns true when a skip decision with the exact given reason already exists
+	// for the given config in the current calendar day (resolved in the given IANA timezone).
+	// Used by the scheduler to suppress duplicate skip records and notifications when the daily
+	// budget was already recorded exhausted on an earlier tick in the same day.
+	HasSkipToday(ctx context.Context, userID, configID, skipReason, userTimezone string) (bool, error)
 	// WinRateTrend returns win rate bucketed by ISO calendar week for the last weeksBack weeks.
 	// Only weeks with at least one verdicted decision are returned, sorted oldest-first.
 	WinRateTrend(ctx context.Context, userID string, weeksBack int) ([]models.WinRateTrendPoint, error)

@@ -1,7 +1,7 @@
 # InvestIQ — Project Context & Master Reference
 
 > Load this into your Claude Project so every new conversation starts with full context.
-> Last updated: 2026-06-23 — fixed duplicate blocked+skip decision writes per critic-block cycle; added WasBlocked bool to Recommendation struct
+> Last updated: 2026-06-30 — fixed duplicate budget-exhausted skip docs/notifications; added HasSkipToday guard to DecisionRepository
 
 ---
 
@@ -75,7 +75,7 @@ Key interfaces:
 - `IdentityProvider` — userId in request context
 - `MarketDataProvider` — live prices (Finnhub real-time, Polygon prev-day, or mock); `GetDailySnapshot` builds the full market context; `GetPrice` returns a single ticker price used by the verdict stamper
 - `NewsProvider` — market headlines (Polygon or mock)
-- `DecisionRepository` — investment decision persistence; includes `WinRateTrend` (ISO-week bucketed win rate, last N weeks), `AssetClassBreakdown` (per-asset-class win/loss counts via `$lookup` on `ticker_classifications`), `ListDecisions` (returns all decisions for a user, including pending/unverdicted), and `SumAllTimeByConfig(ctx, userID, configID string) (float64, error)` (lifetime spend for a config, used by lifetime budget cap check)
+- `DecisionRepository` — investment decision persistence; includes `WinRateTrend` (ISO-week bucketed win rate, last N weeks), `AssetClassBreakdown` (per-asset-class win/loss counts via `$lookup` on `ticker_classifications`), `ListDecisions` (returns all decisions for a user, including pending/unverdicted), `SumAllTimeByConfig(ctx, userID, configID string) (float64, error)` (lifetime spend for a config, used by lifetime budget cap check), and `HasSkipToday(ctx, userID, configID, skipReason, userTimezone string) (bool, error)` (deduplication guard: returns true when a skip doc with the exact reason already exists for that config in the current calendar day)
 - `BrokerageProvider` — trade execution + position reads + portfolio history (Alpaca or mock)
 - `BrokerageProviderFactory` — constructs a `BrokerageProvider` from a per-user `BrokerageConnection`; decouples application layer from credential decryption and Alpaca constructor details
 - `FinancialDataProvider` — bank + 401k data (Plaid or mock)
@@ -267,7 +267,7 @@ Auto-invest config (amount, risk, enabled) lives in `AutoInvestConfig` — its o
 
 ### Autonomous investing
 - Scheduler: per-user `isDue()` check on hourly tick; priority: `IntervalSeconds` > `IntervalHours` > `IntervalDays` (0 = daily)
-- Agentic daily budget: when `DailyBudget > 0`, scheduler sums today's spend via `SumTodayByConfig`, injects remaining into Claude prompt; Claude returns `total_budget: 0` to skip or an amount ≤ remaining; budget-exhausted and Claude-skip paths both save a `DecisionType: "skip"` decision and notify via `SendSkipSummary`
+- Agentic daily budget: when `DailyBudget > 0`, scheduler sums today's spend via `SumTodayByConfig`, injects remaining into Claude prompt; Claude returns `total_budget: 0` to skip or an amount ≤ remaining; budget-exhausted and Claude-skip paths both save a `DecisionType: "skip"` decision and notify via `SendSkipSummary`; budget-exhausted path is guarded by `HasSkipToday` — if a skip doc with reason `"daily budget exhausted for today"` already exists for that config today, the tick is suppressed (no new doc, no new notification)
 - Multi-config strategies per user: named, with `long_term`, `short_term`, or `bargain_hunter` strategy prompt injected before base system prompt; CRUD at `/users/auto-invest/configs`
 - bargain_hunter strategy: 6-step evaluation protocol (get_fundamentals → get_earnings_surprises → get_insider_activity), hard reject rule (ForwardPE<15 + <15% below 52wk high + ConsecutiveNegativeMonths≥3 = reject/relabel), 2–4 positions, up to 40% single-stock; prompt constants in `infrastructure/advisor/strategies.go`
 - Lifetime budget cap: `AutoInvestConfig.LifetimeBudgetCap float64`; scheduler checks `SumAllTimeByConfig` before the daily budget check; saves a skip decision and notifies if cap reached; persisted in `auto_invest_configs` collection
@@ -582,6 +582,18 @@ The same root mistake surfaced three times across separate code paths: a query o
 | Prompt builder (RECENT INVESTMENT HISTORY) | `buildUserMessage` | `blocked` and `skip` decisions were rendered as executed trades in the RECENT INVESTMENT HISTORY section — Claude treated its own rejected thesis as a real prior trade to "vary from", reinforcing bad patterns | Switched on `DecisionType` in the history loop: `blocked` → `[BLOCKED] <reason>`, `skip` → `[SKIPPED] <reason>`, `invest` → ticker/amount line; "vary today's allocation" instruction fires only when at least one real `invest` decision is present |
 
 **Pattern rule:** any query or loop that reads from the `decisions` collection must filter or switch on `DecisionType` explicitly. "All recent decisions" is never the right default — `invest`, `skip`, and `blocked` have fundamentally different semantics and must not be conflated downstream.
+
+---
+
+### Duplicate skip documents from hourly budget-exhaustion ticks — idempotency missing on a soft-skip path
+
+When an agentic strategy's daily budget was fully consumed on the first hourly tick, every subsequent tick within the same calendar day re-entered the budget check, found `remaining < 1.0`, and unconditionally called `saveSkipDecision` + `SendSkipSummary`. One exhausted config produced 20+ duplicate `DecisionType="skip"` documents and 20+ identical notifications per day.
+
+Root cause: the budget-exhausted branch had no idempotency guard. `SumInvestedToday` correctly returned the same "fully spent" total on every tick (it excludes skip docs by design), so the `remaining < 1.0` condition fired identically on every subsequent tick. Nothing stopped it from writing again.
+
+**Fix:** added `HasSkipToday(ctx, userID, configID, skipReason, userTimezone string) (bool, error)` to the `DecisionRepository` port (additive — new method, no existing signature changed). Implemented in `MongoDecisionRepository` as a `CountDocuments` query filtered on `{user_id, config_id, decision_type, skip_reason, timestamp >= todayStart}` with `SetLimit(1)`. The budget-exhausted branch in `runForUser` calls it before writing; if true, returns `(0, nil)` immediately. On repo error, also suppresses (fail-safe: missing the Nth duplicate is better than writing one). The WasBlocked path, the Claude-skip path, and the lifetime-cap skip path are untouched. A one-time cleanup tool (`cmd/cleanup-duplicate-budget-skips/main.go`) deleted 105 duplicate documents from production.
+
+**Rule reinforced:** any scheduler path that can fire multiple times for the same logical event (hourly ticks within a daily budget, retries, restarts) must include an idempotency check before writing. "Returns success" is not the same as "should write again." Soft-skips — paths that return `(0, nil)` and stamp `LastRunAt` — are especially at risk because they look like success to the caller and get re-queued on the next tick.
 
 ---
 

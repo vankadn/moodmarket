@@ -13,7 +13,10 @@ import (
 	"github.com/krishnarajivvns/investiq/internal/domain/ports"
 )
 
-const defaultTimezone = "America/New_York"
+const (
+	defaultTimezone           = "America/New_York"
+	skipReasonBudgetExhausted = "daily budget exhausted for today"
+)
 
 // runForUser executes the full investment pipeline for a single user using their config.
 // Returns the total dollar amount invested, or an error if the pipeline fails.
@@ -56,7 +59,17 @@ func runForUser(
 			remaining := config.DailyBudget - spentToday
 			if remaining < 1.0 {
 				log.Printf("[scheduler] user=%s daily budget exhausted (budget=%.2f spent=%.2f)", config.UserID, config.DailyBudget, spentToday)
-				saveSkipDecision(ctx, decisionRepo, config, "daily budget exhausted for today")
+				already, err := decisionRepo.HasSkipToday(ctx, config.UserID, config.ID, skipReasonBudgetExhausted, defaultTimezone)
+				if err != nil {
+					// Guard check failed — suppress to avoid writing a duplicate on a repo hiccup.
+					log.Printf("[scheduler] user=%s HasSkipToday failed (%v) — suppressing tick to avoid duplicate", config.UserID, err)
+					return 0, nil
+				}
+				if already {
+					log.Printf("[scheduler] user=%s budget exhaustion already recorded today — suppressing duplicate skip", config.UserID)
+					return 0, nil
+				}
+				saveSkipDecision(ctx, decisionRepo, config, skipReasonBudgetExhausted)
 				_ = notifications.SendSkipSummary(ctx, target, config.Name, "Daily budget exhausted for today.")
 				return 0, nil
 			}

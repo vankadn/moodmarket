@@ -105,6 +105,9 @@ type fakeDecisionRepo struct {
 	spentToday    float64
 	spentTodayErr error
 
+	hasSkipToday    bool
+	hasSkipTodayErr error
+
 	saved []*models.InvestmentDecision
 }
 
@@ -117,6 +120,9 @@ func (r *fakeDecisionRepo) SumInvestedToday(_ context.Context, _, _, _ string) (
 }
 func (r *fakeDecisionRepo) SumAllTimeByConfig(_ context.Context, _, _ string) (float64, error) {
 	return 0, nil
+}
+func (r *fakeDecisionRepo) HasSkipToday(_ context.Context, _, _, _, _ string) (bool, error) {
+	return r.hasSkipToday, r.hasSkipTodayErr
 }
 func (r *fakeDecisionRepo) ListByUser(_ context.Context, _ string, _ int) ([]models.InvestmentDecision, error) {
 	return nil, nil

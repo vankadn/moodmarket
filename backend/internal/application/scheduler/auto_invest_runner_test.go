@@ -97,6 +97,100 @@ func TestRunForUser_AgenticBudgetExhausted(t *testing.T) {
 	}
 }
 
+// TestRunForUser_AgenticBudgetExhausted_SecondTickSuppressed verifies that when
+// HasSkipToday returns true (a budget-exhausted skip was already recorded earlier today),
+// the runner returns cleanly without writing another skip doc or firing SendSkipSummary.
+func TestRunForUser_AgenticBudgetExhausted_SecondTickSuppressed(t *testing.T) {
+	t.Parallel()
+
+	rec := &fakeRecommender{rec: &models.Recommendation{TotalBudget: 100}}
+	inv := &fakeInvestor{}
+	notes := &fakeNotifications{}
+	repo := &fakeDecisionRepo{
+		spentToday:   100,
+		hasSkipToday: true, // skip doc already written on an earlier tick today
+	}
+	cfg := models.AutoInvestConfig{UserID: "user-1", ID: "c1", Mode: "agentic", DailyBudget: 100}
+
+	invested, err := runForUser(context.Background(), cfg, target(), rec, inv, notes, repo)
+	if err != nil {
+		t.Fatalf("suppressed tick must not be an error, got: %v", err)
+	}
+	if invested != 0 {
+		t.Errorf("invested = %v, want 0", invested)
+	}
+	if rec.calls != 0 {
+		t.Error("recommender must not be called on a suppressed tick")
+	}
+	if notes.skipCalls != 0 {
+		t.Errorf("SendSkipSummary must not fire on suppressed tick, got %d calls", notes.skipCalls)
+	}
+	if len(repo.saved) != 0 {
+		t.Errorf("no skip doc must be written on suppressed tick, got %d docs", len(repo.saved))
+	}
+}
+
+// TestRunForUser_AgenticBudgetExhausted_NewDayAllowsEvaluation verifies that on a new
+// calendar day HasSkipToday returns false (no matching record for today), so the pipeline
+// proceeds normally to the recommender rather than short-circuiting.
+func TestRunForUser_AgenticBudgetExhausted_NewDayAllowsEvaluation(t *testing.T) {
+	t.Parallel()
+
+	// Budget not yet spent today (new day), skip guard reports no prior skip today.
+	rec := &fakeRecommender{rec: &models.Recommendation{
+		TotalBudget: 100,
+		Allocations: []models.Allocation{{Ticker: "VTI", Amount: 100}},
+	}}
+	inv := &fakeInvestor{receipts: []models.TradeReceipt{{Ticker: "VTI", FilledAmount: 100}}}
+	notes := &fakeNotifications{}
+	repo := &fakeDecisionRepo{
+		spentToday:   0,
+		hasSkipToday: false,
+	}
+	cfg := models.AutoInvestConfig{UserID: "user-1", ID: "c1", Mode: "agentic", DailyBudget: 100}
+
+	invested, err := runForUser(context.Background(), cfg, target(), rec, inv, notes, repo)
+	if err != nil {
+		t.Fatalf("new-day evaluation must not error, got: %v", err)
+	}
+	if invested == 0 {
+		t.Error("new-day evaluation should have invested, got 0")
+	}
+	if rec.calls != 1 {
+		t.Errorf("recommender should be called once on a new day, got %d", rec.calls)
+	}
+}
+
+// TestRunForUser_AgenticBudgetExhausted_GuardErrorSuppressesWithoutWrite verifies that
+// if HasSkipToday itself returns an error, the tick is suppressed silently (no skip doc,
+// no notification) rather than risking a duplicate write.
+func TestRunForUser_AgenticBudgetExhausted_GuardErrorSuppressesWithoutWrite(t *testing.T) {
+	t.Parallel()
+
+	rec := &fakeRecommender{rec: &models.Recommendation{TotalBudget: 100}}
+	inv := &fakeInvestor{}
+	notes := &fakeNotifications{}
+	repo := &fakeDecisionRepo{
+		spentToday:      100,
+		hasSkipTodayErr: errors.New("mongo timeout"),
+	}
+	cfg := models.AutoInvestConfig{UserID: "user-1", ID: "c1", Mode: "agentic", DailyBudget: 100}
+
+	invested, err := runForUser(context.Background(), cfg, target(), rec, inv, notes, repo)
+	if err != nil {
+		t.Fatalf("guard error must not propagate as an error, got: %v", err)
+	}
+	if invested != 0 {
+		t.Errorf("invested = %v, want 0", invested)
+	}
+	if notes.skipCalls != 0 {
+		t.Errorf("SendSkipSummary must not fire when guard errors, got %d calls", notes.skipCalls)
+	}
+	if len(repo.saved) != 0 {
+		t.Errorf("no skip doc must be written when guard errors, got %d docs", len(repo.saved))
+	}
+}
+
 func TestRunForUser_AgenticCapsOverBudgetRecommendation(t *testing.T) {
 	t.Parallel()
 

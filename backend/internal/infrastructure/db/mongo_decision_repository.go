@@ -627,6 +627,31 @@ func (r *MongoDecisionRepository) SumAllTimeByConfig(ctx context.Context, userID
 	return result[0].Total, nil
 }
 
+func (r *MongoDecisionRepository) HasSkipToday(ctx context.Context, userID, configID, skipReason, userTimezone string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	loc, err := time.LoadLocation(userTimezone)
+	if err != nil || loc == nil {
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+
+	filter := bson.M{
+		"user_id":       userID,
+		"config_id":     configID,
+		"decision_type": "skip",
+		"skip_reason":   skipReason,
+		"timestamp":     bson.M{"$gte": todayStart},
+	}
+	count, err := r.collection.CountDocuments(ctx, filter, options.Count().SetLimit(1))
+	if err != nil {
+		return false, fmt.Errorf("mongo decision repo: has skip today: %w", err)
+	}
+	return count > 0, nil
+}
+
 func (r *MongoDecisionRepository) WinRateTrend(ctx context.Context, userID string, weeksBack int) ([]models.WinRateTrendPoint, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
