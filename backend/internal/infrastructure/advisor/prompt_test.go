@@ -411,3 +411,31 @@ func TestBuildUserMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestStrategySystemPrompt_ShortTerm(t *testing.T) {
+	t.Parallel()
+	p := strategySystemPrompt("short_term")
+
+	mustContain := []string{
+		"near-term catalyst",
+		"HARD RULE",
+		"12-month",
+		"Ignore the user's profile time_horizon",
+		"WORK VISA CLARIFICATION",
+	}
+	mustNotContain := []string{
+		"multi-year",
+		"long-term wealth building",
+		"rebalancing toward",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(p, want) {
+			t.Errorf("short_term prompt missing %q", want)
+		}
+	}
+	for _, notWant := range mustNotContain {
+		if strings.Contains(p, notWant) {
+			t.Errorf("short_term prompt must not contain %q", notWant)
+		}
+	}
+}
