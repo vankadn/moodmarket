@@ -64,7 +64,7 @@ export interface UserProfile {
   portfolio_aggregator?: PortfolioConnectionStatus;
 }
 
-export type StrategyType = "long_term" | "short_term";
+export type StrategyType = "long_term" | "short_term" | "bargain_hunter";
 
 export interface AutoInvestConfig {
   id?: string;
@@ -74,6 +74,7 @@ export interface AutoInvestConfig {
   mode?: "fixed" | "agentic"; // default "fixed" when absent
   amount: number;              // fixed mode: amount per run
   daily_budget?: number;       // agentic mode: max per calendar day
+  lifetime_budget_cap?: number; // optional ceiling on total dollars ever deployed
   risk: RiskTolerance;
   strategy?: StrategyType;
   interval_days?: number;      // deprecated — migrated to interval_hours on read

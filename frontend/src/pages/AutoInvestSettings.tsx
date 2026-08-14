@@ -34,12 +34,16 @@ function getIntervalHours(config: AutoInvestConfig): number {
 }
 
 const strategyOptions: { value: StrategyType; label: string; description: string }[] = [
-  { value: "long_term",  label: "Long Term",  description: "ETFs only, 10+ year horizon" },
-  { value: "short_term", label: "Short Term", description: "ETFs + large-cap stocks, 1-year horizon" },
+  { value: "long_term",      label: "Long Term",      description: "ETFs only, 10+ year horizon" },
+  { value: "short_term",     label: "Short Term",     description: "ETFs + large-caps, 1-year horizon" },
+  { value: "bargain_hunter", label: "Bargain Hunter", description: "Cheap stocks with fundamentals screening" },
 ];
 
 function autoName(strategy: string | undefined, risk: RiskTolerance): string {
-  const s = strategy === "long_term" ? "Long Term" : strategy === "short_term" ? "Short Term" : "";
+  const s = strategy === "long_term"      ? "Long Term"
+          : strategy === "short_term"     ? "Short Term"
+          : strategy === "bargain_hunter" ? "Bargain Hunter"
+          : "";
   const r = risk.charAt(0).toUpperCase() + risk.slice(1);
   return s ? `${s} — ${r}` : r;
 }
@@ -303,7 +307,7 @@ export function AutoInvestSettings({ initialConfig, onBack }: Props) {
       )}
 
       {/* Risk */}
-      <div style={{ marginBottom: "2rem" }}>
+      <div style={{ marginBottom: "1.25rem" }}>
         <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
           Risk level
         </label>
@@ -325,6 +329,43 @@ export function AutoInvestSettings({ initialConfig, onBack }: Props) {
           ))}
         </div>
       </div>
+
+      {/* Lifetime budget cap — bargain_hunter only */}
+      {config.strategy === "bargain_hunter" && (
+        <div style={{ marginBottom: "1.25rem", padding: "14px 16px", background: "#fffbea", border: "1px solid #f0d060", borderRadius: "12px" }}>
+          <label style={{ fontSize: "12px", fontWeight: 500, color: "#888", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+            Lifetime Budget Cap
+          </label>
+          <div style={{ fontSize: "11px", color: "#a07a00", marginTop: "4px", marginBottom: "8px" }}>
+            Max total this config can ever deploy. Bargain Hunter takes concentrated bets — a cap guards against runaway spend.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div style={{ display: "flex", alignItems: "center", border: "1px solid #e0c840", borderRadius: "8px", overflow: "hidden", width: "160px" }}>
+              <span style={{ padding: "8px 10px", fontSize: "14px", color: "#888", background: "#f8f8f0", borderRight: "1px solid #e0c840" }}>$</span>
+              <input
+                type="number" min={0} step={100}
+                value={config.lifetime_budget_cap ?? ""}
+                placeholder="No cap"
+                onChange={(e) => {
+                  const v = e.target.value === "" ? undefined : Math.max(0, Number(e.target.value));
+                  setConfig({ ...config, lifetime_budget_cap: v });
+                }}
+                style={{ width: "100px", padding: "8px 10px", border: "none", outline: "none", fontSize: "14px", background: "transparent" }}
+              />
+            </div>
+            {config.lifetime_budget_cap != null && config.lifetime_budget_cap > 0 && (
+              <button
+                onClick={() => setConfig({ ...config, lifetime_budget_cap: undefined })}
+                style={{ fontSize: "12px", color: "#999", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              >
+                Remove cap
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginBottom: "2rem" }} />
 
       {error && (
         <div style={{ color: "#c0392b", fontSize: "13px", padding: "10px", background: "#fdf0ee", borderRadius: "8px", marginBottom: "1rem" }}>

@@ -10,8 +10,9 @@ interface Props {
 }
 
 const strategyLabel: Record<string, string> = {
-  long_term: "Long Term",
-  short_term: "Short Term",
+  long_term:      "Long Term",
+  short_term:     "Short Term",
+  bargain_hunter: "Bargain Hunter",
 };
 
 function intervalLabel(config: AutoInvestConfig): string {
